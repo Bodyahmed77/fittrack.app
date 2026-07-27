@@ -1,0 +1,21 @@
+{
+  "appId": "com.fittrack.app",
+  "appName": "FitTrack",
+  "webDir": "dist",
+  "backgroundColor": "#0b0d10",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 800,
+      "backgroundColor": "#0b0d10",
+      "androidSplashResourceName": "splash",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0b0d10"
+    }
+  }
+}

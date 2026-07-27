@@ -1,0 +1,14 @@
+rules_version = '2';
+
+// Deploy these in Firebase Console → Firestore Database → Rules (paste and Publish),
+// or via the Firebase CLI: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Every signed-in user has exactly one document at users/{their own uid}.
+    // Nobody — not even another logged-in user — can read or write someone
+    // else's data. This is the real security boundary for the whole app.
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

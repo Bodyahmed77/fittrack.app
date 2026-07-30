@@ -35,6 +35,8 @@ import {
   MessageCircle,
   Sparkles,
   X,
+  Shield,
+  Phone,
 } from "lucide-react";
 import {
   LineChart,
@@ -53,9 +55,50 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithCredential,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
+import { doc, getDoc, setDoc, onSnapshot, collection, query, where, getDocs } from "firebase/firestore";
 import { auth, db } from "./firebase";
+import logoSrc from "./assets/logo.png";
+import { App as CapApp } from "@capacitor/app";
+import { LocalNotifications } from "@capacitor/local-notifications";
+
+// Fixed notification IDs so we can reliably cancel/replace them later.
+const NOTIF_ID_DAILY_REMINDER = 1001;
+const NOTIF_ID_SUB_EXPIRY = 1002;
+
+async function scheduleDailyReminder(timeStr) {
+  const [hour, minute] = (timeStr || "18:00").split(":").map(Number);
+  await LocalNotifications.cancel({ notifications: [{ id: NOTIF_ID_DAILY_REMINDER }] });
+  await LocalNotifications.schedule({
+    notifications: [{
+      id: NOTIF_ID_DAILY_REMINDER,
+      title: "Fifty",
+      body: "Don't forget today's workout! 💪",
+      schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
+    }],
+  });
+}
+async function cancelDailyReminder() {
+  await LocalNotifications.cancel({ notifications: [{ id: NOTIF_ID_DAILY_REMINDER }] });
+}
+async function scheduleSubscriptionExpiryReminder(expiresAtISO) {
+  await LocalNotifications.cancel({ notifications: [{ id: NOTIF_ID_SUB_EXPIRY }] });
+  if (!expiresAtISO) return;
+  const fireDate = new Date(expiresAtISO + "T10:00:00");
+  fireDate.setDate(fireDate.getDate() - 5);
+  if (fireDate <= new Date()) return; // less than 5 days left already — nothing to schedule
+  await LocalNotifications.schedule({
+    notifications: [{
+      id: NOTIF_ID_SUB_EXPIRY,
+      title: "Fifty Pro",
+      body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
+      schedule: { at: fireDate },
+    }],
+  });
+}
 
 function authErrorMessage(err) {
   const code = err?.code || "";
@@ -69,17 +112,40 @@ function authErrorMessage(err) {
   return "Something went wrong — please try again";
 }
 
+// Signs in with the native Google account picker, then bridges that
+// credential into our normal Firebase JS SDK session so the rest of the
+// app (which listens to onAuthStateChanged on `auth`) works unchanged.
+// If this is someone's first time signing in, their Firestore document
+// gets created here — the ordinary email/password sign-up flow never runs.
+async function signInWithGoogleFlow(localLang) {
+  const result = await FirebaseAuthentication.signInWithGoogle();
+  const idToken = result.credential?.idToken;
+  if (!idToken) throw new Error("No ID token from Google");
+  const credential = GoogleAuthProvider.credential(idToken);
+  const userCred = await signInWithCredential(auth, credential);
+  const ref = doc(db, "users", userCred.user.uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    const initial = freshState();
+    initial.account.name = userCred.user.displayName || "";
+    initial.account.email = userCred.user.email || "";
+    initial.settings.language = localLang || "en";
+    await setDoc(ref, initial);
+  }
+  return userCred;
+}
+
 /* ============================== THEME ============================== */
 const DARK = {
-  mode: "dark", bg: "#0b0d10", card: "#15181c", card2: "#1b1f24", border: "#242830",
-  green: "#22c55e", greenSoft: "rgba(34,197,94,0.15)", text: "#f5f6f7", sub: "#8b929c",
-  sub2: "#5c636d", danger: "#ef4444", dangerSoft: "rgba(239,68,68,0.12)", overlay: "rgba(0,0,0,0.55)",
+  mode: "dark", bg: "#000000", card: "#000000", card2: "#161616", border: "rgba(255,255,255,0.35)",
+  green: "#ffffff", greenSoft: "rgba(255,255,255,0.10)", onAccent: "#000000", text: "#ffffff", sub: "#a3a3a3",
+  sub2: "#6b6b6b", danger: "#ef4444", dangerSoft: "rgba(239,68,68,0.12)", overlay: "rgba(0,0,0,0.7)",
   gold: "#eab308", goldSoft: "rgba(234,179,8,0.14)",
 };
 const LIGHT = {
-  mode: "light", bg: "#f3f4f6", card: "#ffffff", card2: "#eef0f3", border: "#e3e6ea",
-  green: "#16a34a", greenSoft: "rgba(22,163,74,0.12)", text: "#14171a", sub: "#6b7280",
-  sub2: "#9aa1ab", danger: "#dc2626", dangerSoft: "rgba(220,38,38,0.10)", overlay: "rgba(0,0,0,0.35)",
+  mode: "light", bg: "#ffffff", card: "#ffffff", card2: "#f2f2f2", border: "rgba(0,0,0,0.22)",
+  green: "#000000", greenSoft: "rgba(0,0,0,0.07)", onAccent: "#ffffff", text: "#000000", sub: "#5c5c5c",
+  sub2: "#9a9a9a", danger: "#dc2626", dangerSoft: "rgba(220,38,38,0.10)", overlay: "rgba(0,0,0,0.4)",
   gold: "#b45309", goldSoft: "rgba(180,83,9,0.12)",
 };
 
@@ -89,7 +155,7 @@ function useUI() { return useContext(UIContext); }
 /* ============================== HELPERS ============================== */
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const todayIdx = (() => { const js = new Date().getDay(); return js === 0 ? 6 : js - 1; })();
-const WHATSAPP_NUMBER = "201108178490";
+const WHATSAPP_NUMBER = "201108178493";
 
 function dateKey(offsetDays = 0) {
   const d = new Date();
@@ -137,6 +203,11 @@ function addDays(iso, n) {
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 }
+function daysUntil(iso) {
+  if (!iso) return 0;
+  const ms = new Date(iso + "T00:00:00") - new Date(dateKey(0) + "T00:00:00");
+  return Math.max(0, Math.round(ms / 86400000));
+}
 function setsCompletedInRange(data, startISO, endISO) {
   let count = 0;
   Object.keys(data.logs).forEach((d) => {
@@ -148,39 +219,39 @@ function setsCompletedInRange(data, startISO, endISO) {
 
 /* ============================== EXERCISE LIBRARY ============================== */
 const EX = {
-  bench_press: { name: "Bench Press", startWeight: 40 },
-  incline_db_press: { name: "Incline Dumbbell Press", startWeight: 16 },
-  chest_fly: { name: "Chest Fly", startWeight: 10 },
-  dips: { name: "Dips", startWeight: 0 },
-  tricep_pushdown: { name: "Tricep Pushdown", startWeight: 18 },
-  overhead_ext: { name: "Overhead Extension", startWeight: 10 },
-  push_up: { name: "Push Up", startWeight: 0 },
-  lat_pulldown: { name: "Lat Pulldown", startWeight: 35 },
-  barbell_row: { name: "Barbell Row", startWeight: 40 },
-  seated_row: { name: "Seated Cable Row", startWeight: 30 },
-  bicep_curl: { name: "Barbell Curl", startWeight: 15 },
-  hammer_curl: { name: "Hammer Curl", startWeight: 10 },
-  squat: { name: "Squat", startWeight: 40 },
-  leg_press: { name: "Leg Press", startWeight: 60 },
-  lunges: { name: "Walking Lunges", startWeight: 10 },
-  leg_curl: { name: "Leg Curl", startWeight: 20 },
-  calf_raise: { name: "Calf Raise", startWeight: 30 },
-  ohp: { name: "Overhead Press", startWeight: 20 },
-  lateral_raise: { name: "Lateral Raise", startWeight: 6 },
-  rear_delt_fly: { name: "Rear Delt Fly", startWeight: 6 },
-  shrugs: { name: "Barbell Shrugs", startWeight: 30 },
-  deadlift: { name: "Deadlift", startWeight: 50 },
-  pull_up: { name: "Pull Up", startWeight: 0 },
-  plank: { name: "Plank", startWeight: 0 },
-  treadmill: { name: "Treadmill Walk/Run", startWeight: 0 },
-  bike: { name: "Stationary Bike", startWeight: 0 },
-  crunches: { name: "Cable Crunches", startWeight: 10 },
-  leg_raise: { name: "Hanging Leg Raise", startWeight: 0 },
-  jump_rope: { name: "Jump Rope", startWeight: 0 },
-  burpees: { name: "Burpees", startWeight: 0 },
+  bench_press: { name: "Bench Press", startWeight: 40, emoji: "🏋️" },
+  incline_db_press: { name: "Incline Dumbbell Press", startWeight: 16, emoji: "🏋️" },
+  chest_fly: { name: "Chest Fly", startWeight: 10, emoji: "🦅" },
+  dips: { name: "Dips", startWeight: 0, emoji: "💪" },
+  tricep_pushdown: { name: "Tricep Pushdown", startWeight: 18, emoji: "💪" },
+  overhead_ext: { name: "Overhead Extension", startWeight: 10, emoji: "💪" },
+  push_up: { name: "Push Up", startWeight: 0, emoji: "🤸" },
+  lat_pulldown: { name: "Lat Pulldown", startWeight: 35, emoji: "🚣" },
+  barbell_row: { name: "Barbell Row", startWeight: 40, emoji: "🚣" },
+  seated_row: { name: "Seated Cable Row", startWeight: 30, emoji: "🚣" },
+  bicep_curl: { name: "Barbell Curl", startWeight: 15, emoji: "💪" },
+  hammer_curl: { name: "Hammer Curl", startWeight: 10, emoji: "💪" },
+  squat: { name: "Squat", startWeight: 40, emoji: "🦵" },
+  leg_press: { name: "Leg Press", startWeight: 60, emoji: "🦵" },
+  lunges: { name: "Walking Lunges", startWeight: 10, emoji: "🦵" },
+  leg_curl: { name: "Leg Curl", startWeight: 20, emoji: "🦵" },
+  calf_raise: { name: "Calf Raise", startWeight: 30, emoji: "🦵" },
+  ohp: { name: "Overhead Press", startWeight: 20, emoji: "🤲" },
+  lateral_raise: { name: "Lateral Raise", startWeight: 6, emoji: "🤲" },
+  rear_delt_fly: { name: "Rear Delt Fly", startWeight: 6, emoji: "🤲" },
+  shrugs: { name: "Barbell Shrugs", startWeight: 30, emoji: "🤷" },
+  deadlift: { name: "Deadlift", startWeight: 50, emoji: "🏋️" },
+  pull_up: { name: "Pull Up", startWeight: 0, emoji: "🧗" },
+  plank: { name: "Plank", startWeight: 0, emoji: "🧘" },
+  treadmill: { name: "Treadmill Walk/Run", startWeight: 0, emoji: "🏃" },
+  bike: { name: "Stationary Bike", startWeight: 0, emoji: "🚴" },
+  crunches: { name: "Cable Crunches", startWeight: 10, emoji: "🔥" },
+  leg_raise: { name: "Hanging Leg Raise", startWeight: 0, emoji: "🔥" },
+  jump_rope: { name: "Jump Rope", startWeight: 0, emoji: "🤾" },
+  burpees: { name: "Burpees", startWeight: 0, emoji: "🔥" },
 };
 function mkEx(id, sets, reps) {
-  return { id, name: EX[id].name, targetSets: sets, targetReps: reps, startWeight: EX[id].startWeight };
+  return { id, name: EX[id].name, targetSets: sets, targetReps: reps, startWeight: EX[id].startWeight, emoji: EX[id].emoji || "🏋️" };
 }
 
 /* ============================== PLAN TEMPLATES ============================== */
@@ -231,45 +302,55 @@ const MEAL_ITEMS = [
 ];
 
 const FOOD_DB = [
-  { id: "rice_white", name: "White Rice (cooked)", kcal: 130 },
-  { id: "chicken_breast", name: "Chicken Breast (grilled)", kcal: 165 },
-  { id: "chicken_thigh", name: "Chicken Thigh", kcal: 209 },
-  { id: "beef_lean", name: "Lean Beef", kcal: 250 },
-  { id: "ground_beef", name: "Ground Beef", kcal: 254 },
-  { id: "egg", name: "Egg", kcal: 155 },
-  { id: "potato_boiled", name: "Potato (boiled)", kcal: 87 },
-  { id: "french_fries", name: "French Fries", kcal: 312 },
-  { id: "sweet_potato", name: "Sweet Potato", kcal: 86 },
-  { id: "bread_white", name: "White Bread", kcal: 265 },
-  { id: "bread_baladi", name: "Baladi Bread", kcal: 280 },
-  { id: "pasta_cooked", name: "Pasta (cooked)", kcal: 131 },
-  { id: "oats_dry", name: "Oats (dry)", kcal: 389 },
-  { id: "banana", name: "Banana", kcal: 89 },
-  { id: "apple", name: "Apple", kcal: 52 },
-  { id: "orange", name: "Orange", kcal: 47 },
-  { id: "tomato", name: "Tomato", kcal: 18 },
-  { id: "cucumber", name: "Cucumber", kcal: 15 },
-  { id: "salad_greens", name: "Mixed Salad Greens", kcal: 15 },
-  { id: "olive_oil", name: "Olive Oil", kcal: 884 },
-  { id: "butter", name: "Butter", kcal: 717 },
-  { id: "milk", name: "Milk", kcal: 42 },
-  { id: "yogurt", name: "Yogurt", kcal: 59 },
-  { id: "white_cheese", name: "White Cheese", kcal: 264 },
-  { id: "cottage_cheese", name: "Cottage Cheese", kcal: 98 },
-  { id: "tuna", name: "Tuna (canned)", kcal: 132 },
-  { id: "salmon", name: "Salmon", kcal: 208 },
-  { id: "shrimp", name: "Shrimp", kcal: 99 },
-  { id: "lentils_cooked", name: "Lentils (cooked)", kcal: 116 },
-  { id: "fava_beans", name: "Fava Beans (Ful)", kcal: 110 },
-  { id: "falafel", name: "Falafel", kcal: 333 },
-  { id: "hummus", name: "Hummus", kcal: 166 },
-  { id: "almonds", name: "Almonds", kcal: 579 },
-  { id: "peanut_butter", name: "Peanut Butter", kcal: 588 },
-  { id: "honey", name: "Honey", kcal: 304 },
-  { id: "sugar", name: "Sugar", kcal: 387 },
-  { id: "chocolate", name: "Chocolate", kcal: 546 },
-  { id: "avocado", name: "Avocado", kcal: 160 },
-  { id: "turkey_breast", name: "Turkey Breast", kcal: 135 },
+  // id, name, kcal / protein(g) / carbs(g) / fat(g) — all per 100g
+  { id: "rice_white", name: "White Rice (cooked)", kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
+  { id: "rice_brown", name: "Brown Rice (cooked)", kcal: 112, protein: 2.6, carbs: 24, fat: 0.9 },
+  { id: "chicken_breast", name: "Chicken Breast (grilled)", kcal: 165, protein: 31, carbs: 0, fat: 3.6 },
+  { id: "chicken_thigh", name: "Chicken Thigh", kcal: 209, protein: 26, carbs: 0, fat: 10.9 },
+  { id: "beef_lean", name: "Lean Beef", kcal: 250, protein: 26, carbs: 0, fat: 15 },
+  { id: "ground_beef", name: "Ground Beef", kcal: 254, protein: 17, carbs: 0, fat: 20 },
+  { id: "kofta", name: "Grilled Kofta", kcal: 250, protein: 18, carbs: 2, fat: 19 },
+  { id: "turkey_breast", name: "Turkey Breast", kcal: 135, protein: 30, carbs: 0, fat: 1 },
+  { id: "egg", name: "Egg", kcal: 155, protein: 13, carbs: 1.1, fat: 11 },
+  { id: "potato_boiled", name: "Potato (boiled)", kcal: 87, protein: 1.9, carbs: 20, fat: 0.1 },
+  { id: "french_fries", name: "French Fries", kcal: 312, protein: 3.4, carbs: 41, fat: 15 },
+  { id: "sweet_potato", name: "Sweet Potato", kcal: 86, protein: 1.6, carbs: 20, fat: 0.1 },
+  { id: "bread_white", name: "White Bread", kcal: 265, protein: 9, carbs: 49, fat: 3.2 },
+  { id: "bread_baladi", name: "Baladi Bread", kcal: 280, protein: 9, carbs: 56, fat: 1.5 },
+  { id: "bread_whole_wheat", name: "Whole Wheat Bread", kcal: 247, protein: 13, carbs: 41, fat: 3.4 },
+  { id: "pasta_cooked", name: "Pasta (cooked)", kcal: 131, protein: 5, carbs: 25, fat: 1.1 },
+  { id: "oats_dry", name: "Oats (dry)", kcal: 389, protein: 16.9, carbs: 66, fat: 6.9 },
+  { id: "quinoa_cooked", name: "Quinoa (cooked)", kcal: 120, protein: 4.4, carbs: 21, fat: 1.9 },
+  { id: "banana", name: "Banana", kcal: 89, protein: 1.1, carbs: 23, fat: 0.3 },
+  { id: "apple", name: "Apple", kcal: 52, protein: 0.3, carbs: 14, fat: 0.2 },
+  { id: "orange", name: "Orange", kcal: 47, protein: 0.9, carbs: 12, fat: 0.1 },
+  { id: "watermelon", name: "Watermelon", kcal: 30, protein: 0.6, carbs: 8, fat: 0.2 },
+  { id: "dates", name: "Dates", kcal: 277, protein: 1.8, carbs: 75, fat: 0.2 },
+  { id: "tomato", name: "Tomato", kcal: 18, protein: 0.9, carbs: 3.9, fat: 0.2 },
+  { id: "cucumber", name: "Cucumber", kcal: 15, protein: 0.7, carbs: 3.6, fat: 0.1 },
+  { id: "salad_greens", name: "Mixed Salad Greens", kcal: 15, protein: 1.4, carbs: 2.9, fat: 0.2 },
+  { id: "spinach", name: "Spinach", kcal: 23, protein: 2.9, carbs: 3.6, fat: 0.4 },
+  { id: "broccoli", name: "Broccoli", kcal: 34, protein: 2.8, carbs: 7, fat: 0.4 },
+  { id: "molokhia", name: "Molokhia (cooked)", kcal: 50, protein: 4.8, carbs: 6, fat: 1 },
+  { id: "olive_oil", name: "Olive Oil", kcal: 884, protein: 0, carbs: 0, fat: 100 },
+  { id: "butter", name: "Butter", kcal: 717, protein: 0.9, carbs: 0.1, fat: 81 },
+  { id: "milk", name: "Milk", kcal: 42, protein: 3.4, carbs: 5, fat: 1 },
+  { id: "yogurt", name: "Yogurt", kcal: 61, protein: 3.5, carbs: 4.7, fat: 3.3 },
+  { id: "white_cheese", name: "White Cheese", kcal: 264, protein: 14, carbs: 4, fat: 21 },
+  { id: "cottage_cheese", name: "Cottage Cheese", kcal: 98, protein: 11, carbs: 3.4, fat: 4.3 },
+  { id: "tuna", name: "Tuna (canned in water)", kcal: 116, protein: 26, carbs: 0, fat: 0.8 },
+  { id: "salmon", name: "Salmon", kcal: 208, protein: 20, carbs: 0, fat: 13 },
+  { id: "shrimp", name: "Shrimp", kcal: 99, protein: 24, carbs: 0.2, fat: 0.3 },
+  { id: "lentils_cooked", name: "Lentils (cooked)", kcal: 116, protein: 9, carbs: 20, fat: 0.4 },
+  { id: "fava_beans", name: "Fava Beans (Ful)", kcal: 110, protein: 7.6, carbs: 18, fat: 0.4 },
+  { id: "falafel", name: "Falafel", kcal: 333, protein: 13, carbs: 32, fat: 18 },
+  { id: "hummus", name: "Hummus", kcal: 166, protein: 8, carbs: 14, fat: 10 },
+  { id: "almonds", name: "Almonds", kcal: 579, protein: 21, carbs: 22, fat: 50 },
+  { id: "peanut_butter", name: "Peanut Butter", kcal: 588, protein: 25, carbs: 20, fat: 50 },
+  { id: "honey", name: "Honey", kcal: 304, protein: 0.3, carbs: 82, fat: 0 },
+  { id: "sugar", name: "Sugar", kcal: 387, protein: 0, carbs: 100, fat: 0 },
+  { id: "chocolate", name: "Chocolate", kcal: 546, protein: 7.6, carbs: 60, fat: 31 },
+  { id: "avocado", name: "Avocado", kcal: 160, protein: 2, carbs: 8.5, fat: 14.7 },
 ];
 
 const GOALS = [
@@ -284,10 +365,11 @@ const FREE_EXERCISE_CAP = 4;
 function freshState() {
   return {
     onboarded: false,
-    account: { name: "", email: "", gender: "", age: "", height: "", goal: "", daysPerWeek: 4, photo: "" },
-    settings: { theme: "dark", notifications: true, reminderTime: "18:00" },
+    account: { name: "", email: "", phone: "", gender: "", age: "", height: "", goal: "", daysPerWeek: 4, photo: "" },
+    settings: { theme: "dark", notifications: true, reminderTime: "18:00", language: null },
     profile: { level: 1, xp: 0, xpMax: 500 },
-    entitlements: { nutritionPro: false, trainingPro: false },
+    entitlements: { nutritionPro: false, trainingPro: false, proExpiresAt: null },
+    nutritionPlan: null,
     activePlanId: "beginner",
     customPlan: {},
     bodyWeight: [],
@@ -319,14 +401,21 @@ function useAppData(uid) {
       (snap) => {
         const fresh = freshState();
         const parsed = snap.exists() ? snap.data() : {};
-        setDataRaw({
+        const merged = {
           ...fresh, ...parsed,
           account: { ...fresh.account, ...(parsed.account || {}) },
           settings: { ...fresh.settings, ...(parsed.settings || {}) },
           profile: { ...fresh.profile, ...(parsed.profile || {}) },
           entitlements: { ...fresh.entitlements, ...(parsed.entitlements || {}) },
           customPlan: parsed.customPlan || {},
-        });
+        };
+        // Pro is a 30-day subscription — expire it automatically once the date has passed.
+        if (merged.entitlements.proExpiresAt && merged.entitlements.proExpiresAt < dateKey(0)) {
+          merged.entitlements.trainingPro = false;
+          merged.entitlements.nutritionPro = false;
+          merged.entitlements.proExpiresAt = null;
+        }
+        setDataRaw(merged);
         setLoaded(true);
       },
       (err) => { console.error("Firestore read failed", err); setLoaded(true); }
@@ -362,7 +451,7 @@ function getUsableExercises(data, day) {
 function IconBtn({ children, onClick, style }) {
   const { C } = useUI();
   return (
-    <button onClick={onClick} style={{ width: 34, height: 34, borderRadius: 10, background: C.card2, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", ...style }}>
+    <button onClick={onClick} style={{ width: 34, height: 34, background: C.card2, border: `1px solid ${C.border}`, clipPath: chamfer(7), display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", ...style }}>
       {children}
     </button>
   );
@@ -373,7 +462,7 @@ function TopBar({ title, onBack, right }) {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 18px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {onBack && <IconBtn onClick={onBack}><ChevronLeft size={20} color={C.text} /></IconBtn>}
-        <span style={{ fontSize: 17, fontWeight: 700, color: C.text }}>{title}</span>
+        <span style={{ fontSize: 17, fontWeight: 800, color: C.text, textTransform: "uppercase", letterSpacing: 0.4 }}>{title}</span>
       </div>
       <div>{right}</div>
     </div>
@@ -382,7 +471,7 @@ function TopBar({ title, onBack, right }) {
 function Card({ children, style, onClick }) {
   const { C } = useUI();
   return (
-    <div onClick={onClick} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, cursor: onClick ? "pointer" : "default", ...style }}>
+    <div onClick={onClick} style={{ background: C.card, border: `1px solid ${C.border}`, clipPath: chamfer(14), padding: 16, cursor: onClick ? "pointer" : "default", ...style }}>
       {children}
     </div>
   );
@@ -392,11 +481,12 @@ function GreenButton({ children, onClick, disabled, style, variant = "solid" }) 
   const solid = variant === "solid";
   return (
     <button onClick={onClick} disabled={disabled} style={{
-      width: "100%", padding: "14px 0", borderRadius: 13,
+      width: "100%", padding: "14px 0",
       border: solid ? "none" : `1.5px solid ${C.green}`,
+      clipPath: chamfer(10),
       background: solid ? (disabled ? C.card2 : C.green) : "transparent",
-      color: solid ? (disabled ? C.sub2 : "#062910") : C.green,
-      fontSize: 15, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer",
+      color: solid ? (disabled ? C.sub2 : C.onAccent) : C.green,
+      fontSize: 14, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.6, cursor: disabled ? "not-allowed" : "pointer",
       display: "flex", alignItems: "center", justifyContent: "center", gap: 8, ...style,
     }}>{children}</button>
   );
@@ -405,8 +495,8 @@ function Pill({ active, children, onClick }) {
   const { C } = useUI();
   return (
     <button onClick={onClick} style={{
-      padding: "9px 0", flex: 1, borderRadius: 11, border: "none", cursor: "pointer",
-      background: active ? C.green : "transparent", color: active ? "#062910" : C.sub, fontWeight: 700, fontSize: 13.5,
+      padding: "9px 0", flex: 1, clipPath: chamfer(8), border: "none", cursor: "pointer",
+      background: active ? C.green : "transparent", color: active ? C.onAccent : C.sub, fontWeight: 800, fontSize: 12.5, textTransform: "uppercase", letterSpacing: 0.3,
     }}>{children}</button>
   );
 }
@@ -427,8 +517,8 @@ function TextField({ icon: Icon, type = "text", value, onChange, placeholder, ri
 function ToggleSwitch({ on, onClick }) {
   const { C } = useUI();
   return (
-    <button onClick={onClick} style={{ width: 46, height: 26, borderRadius: 20, border: "none", cursor: "pointer", background: on ? C.green : C.border, position: "relative", flexShrink: 0, transition: "background 0.2s" }}>
-      <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 3, left: on ? 23 : 3, transition: "left 0.2s" }} />
+    <button onClick={onClick} style={{ width: 46, height: 26, borderRadius: 20, border: on ? "none" : `1px solid ${C.border}`, cursor: "pointer", background: on ? C.green : "transparent", position: "relative", flexShrink: 0, transition: "background 0.2s" }}>
+      <div style={{ width: 20, height: 20, borderRadius: "50%", background: on ? C.onAccent : C.sub2, position: "absolute", top: 2, left: on ? 23 : 3, transition: "left 0.2s" }} />
     </button>
   );
 }
@@ -453,7 +543,7 @@ function ConfirmDialog({ title, message, confirmLabel = "Confirm", danger, onCon
         <div style={{ color: C.sub, fontSize: 13.5, lineHeight: 1.5, marginBottom: 18 }}>{message}</div>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onCancel} style={{ flex: 1, padding: "12px 0", borderRadius: 12, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>Cancel</button>
-          <button onClick={onConfirm} style={{ flex: 1, padding: "12px 0", borderRadius: 12, border: "none", background: danger ? C.danger : C.green, color: danger ? "#fff" : "#062910", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>{confirmLabel}</button>
+          <button onClick={onConfirm} style={{ flex: 1, padding: "12px 0", borderRadius: 12, border: "none", background: danger ? C.danger : C.green, color: danger ? "#fff" : C.onAccent, fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>{confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -469,10 +559,9 @@ function Toast({ message }) {
   );
 }
 function AppLogo({ size = 74 }) {
-  const { C } = useUI();
   return (
-    <div style={{ width: size, height: size, borderRadius: size * 0.28, background: C.greenSoft, display: "flex", alignItems: "center", justifyContent: "center", border: `1.5px solid ${C.green}` }}>
-      <Dumbbell size={size * 0.46} color={C.green} strokeWidth={2.2} />
+    <div style={{ width: size, height: size, borderRadius: size * 0.22, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#000" }}>
+      <img src={logoSrc} alt="Fifty" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
     </div>
   );
 }
@@ -500,25 +589,76 @@ function SplashScreen() {
   return (
     <div style={{ height: "100vh", minHeight: 640, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, background: C.bg }}>
       <AppLogo size={84} />
-      <div style={{ color: C.text, fontWeight: 800, fontSize: 22, letterSpacing: 0.3 }}>FitTrack</div>
+      <div style={{ color: C.text, fontWeight: 800, fontSize: 22, letterSpacing: 0.3 }}>Fifty</div>
       <div style={{ color: C.sub, fontSize: 12.5 }}>Loading your progress…</div>
     </div>
   );
 }
-function WelcomeScreen({ go }) {
+function GoogleButton({ onClick }) {
   const { C } = useUI();
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", padding: "0 24px" }}>
+    <button onClick={onClick} style={{
+      width: "100%", padding: "13px 0", borderRadius: 13, border: `1px solid ${C.border}`, background: C.card,
+      color: C.text, fontSize: 14.5, fontWeight: 700, cursor: "pointer",
+      display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+    }}>
+      <svg width="18" height="18" viewBox="0 0 18 18">
+        <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z" />
+        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.96v2.33A9 9 0 0 0 9 18z" />
+        <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.03l2.99-2.33z" />
+        <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.97l2.99 2.33C4.66 5.17 6.65 3.58 9 3.58z" />
+      </svg>
+      Continue with Google
+    </button>
+  );
+}
+
+function LanguageScreen({ onPick }) {
+  const { C } = useUI();
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 28px", gap: 28 }}>
+      <AppLogo size={72} />
+      <div style={{ textAlign: "center" }}>
+        <div style={{ color: C.text, fontSize: 19, fontWeight: 800 }}>Choose your language</div>
+        <div style={{ color: C.sub, fontSize: 13.5, marginTop: 4 }}>اختر لغتك</div>
+      </div>
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
+        <button onClick={() => onPick("ar")} style={{
+          display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", borderRadius: 16, cursor: "pointer",
+          border: `1.5px solid ${C.border}`, background: C.card,
+        }}>
+          <span style={{ fontSize: 28 }}>🇸🇦</span>
+          <span style={{ color: C.text, fontWeight: 700, fontSize: 16 }}>العربية</span>
+        </button>
+        <button onClick={() => onPick("en")} style={{
+          display: "flex", alignItems: "center", gap: 14, padding: "18px 20px", borderRadius: 16, cursor: "pointer",
+          border: `1.5px solid ${C.border}`, background: C.card,
+        }}>
+          <span style={{ fontSize: 28 }}>🇺🇸</span>
+          <span style={{ color: C.text, fontWeight: 700, fontSize: 16 }}>English</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WelcomeScreen({ go }) {
+  const { C, lang } = useUI();
+  const ar = lang === "ar";
+  return (
+    <div dir={ar ? "rtl" : "ltr"} style={{ minHeight: "100vh", display: "flex", flexDirection: "column", padding: "0 24px" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18 }}>
         <AppLogo size={90} />
         <div style={{ textAlign: "center" }}>
-          <div style={{ color: C.text, fontSize: 25, fontWeight: 800 }}>FitTrack</div>
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>Track your workouts, weight and meals — all in one place.</div>
+          <div style={{ color: C.text, fontSize: 25, fontWeight: 800 }}>Fifty</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 8, lineHeight: 1.6 }}>
+            {ar ? "تابع تمارينك ووزنك ووجباتك في مكان واحد." : "Track your workouts, weight and meals — all in one place."}
+          </div>
         </div>
       </div>
       <div style={{ paddingBottom: "calc(36px + env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 12 }}>
-        <GreenButton onClick={() => go("signup")}>Create Account <ArrowRight size={16} /></GreenButton>
-        <GreenButton variant="outline" onClick={() => go("login")}>Log In</GreenButton>
+        <GreenButton onClick={() => go("signup")}>{ar ? "إنشاء حساب" : "Create Account"} <ArrowRight size={16} style={{ transform: ar ? "scaleX(-1)" : "none" }} /></GreenButton>
+        <GreenButton variant="outline" onClick={() => go("login")}>{ar ? "تسجيل الدخول" : "Log In"}</GreenButton>
       </div>
     </div>
   );
@@ -561,6 +701,18 @@ function LoginScreen({ go, showToast }) {
     }
   };
 
+  const googleSignIn = async () => {
+    setError(""); setBusy(true);
+    try {
+      await signInWithGoogleFlow();
+      showToast("Welcome!");
+    } catch (err) {
+      showToast("Google Sign-In failed — please try again");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", padding: "0 24px", paddingTop: "env(safe-area-inset-top)" }}>
       <div style={{ paddingTop: 40, paddingBottom: 20 }}>
@@ -583,6 +735,12 @@ function LoginScreen({ go, showToast }) {
       {resetSent && <div style={{ color: C.green, fontSize: 12, marginTop: 6, textAlign: "right" }}>Check your email for a link to reset your password.</div>}
 
       <div style={{ marginTop: 24 }}><GreenButton onClick={submit} disabled={busy}>{busy ? "Logging in…" : "Log In"}</GreenButton></div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0" }}>
+        <div style={{ flex: 1, height: 1, background: C.border }} /><span style={{ color: C.sub2, fontSize: 11.5 }}>OR</span><div style={{ flex: 1, height: 1, background: C.border }} />
+      </div>
+      <GoogleButton onClick={googleSignIn} />
+
       <div style={{ flex: 1 }} />
       <div style={{ textAlign: "center", paddingBottom: "calc(30px + env(safe-area-inset-bottom))", color: C.sub, fontSize: 13 }}>
         Don't have an account?{" "}
@@ -592,10 +750,11 @@ function LoginScreen({ go, showToast }) {
   );
 }
 
-function SignUpScreen({ go, showToast }) {
+function SignUpScreen({ go, showToast, localLang }) {
   const { C } = useUI();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -606,6 +765,7 @@ function SignUpScreen({ go, showToast }) {
     const e = {};
     if (!name.trim()) e.name = "Enter your name";
     if (!isValidEmail(email)) e.email = "Enter a valid email address";
+    if (!phone.trim() || phone.trim().replace(/\D/g, "").length < 8) e.phone = "Enter a valid phone number";
     const issues = passwordIssues(password);
     if (issues.length) e.password = `Password needs: ${issues.join(", ")}`;
     if (confirm !== password) e.confirm = "Passwords don't match";
@@ -618,11 +778,25 @@ function SignUpScreen({ go, showToast }) {
       const initial = freshState();
       initial.account.name = name.trim();
       initial.account.email = email.trim();
+      initial.account.phone = phone.trim();
+      initial.settings.language = localLang || "en";
       await setDoc(doc(db, "users", cred.user.uid), initial);
       showToast("Account created!");
       // Root component sees the new signed-in user and routes to onboarding automatically.
     } catch (err) {
       setErrors({ email: authErrorMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const googleSignIn = async () => {
+    setBusy(true);
+    try {
+      await signInWithGoogleFlow(localLang);
+      showToast("Welcome!");
+    } catch (err) {
+      showToast("Google Sign-In failed — please try again");
     } finally {
       setBusy(false);
     }
@@ -639,6 +813,7 @@ function SignUpScreen({ go, showToast }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <TextField icon={User} value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" error={errors.name} />
         <TextField icon={Mail} type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" error={errors.email} />
+        <TextField icon={Phone} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone number" error={errors.phone} />
         <TextField icon={Lock} type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password"
           rightEl={<button onClick={() => setShowPw((s) => !s)} style={{ background: "none", border: "none", cursor: "pointer" }}>{showPw ? <EyeOff size={16} color={C.sub} /> : <Eye size={16} color={C.sub} />}</button>}
           error={errors.password} />
@@ -647,6 +822,12 @@ function SignUpScreen({ go, showToast }) {
       </div>
 
       <div style={{ marginTop: 22 }}><GreenButton onClick={submit} disabled={busy}>{busy ? "Creating account…" : "Create Account"}</GreenButton></div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "18px 0" }}>
+        <div style={{ flex: 1, height: 1, background: C.border }} /><span style={{ color: C.sub2, fontSize: 11.5 }}>OR</span><div style={{ flex: 1, height: 1, background: C.border }} />
+      </div>
+      <GoogleButton onClick={googleSignIn} />
+
       <div style={{ flex: 1 }} />
       <div style={{ textAlign: "center", paddingBottom: "calc(30px + env(safe-area-inset-bottom))", color: C.sub, fontSize: 13 }}>
         Already have an account?{" "}
@@ -671,7 +852,7 @@ function GeneratingPlan({ steps, activeIdx }) {
         {steps.map((s, i) => (
           <div key={s} style={{ display: "flex", alignItems: "center", gap: 10, opacity: i <= activeIdx ? 1 : 0.35 }}>
             <div style={{ width: 22, height: 22, borderRadius: "50%", background: i < activeIdx ? C.green : i === activeIdx ? C.greenSoft : C.card2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: i === activeIdx ? `2px solid ${C.green}` : "none" }}>
-              {i < activeIdx && <Check size={13} color="#062910" />}
+              {i < activeIdx && <Check size={13} color={C.onAccent} />}
             </div>
             <span style={{ color: i <= activeIdx ? C.text : C.sub, fontSize: 13.5, fontWeight: i === activeIdx ? 700 : 500 }}>{s}</span>
           </div>
@@ -890,7 +1071,7 @@ function HomeScreen({ data, go }) {
           <Card onClick={() => go("paywall")} style={{ background: C.goldSoft, border: `1px solid ${C.gold}55`, display: "flex", alignItems: "center", gap: 12 }}>
             <Crown size={22} color={C.gold} />
             <div style={{ flex: 1 }}>
-              <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>Unlock FitTrack Pro</div>
+              <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>Unlock Fifty Pro</div>
               <div style={{ color: C.sub, fontSize: 11.5 }}>Personalized plans, full food tracking & more</div>
             </div>
             <ChevronRight size={18} color={C.sub2} />
@@ -930,16 +1111,25 @@ function strengthHistory(data, exerciseId) {
   return out;
 }
 function mealsPct(data, date) {
-  const pro = data.entitlements.nutritionPro;
   const m = data.meals[date] || {};
-  const done = MEAL_ITEMS.filter((it) => (pro ? (m[it.id]?.items?.length > 0) : !!m[it.id])).length;
+  const done = MEAL_ITEMS.filter((it) => m[it.id]?.items?.length > 0).length;
   return Math.round((done / MEAL_ITEMS.length) * 100);
 }
 function dayKcal(data, date) {
-  const pro = data.entitlements.nutritionPro;
   const m = data.meals[date] || {};
-  if (pro) return MEAL_ITEMS.reduce((sum, it) => sum + (m[it.id]?.items || []).reduce((s, i) => s + i.kcal, 0), 0);
-  return MEAL_ITEMS.reduce((sum, it) => sum + (m[it.id] ? it.kcal : 0), 0);
+  return MEAL_ITEMS.reduce((sum, it) => sum + (m[it.id]?.items || []).reduce((s, i) => s + i.kcal, 0), 0);
+}
+function dayMacros(data, date) {
+  const m = data.meals[date] || {};
+  const totals = { protein: 0, carbs: 0, fat: 0 };
+  MEAL_ITEMS.forEach((it) => {
+    (m[it.id]?.items || []).forEach((i) => {
+      totals.protein += i.protein || 0;
+      totals.carbs += i.carbs || 0;
+      totals.fat += i.fat || 0;
+    });
+  });
+  return { protein: Math.round(totals.protein), carbs: Math.round(totals.carbs), fat: Math.round(totals.fat) };
 }
 
 /* ============================== WORKOUT SCREEN ============================== */
@@ -986,8 +1176,8 @@ function WorkoutScreen({ data, setData, go, selectedDay, setSelectedDay, showToa
             const isToday = i === todayIdx;
             return (
               <button key={d} onClick={() => setSelectedDay(d)} style={{ minWidth: 44, padding: "10px 0", borderRadius: 12, cursor: "pointer", border: isToday && !isSelected ? `1px solid ${C.green}` : "1px solid transparent", background: isSelected ? C.green : C.card2, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                <span style={{ fontSize: 11, color: isSelected ? "#062910" : C.sub, fontWeight: 600 }}>{d}</span>
-                <span style={{ fontSize: 13, color: isSelected ? "#062910" : C.text, fontWeight: 700 }}>{(() => { const dt = new Date(); dt.setDate(dt.getDate() - todayIdx + i); return dt.getDate(); })()}</span>
+                <span style={{ fontSize: 11, color: isSelected ? C.onAccent : C.sub, fontWeight: 600 }}>{d}</span>
+                <span style={{ fontSize: 13, color: isSelected ? C.onAccent : C.text, fontWeight: 700 }}>{(() => { const dt = new Date(); dt.setDate(dt.getDate() - todayIdx + i); return dt.getDate(); })()}</span>
               </button>
             );
           })}
@@ -1010,7 +1200,7 @@ function WorkoutScreen({ data, setData, go, selectedDay, setSelectedDay, showToa
             <Card key={ex.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12 }}>
               <div onClick={() => go("exercise", { exerciseId: ex.id, day: selectedDay })} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer" }}>
                 <div style={{ width: 44, height: 44, borderRadius: 10, background: C.card2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  {done ? <Check size={20} color={C.green} /> : <Dumbbell size={19} color={C.sub} />}
+                  {done ? <Check size={20} color={C.green} /> : <span style={{ fontSize: 21 }}>{ex.emoji || "🏋️"}</span>}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: C.text, fontWeight: 700, fontSize: 14.5 }}>{i + 1}. {ex.name}</div>
@@ -1119,7 +1309,7 @@ function ExerciseScreen({ data, setData, back, exerciseId, day, showToast, award
                 <div style={{ flex: 1, paddingRight: 8 }}><input type="number" value={s.weight} onChange={(e) => updateField(idx, "weight", e.target.value)} style={inputBoxStyle(C)} /></div>
                 <div style={{ flex: 1, paddingRight: 8 }}><input type="number" value={s.reps} onChange={(e) => updateField(idx, "reps", e.target.value)} style={inputBoxStyle(C)} /></div>
                 <div style={{ width: 40, display: "flex", justifyContent: "center" }}>
-                  <button onClick={() => toggleDone(idx)} style={{ width: 26, height: 26, borderRadius: "50%", border: `2px solid ${s.done ? C.green : C.border}`, background: s.done ? C.green : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{s.done && <Check size={15} color="#062910" />}</button>
+                  <button onClick={() => toggleDone(idx)} style={{ width: 26, height: 26, borderRadius: "50%", border: `2px solid ${s.done ? C.green : C.border}`, background: s.done ? C.green : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{s.done && <Check size={15} color={C.onAccent} />}</button>
                 </div>
               </div>
             ))}
@@ -1412,39 +1602,50 @@ function MealsScreen({ data, setData, back, showToast, go }) {
   const meals = data.meals[today] || {};
   const pct = mealsPct(data, today);
   const totalKcal = dayKcal(data, today);
+  const macros = dayMacros(data, today);
+  const plan = data.nutritionPlan;
 
-  const toggleSimple = (id) => {
-    const next = clone(data);
-    if (!next.meals[today]) next.meals[today] = {};
-    next.meals[today][id] = !next.meals[today][id];
-    setData(next);
-    if (next.meals[today][id]) showToast(`${MEAL_ITEMS.find((m) => m.id === id).name} logged`);
-  };
   const removeItem = (mealId, itemIdx) => {
     const next = clone(data);
     next.meals[today][mealId].items.splice(itemIdx, 1);
     setData(next);
   };
+  const markPlanSeen = () => {
+    if (!data.nutritionPlan?.unread) return;
+    const next = clone(data);
+    next.nutritionPlan.unread = false;
+    setData(next);
+  };
 
   return (
     <div>
-      <TopBar title="Nutrition" onBack={back} right={pro ? <span style={{ display: "flex" }}><ProBadge small /></span> : null} />
+      <TopBar title="Nutrition" onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <Card style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <ProgressRing pct={pct} size={62} stroke={6} />
           <div>
-            <div style={{ color: C.text, fontSize: 20, fontWeight: 800 }}>{pct}%</div>
-            <div style={{ color: C.sub, fontSize: 12.5 }}>of today's meals logged</div>
-            <div style={{ color: C.sub2, fontSize: 11.5, marginTop: 2 }}>{totalKcal} kcal today{!pro && " (estimated)"}</div>
+            <div style={{ color: C.text, fontSize: 20, fontWeight: 800 }}>{totalKcal} kcal</div>
+            <div style={{ color: C.sub, fontSize: 12.5 }}>{pct}% of today's meals logged</div>
+            <div style={{ color: C.sub2, fontSize: 11, marginTop: 3 }}>P {macros.protein}g · C {macros.carbs}g · F {macros.fat}g</div>
           </div>
         </Card>
 
-        {!pro && (
+        {pro && plan ? (
+          <Card onClick={markPlanSeen} style={{ marginTop: 14, background: C.greenSoft, border: `1px solid ${C.green}55` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <Sparkles size={18} color={C.green} />
+              <span style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>Your Personalized Diet Plan</span>
+              {plan.unread && <span style={{ background: C.green, color: C.onAccent, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 20 }}>NEW</span>}
+            </div>
+            <div style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>Target: {plan.targetKcal} kcal · P {plan.targetProtein}g · C {plan.targetCarbs}g · F {plan.targetFat}g</div>
+            <div style={{ color: C.text, fontSize: 12.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{plan.notes}</div>
+          </Card>
+        ) : (
           <Card onClick={() => go("paywall")} style={{ marginTop: 14, background: C.goldSoft, border: `1px solid ${C.gold}55`, display: "flex", alignItems: "center", gap: 12 }}>
             <Crown size={20} color={C.gold} />
             <div style={{ flex: 1 }}>
-              <div style={{ color: C.text, fontWeight: 700, fontSize: 13 }}>Track exact calories per food</div>
-              <div style={{ color: C.sub, fontSize: 11.5 }}>Unlock the full food database with Nutrition Pro</div>
+              <div style={{ color: C.text, fontWeight: 700, fontSize: 13 }}>Get a full diet plan made for you</div>
+              <div style={{ color: C.sub, fontSize: 11.5 }}>Personalized by your goal & body — Nutrition Pro</div>
             </div>
             <ChevronRight size={16} color={C.sub2} />
           </Card>
@@ -1453,16 +1654,6 @@ function MealsScreen({ data, setData, back, showToast, go }) {
         <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
           {MEAL_ITEMS.map((m) => {
             const Icon = m.icon;
-            if (!pro) {
-              const done = !!meals[m.id];
-              return (
-                <Card key={m.id} onClick={() => toggleSimple(m.id)} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 42, height: 42, borderRadius: 11, background: done ? C.greenSoft : C.card2, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={19} color={done ? C.green : C.sub} /></div>
-                  <div style={{ flex: 1 }}><div style={{ color: C.text, fontWeight: 700, fontSize: 14 }}>{m.name}</div><div style={{ color: C.sub, fontSize: 12 }}>~{m.kcal} kcal</div></div>
-                  <div style={{ width: 26, height: 26, borderRadius: "50%", border: `2px solid ${done ? C.green : C.border}`, background: done ? C.green : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>{done && <Check size={15} color="#062910" />}</div>
-                </Card>
-              );
-            }
             const items = meals[m.id]?.items || [];
             const mealKcal = items.reduce((s, i) => s + i.kcal, 0);
             return (
@@ -1476,7 +1667,10 @@ function MealsScreen({ data, setData, back, showToast, go }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {items.map((it, idx) => (
                       <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.card2, borderRadius: 9, padding: "8px 10px" }}>
-                        <span style={{ color: C.text, fontSize: 12.5 }}>{it.name} · {it.grams}g</span>
+                        <div>
+                          <div style={{ color: C.text, fontSize: 12.5 }}>{it.name} · {it.grams}g</div>
+                          <div style={{ color: C.sub2, fontSize: 10.5, marginTop: 1 }}>P {it.protein ?? 0}g · C {it.carbs ?? 0}g · F {it.fat ?? 0}g</div>
+                        </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ color: C.sub, fontSize: 12 }}>{it.kcal} kcal</span>
                           <button onClick={() => removeItem(m.id, idx)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={13} color={C.sub2} /></button>
@@ -1504,7 +1698,11 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
 
   const results = FOOD_DB.filter((f) => f.name.toLowerCase().includes(query.toLowerCase()));
   const mealName = MEAL_ITEMS.find((m) => m.id === mealId)?.name || "Meal";
-  const kcalPreview = selected ? Math.round((selected.kcal / 100) * Number(grams || 0)) : 0;
+  const scale = selected ? Number(grams || 0) / 100 : 0;
+  const kcalPreview = selected ? Math.round(selected.kcal * scale) : 0;
+  const proteinPreview = selected ? Math.round(selected.protein * scale) : 0;
+  const carbsPreview = selected ? Math.round(selected.carbs * scale) : 0;
+  const fatPreview = selected ? Math.round(selected.fat * scale) : 0;
 
   const addItem = () => {
     if (!selected || !grams || grams <= 0) { showToast("Enter a valid amount"); return; }
@@ -1512,7 +1710,10 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
     if (!next.meals[today]) next.meals[today] = {};
     if (!next.meals[today][mealId]) next.meals[today][mealId] = { items: [] };
     if (!next.meals[today][mealId].items) next.meals[today][mealId].items = [];
-    next.meals[today][mealId].items.push({ name: selected.name, grams: Number(grams), kcal: kcalPreview });
+    next.meals[today][mealId].items.push({
+      name: selected.name, grams: Number(grams),
+      kcal: kcalPreview, protein: proteinPreview, carbs: carbsPreview, fat: fatPreview,
+    });
     setData(next);
     showToast(`${selected.name} added to ${mealName}`);
     setSelected(null); setGrams(100); setQuery("");
@@ -1523,11 +1724,14 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
       <TopBar title={`Add to ${mealName}`} onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <TextField icon={Search} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search foods (e.g. rice, chicken, potato)" />
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, maxHeight: 340, overflowY: "auto" }}>
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8, paddingBottom: selected ? 170 : 20 }}>
           {results.map((f) => (
-            <Card key={f.id} onClick={() => setSelected(f)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", border: selected?.id === f.id ? `1.5px solid ${C.green}` : `1px solid ${C.border}` }}>
-              <span style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{f.name}</span>
-              <span style={{ color: C.sub, fontSize: 12 }}>{f.kcal} kcal/100g</span>
+            <Card key={f.id} onClick={() => setSelected(f)} style={{ padding: "12px 14px", border: selected?.id === f.id ? `1.5px solid ${C.green}` : `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>{f.name}</span>
+                <span style={{ color: C.sub, fontSize: 12 }}>{f.kcal} kcal/100g</span>
+              </div>
+              <div style={{ color: C.sub2, fontSize: 11, marginTop: 4 }}>P {f.protein}g · C {f.carbs}g · F {f.fat}g</div>
             </Card>
           ))}
           {results.length === 0 && <div style={{ textAlign: "center", color: C.sub, fontSize: 13, padding: 20 }}>No foods match "{query}"</div>}
@@ -1548,6 +1752,9 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
               </div>
             </div>
             <div style={{ color: C.green, fontWeight: 800, fontSize: 15, minWidth: 76, textAlign: "right" }}>{kcalPreview} kcal</div>
+          </div>
+          <div style={{ display: "flex", gap: 12, marginTop: 8, justifyContent: "flex-end", color: C.sub, fontSize: 11.5 }}>
+            <span>Protein {proteinPreview}g</span><span>Carbs {carbsPreview}g</span><span>Fat {fatPreview}g</span>
           </div>
           <div style={{ marginTop: 12 }}><GreenButton onClick={addItem}>Add to Meal</GreenButton></div>
         </div>
@@ -1604,7 +1811,7 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
           <div><div style={{ color: C.text, fontWeight: 700, fontSize: 15 }}>{plan.name}</div><div style={{ color: C.sub, fontSize: 12 }}>{plan.tagline}</div></div>
         </Card>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 12 }}>
-          {DAYS.map((d) => (<button key={d} onClick={() => setDay(d)} style={{ minWidth: 46, padding: "8px 0", borderRadius: 10, cursor: "pointer", border: "none", background: day === d ? C.green : C.card2, color: day === d ? "#062910" : C.sub, fontWeight: 700, fontSize: 12 }}>{d}</button>))}
+          {DAYS.map((d) => (<button key={d} onClick={() => setDay(d)} style={{ minWidth: 46, padding: "8px 0", borderRadius: 10, cursor: "pointer", border: "none", background: day === d ? C.green : C.card2, color: day === d ? C.onAccent : C.sub, fontWeight: 700, fontSize: 12 }}>{d}</button>))}
         </div>
         <div style={{ color: C.text, fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{daySchedule.title}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1626,27 +1833,29 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
 /* ============================== PAYWALL ============================== */
 function PaywallScreen({ data, setData, back, showToast }) {
   const { C } = useUI();
-  const purchase = (type) => {
+  const purchase = async (type) => {
     const next = clone(data);
     if (type === "nutrition" || type === "both") next.entitlements.nutritionPro = true;
     if (type === "training" || type === "both") next.entitlements.trainingPro = true;
+    next.entitlements.proExpiresAt = dateKey(30); // 1-month subscription
     setData(next);
-    showToast("Unlocked! (demo purchase)");
+    try { await scheduleSubscriptionExpiryReminder(next.entitlements.proExpiresAt); } catch (e) { /* not on native yet */ }
+    showToast("Unlocked for 30 days! (demo purchase)");
     back();
   };
   const options = [
-    { id: "training", title: "Training Pro", price: "100 EGP", features: ["Unlimited exercises per workout day", "Personalized plan by your goal, weight & height", "Full body-weight history, never deleted", "Daily & monthly progress comparisons"] },
-    { id: "nutrition", title: "Nutrition Pro", price: "100 EGP", features: ["Full food database with real calories", "Log multiple foods per meal by gram weight", "Exact daily calorie totals"] },
-    { id: "both", title: "Training + Nutrition", price: "150 EGP", best: true, features: ["Everything in both plans above", "Best value — save 50 EGP"] },
+    { id: "training", title: "Training Pro", price: "100 EGP / month", features: ["Unlimited exercises per workout day", "Personalized workout plan by your goal, weight & height", "Full body-weight history, never deleted", "Daily & monthly progress comparisons"] },
+    { id: "nutrition", title: "Nutrition Pro", price: "100 EGP / month", features: ["A complete diet plan built for your body & goal", "Exact daily targets for calories, protein, carbs & fat", "Updated as your weight and goal change"] },
+    { id: "both", title: "Training + Nutrition", price: "150 EGP / month", best: true, features: ["Everything in both plans above", "Best value — save 50 EGP"] },
   ];
   return (
     <div>
-      <TopBar title="FitTrack Pro" onBack={back} />
+      <TopBar title="Fifty Pro" onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <div style={{ textAlign: "center", marginBottom: 18 }}>
           <Crown size={30} color={C.gold} />
-          <div style={{ color: C.text, fontSize: 18, fontWeight: 800, marginTop: 8 }}>Get more out of FitTrack</div>
-          <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>Choose the upgrade that fits you</div>
+          <div style={{ color: C.text, fontSize: 18, fontWeight: 800, marginTop: 8 }}>Get more out of Fifty</div>
+          <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>Billed monthly, cancel anytime</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {options.map((o) => (
@@ -1654,7 +1863,7 @@ function PaywallScreen({ data, setData, back, showToast }) {
               {o.best && <div style={{ position: "absolute", top: -10, right: 14, background: C.gold, color: "#1a1200", fontSize: 10, fontWeight: 800, padding: "3px 10px", borderRadius: 20 }}>BEST VALUE</div>}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <span style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>{o.title}</span>
-                <span style={{ color: C.green, fontWeight: 800, fontSize: 15 }}>{o.price}</span>
+                <span style={{ color: C.green, fontWeight: 800, fontSize: 14 }}>{o.price}</span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
                 {o.features.map((f) => (<div key={f} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}><Check size={14} color={C.green} style={{ marginTop: 2, flexShrink: 0 }} /><span style={{ color: C.sub, fontSize: 12.5, lineHeight: 1.4 }}>{f}</span></div>))}
@@ -1672,7 +1881,7 @@ function PaywallScreen({ data, setData, back, showToast }) {
 }
 
 /* ============================== PROFILE SCREEN ============================== */
-function ProfileScreen({ data, go }) {
+function ProfileScreen({ data, go, isAdmin }) {
   const { C } = useUI();
   const p = data.profile;
   const pct = Math.round((p.xp / p.xpMax) * 100);
@@ -1684,6 +1893,7 @@ function ProfileScreen({ data, go }) {
     { icon: Bell, label: "Reminders", to: "reminders" },
     { icon: SettingsIcon, label: "Settings", to: "settings" },
     { icon: HelpCircle, label: "Help & Support", to: "help" },
+    ...(isAdmin ? [{ icon: Shield, label: "Admin", to: "admin" }] : []),
   ];
   return (
     <div>
@@ -1698,7 +1908,18 @@ function ProfileScreen({ data, go }) {
         </div>
       </div>
 
-      {!pro && (
+      {pro ? (
+        <div style={{ padding: "16px 18px 0" }}>
+          <Card onClick={() => go("paywall")} style={{ background: C.greenSoft, border: `1px solid ${C.green}55`, display: "flex", alignItems: "center", gap: 12 }}>
+            <Crown size={20} color={C.gold} />
+            <div style={{ flex: 1 }}>
+              <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>Pro is active</div>
+              <div style={{ color: C.sub, fontSize: 11.5 }}>{daysUntil(data.entitlements.proExpiresAt)} days left this month</div>
+            </div>
+            <ChevronRight size={16} color={C.sub2} />
+          </Card>
+        </div>
+      ) : (
         <div style={{ padding: "16px 18px 0" }}>
           <Card onClick={() => go("paywall")} style={{ background: C.goldSoft, border: `1px solid ${C.gold}55`, display: "flex", alignItems: "center", gap: 12 }}>
             <Crown size={20} color={C.gold} />
@@ -1762,7 +1983,7 @@ function PersonalInfoScreen({ data, setData, back, showToast }) {
           <div style={{ position: "relative" }}>
             <Avatar photo={photo} size={84} />
             <button onClick={() => fileRef.current?.click()} style={{ position: "absolute", bottom: -2, right: -2, width: 30, height: 30, borderRadius: "50%", background: C.green, border: `2px solid ${C.card}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <Camera size={14} color="#062910" />
+              <Camera size={14} color={C.onAccent} />
             </button>
             <input ref={fileRef} type="file" accept="image/*" onChange={onPickPhoto} style={{ display: "none" }} />
           </div>
@@ -1836,15 +2057,14 @@ function RemindersScreen({ data, setData, back, showToast }) {
   const { C } = useUI();
   const [time, setTime] = useState(data.settings.reminderTime);
   const [on, setOn] = useState(data.settings.notifications);
-  const [notifSupported] = useState(typeof window !== "undefined" && "Notification" in window);
+  const [busy, setBusy] = useState(false);
 
   const requestPermission = async () => {
-    if (!notifSupported) { showToast("Notifications aren't supported in this preview browser"); return false; }
     try {
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") { showToast("Notification permission was denied"); return false; }
+      const perm = await LocalNotifications.requestPermissions();
+      if (perm.display !== "granted") { showToast("Notification permission was denied — enable it in your phone's app settings"); return false; }
       return true;
-    } catch (e) { showToast("Notifications need a real installed app to work fully"); return false; }
+    } catch (e) { showToast("Notifications aren't available here — this needs the installed Android app"); return false; }
   };
 
   const handleToggle = async () => {
@@ -1852,17 +2072,31 @@ function RemindersScreen({ data, setData, back, showToast }) {
     setOn((s) => !s);
   };
 
-  const sendTest = () => {
-    if (!notifSupported || Notification.permission !== "granted") { showToast("Turn on reminders first"); return; }
-    try { new Notification("FitTrack", { body: "Don't forget today's workout! 💪" }); showToast("Test notification sent"); }
-    catch (e) { showToast("Test notifications aren't available in this preview — they'll work in the installed app"); }
+  const sendTest = async () => {
+    setBusy(true);
+    try {
+      const perm = await LocalNotifications.checkPermissions();
+      if (perm.display !== "granted") { const granted = await requestPermission(); if (!granted) { setBusy(false); return; } }
+      await LocalNotifications.schedule({
+        notifications: [{ id: 9999, title: "Fifty", body: "Don't forget today's workout! 💪", schedule: { at: new Date(Date.now() + 3000) } }],
+      });
+      showToast("Test notification will appear in a few seconds");
+    } catch (e) {
+      showToast("Couldn't schedule a test notification — this needs the installed Android app");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const save = () => {
+  const save = async () => {
     const next = clone(data);
     next.settings.reminderTime = time;
     next.settings.notifications = on;
     setData(next);
+    try {
+      if (on) await scheduleDailyReminder(time);
+      else await cancelDailyReminder();
+    } catch (e) { /* not running in the native app yet — settings still saved */ }
     showToast(on ? `Daily reminder set for ${time}` : "Reminders turned off");
     back();
   };
@@ -1875,12 +2109,11 @@ function RemindersScreen({ data, setData, back, showToast }) {
           <div><div style={{ color: C.text, fontWeight: 700, fontSize: 14 }}>Daily Workout Reminder</div><div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>Get nudged to log your session</div></div>
           <ToggleSwitch on={on} onClick={handleToggle} />
         </Card>
-        {!notifSupported && <div style={{ color: C.sub2, fontSize: 11.5, marginBottom: 14, lineHeight: 1.5 }}>This browser preview doesn't support notifications — this works normally once installed as an app on your phone.</div>}
         {on && (
           <Card style={{ marginBottom: 14 }}>
             <div style={{ color: C.sub, fontSize: 12, marginBottom: 8 }}>Reminder Time</div>
             <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: "100%", background: C.card2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, padding: "10px 12px", fontSize: 14, outline: "none" }} />
-            <div style={{ marginTop: 10 }}><GreenButton variant="outline" onClick={sendTest}>Send Test Notification</GreenButton></div>
+            <div style={{ marginTop: 10 }}><GreenButton variant="outline" onClick={sendTest} disabled={busy}>{busy ? "Sending…" : "Send Test Notification"}</GreenButton></div>
           </Card>
         )}
         <GreenButton onClick={save}>Save</GreenButton>
@@ -1906,10 +2139,14 @@ function HelpScreen({ back, showToast }) {
     <div>
       <TopBar title="Help & Support" onBack={back} />
       <div style={{ padding: "0 18px", display: "flex", flexDirection: "column", gap: 10 }}>
-        <Card onClick={openWhatsApp} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(37,211,102,0.12)", border: "1px solid rgba(37,211,102,0.4)" }}>
-          <div style={{ width: 42, height: 42, borderRadius: 11, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center" }}><MessageCircle size={21} color="#fff" /></div>
-          <div style={{ flex: 1 }}><div style={{ color: C.text, fontWeight: 700, fontSize: 14 }}>Chat with us on WhatsApp</div><div style={{ color: C.sub, fontSize: 12 }}>+{WHATSAPP_NUMBER}</div></div>
-          <ChevronRight size={16} color={C.sub2} />
+        <Card onClick={openWhatsApp} style={{ display: "flex", alignItems: "center", gap: 16, padding: 20, background: "rgba(37,211,102,0.14)", border: "1.5px solid rgba(37,211,102,0.5)" }}>
+          <div style={{ width: 58, height: 58, borderRadius: 16, background: "#25D366", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><MessageCircle size={30} color="#fff" /></div>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: C.text, fontWeight: 800, fontSize: 16 }}>Chat with us on WhatsApp</div>
+            <div style={{ color: C.sub, fontSize: 13, marginTop: 2 }}>We usually reply within a few hours</div>
+            <div style={{ color: "#25D366", fontSize: 13, fontWeight: 700, marginTop: 4 }}>+{WHATSAPP_NUMBER}</div>
+          </div>
+          <ChevronRight size={20} color={C.sub2} />
         </Card>
         {faqs.map((f) => (
           <Card key={f.q}><div style={{ color: C.text, fontWeight: 700, fontSize: 13.5, marginBottom: 6 }}>{f.q}</div><div style={{ color: C.sub, fontSize: 12.5, lineHeight: 1.6 }}>{f.a}</div></Card>
@@ -1962,8 +2199,204 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
         <Card onClick={() => go("logout")} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
           <LogOut size={18} color={C.danger} /><span style={{ flex: 1, color: C.danger, fontSize: 14, fontWeight: 600 }}>Logout</span>
         </Card>
-        <div style={{ textAlign: "center", color: C.sub2, fontSize: 11.5, margin: "18px 0" }}>FitTrack · Version 1.0.0</div>
+        <div style={{ textAlign: "center", color: C.sub2, fontSize: 11.5, margin: "18px 0" }}>Fifty · Version 1.0.0</div>
       </div>
+    </div>
+  );
+}
+
+/* ============================== ADMIN ============================== */
+function AdminScreen({ back, showToast }) {
+  const { C } = useUI();
+  const [searchEmail, setSearchEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [foundUid, setFoundUid] = useState(null);
+  const [userData, setUserData] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [planKcal, setPlanKcal] = useState("");
+  const [planProtein, setPlanProtein] = useState("");
+  const [planCarbs, setPlanCarbs] = useState("");
+  const [planFat, setPlanFat] = useState("");
+  const [planNotes, setPlanNotes] = useState("");
+
+  const search = async () => {
+    setError(""); setFoundUid(null); setUserData(null);
+    if (!searchEmail || !isValidEmail(searchEmail)) { setError("Enter a valid email address"); return; }
+    setLoading(true);
+    try {
+      const q = query(collection(db, "users"), where("account.email", "==", searchEmail.trim()));
+      const snap = await getDocs(q);
+      if (snap.empty) { setError("No user found with that email"); return; }
+      const first = snap.docs[0];
+      setFoundUid(first.id);
+      setUserData(first.data());
+      const existingPlan = first.data().nutritionPlan;
+      setPlanKcal(existingPlan?.targetKcal ?? "");
+      setPlanProtein(existingPlan?.targetProtein ?? "");
+      setPlanCarbs(existingPlan?.targetCarbs ?? "");
+      setPlanFat(existingPlan?.targetFat ?? "");
+      setPlanNotes(existingPlan?.notes ?? "");
+    } catch (e) {
+      setError("Search failed — check your connection and that you're an admin");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const save = async () => {
+    if (!foundUid || !userData) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, "users", foundUid), userData);
+      showToast("User data saved");
+    } catch (e) {
+      showToast("Save failed — check your connection");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sendPlan = async () => {
+    if (!foundUid) return;
+    if (!planKcal) { showToast("Enter at least a target calorie goal"); return; }
+    const plan = {
+      targetKcal: Number(planKcal) || 0,
+      targetProtein: Number(planProtein) || 0,
+      targetCarbs: Number(planCarbs) || 0,
+      targetFat: Number(planFat) || 0,
+      notes: planNotes,
+      unread: true,
+      deliveredAt: dateKey(0),
+    };
+    const nextUserData = { ...userData, nutritionPlan: plan };
+    setUserData(nextUserData);
+    setSaving(true);
+    try {
+      await setDoc(doc(db, "users", foundUid), nextUserData);
+      showToast("Diet plan delivered — they'll see it next time they open the app");
+    } catch (e) {
+      showToast("Failed to send — check your connection");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const update = (path, value) => {
+    setUserData((prev) => {
+      const next = clone(prev);
+      let obj = next;
+      for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+      obj[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+
+  const dates = userData ? Object.keys(userData.logs || {}).sort().reverse() : [];
+
+  return (
+    <div>
+      <TopBar title="Admin" onBack={back} />
+      <div style={{ padding: "0 18px" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <TextField icon={Search} value={searchEmail} onChange={(e) => setSearchEmail(e.target.value)} placeholder="Search user by email" />
+          </div>
+        </div>
+        <GreenButton onClick={search} disabled={loading}>{loading ? "Searching…" : "Search"}</GreenButton>
+        {error && <div style={{ color: C.danger, fontSize: 12.5, marginTop: 10 }}>{error}</div>}
+
+        {userData && (
+          <div style={{ marginTop: 20 }}>
+            <Card style={{ marginBottom: 14 }}>
+              <div style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>{userData.account?.name || "(no name)"}</div>
+              <div style={{ color: C.sub, fontSize: 12.5 }}>{userData.account?.email}</div>
+              <div style={{ color: C.sub2, fontSize: 11, marginTop: 4 }}>UID: {foundUid}</div>
+            </Card>
+
+            <div style={{ color: C.sub, fontSize: 12, fontWeight: 700, margin: "6px 0 10px" }}>ENTITLEMENTS</div>
+            <Card style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>Training Pro</span>
+                <ToggleSwitch on={!!userData.entitlements?.trainingPro} onClick={() => update(["entitlements", "trainingPro"], !userData.entitlements?.trainingPro)} />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ color: C.text, fontSize: 13.5, fontWeight: 600 }}>Nutrition Pro</span>
+                <ToggleSwitch on={!!userData.entitlements?.nutritionPro} onClick={() => update(["entitlements", "nutritionPro"], !userData.entitlements?.nutritionPro)} />
+              </div>
+            </Card>
+
+            <div style={{ color: C.sub, fontSize: 12, fontWeight: 700, margin: "6px 0 10px" }}>PERSONALIZED DIET PLAN</div>
+            <Card style={{ marginBottom: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>Calories</div>
+                  <input type="number" value={planKcal} onChange={(e) => setPlanKcal(e.target.value)} placeholder="2200" style={inputBoxStyle(C)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>Protein (g)</div>
+                  <input type="number" value={planProtein} onChange={(e) => setPlanProtein(e.target.value)} placeholder="150" style={inputBoxStyle(C)} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>Carbs (g)</div>
+                  <input type="number" value={planCarbs} onChange={(e) => setPlanCarbs(e.target.value)} placeholder="220" style={inputBoxStyle(C)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>Fat (g)</div>
+                  <input type="number" value={planFat} onChange={(e) => setPlanFat(e.target.value)} placeholder="70" style={inputBoxStyle(C)} />
+                </div>
+              </div>
+              <div>
+                <div style={{ color: C.sub, fontSize: 11, marginBottom: 4 }}>Notes / meal suggestions</div>
+                <textarea value={planNotes} onChange={(e) => setPlanNotes(e.target.value)} rows={5} placeholder="e.g. Breakfast: oats + eggs. Lunch: chicken + rice + salad. Dinner: fish + vegetables..."
+                  style={{ width: "100%", background: C.card2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.text, padding: "10px 12px", fontSize: 13, outline: "none", resize: "vertical", fontFamily: "inherit" }} />
+              </div>
+              <GreenButton onClick={sendPlan} disabled={saving}>{saving ? "Sending…" : userData.nutritionPlan ? "Update & Redeliver Plan" : "Send Plan to User"}</GreenButton>
+            </Card>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+              {(userData.bodyWeight || []).map((w, i) => (
+                <Card key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10 }}>
+                  <span style={{ color: C.sub, fontSize: 12, width: 90 }}>{w.date}</span>
+                  <input type="number" value={w.weight} onChange={(e) => update(["bodyWeight", i, "weight"], Number(e.target.value))} style={inputBoxStyle(C)} />
+                  <button onClick={() => update(["bodyWeight"], userData.bodyWeight.filter((_, idx) => idx !== i))} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={15} color={C.sub2} /></button>
+                </Card>
+              ))}
+              {(!userData.bodyWeight || userData.bodyWeight.length === 0) && <Card style={{ textAlign: "center", color: C.sub, padding: 16 }}>No entries</Card>}
+            </div>
+
+            <div style={{ color: C.sub, fontSize: 12, fontWeight: 700, margin: "6px 0 10px" }}>WORKOUT LOGS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+              {dates.length === 0 && <Card style={{ textAlign: "center", color: C.sub, padding: 16 }}>No workout logs yet</Card>}
+              {dates.map((d) => (
+                <Card key={d}>
+                  <div style={{ color: C.text, fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{d}</div>
+                  {Object.entries(userData.logs[d]).map(([exId, exLog]) => (
+                    <div key={exId} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ color: C.sub, fontSize: 12, fontWeight: 600 }}>{exId} {exLog.finished ? "✓" : ""}</span>
+                        <button onClick={() => { const l = clone(userData.logs); delete l[d][exId]; update(["logs"], l); }} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={13} color={C.sub2} /></button>
+                      </div>
+                      {(exLog.sets || []).map((s, si) => (
+                        <div key={si} style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "center" }}>
+                          <span style={{ color: C.sub2, fontSize: 11, width: 14 }}>{si + 1}</span>
+                          <input type="number" value={s.weight} onChange={(e) => { const l = clone(userData.logs); l[d][exId].sets[si].weight = Number(e.target.value); update(["logs"], l); }} style={inputBoxStyle(C)} />
+                          <input type="number" value={s.reps} onChange={(e) => { const l = clone(userData.logs); l[d][exId].sets[si].reps = Number(e.target.value); update(["logs"], l); }} style={inputBoxStyle(C)} />
+                          <button onClick={() => { const l = clone(userData.logs); l[d][exId].sets[si].done = !l[d][exId].sets[si].done; update(["logs"], l); }} style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${s.done ? C.green : C.border}`, background: s.done ? C.green : "transparent", flexShrink: 0, cursor: "pointer" }} />
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </Card>
+              ))}
+            </div>
+
+            <GreenButton onClick={save} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</GreenButton>
+          </div>
+        )}
+      </div>
+      <div style={{ height: 20 }} />
     </div>
   );
 }
@@ -1980,8 +2413,17 @@ function BottomNav({ active, onChange }) {
       {items.map((it) => {
         const Icon = it.icon; const isActive = active === it.id;
         return (
-          <button key={it.id} onClick={() => onChange(it.id)} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, color: isActive ? C.green : C.sub2, padding: "4px 0" }}>
-            <Icon size={21} strokeWidth={isActive ? 2.4 : 1.8} /><span style={{ fontSize: 10.5, fontWeight: isActive ? 700 : 500 }}>{it.label}</span>
+          <button key={it.id} onClick={() => onChange(it.id)} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "5px 0", minHeight: 38 }}>
+            {isActive ? (
+              <div style={{ width: 46, height: 32, borderRadius: 20, background: C.green, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon size={19} color={C.onAccent} strokeWidth={2.4} />
+              </div>
+            ) : (
+              <>
+                <Icon size={21} color={C.sub2} strokeWidth={1.8} />
+                <span style={{ fontSize: 10.5, fontWeight: 500, color: C.sub2, marginTop: 4 }}>{it.label}</span>
+              </>
+            )}
           </button>
         );
       })}
@@ -1993,7 +2435,15 @@ function BottomNav({ active, onChange }) {
 export default function GymApp() {
   const firebaseUser = useFirebaseSession(); // undefined = checking, null = signed out, object = signed in
   const { data, setData, loaded } = useAppData(firebaseUser?.uid);
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (!firebaseUser) { setIsAdmin(false); return; }
+    getDoc(doc(db, "admins", firebaseUser.uid)).then((snap) => setIsAdmin(snap.exists())).catch(() => setIsAdmin(false));
+  }, [firebaseUser]);
   const [phase, setPhase] = useState("splash");
+  const [localLang, setLocalLang] = useState(() => {
+    try { return localStorage.getItem("50fit-lang"); } catch (e) { return null; }
+  });
   const [screen, setScreen] = useState("home");
   const [params, setParams] = useState({});
   const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);
@@ -2010,10 +2460,16 @@ export default function GymApp() {
 
   useEffect(() => {
     if (firebaseUser === undefined) return; // Firebase hasn't reported yet — stay on splash
-    if (firebaseUser === null) { setPhase("welcome"); return; }
+    if (firebaseUser === null) { setPhase(localLang ? "welcome" : "language"); return; }
     if (!loaded) return; // signed in, waiting on their Firestore document to load
     setPhase(data.onboarded ? "app" : "onboarding");
   }, [firebaseUser, loaded]); // eslint-disable-line
+
+  const pickLanguage = (lang) => {
+    try { localStorage.setItem("50fit-lang", lang); } catch (e) {}
+    setLocalLang(lang);
+    setPhase("welcome");
+  };
 
   const go = (s, p = {}) => {
     if (s === "logout") { setConfirmLogoutOpen(true); return; }
@@ -2030,6 +2486,29 @@ export default function GymApp() {
   };
   const tabs = ["home", "workout", "progress", "plans", "profile"];
   const onNavChange = (id) => { setNavHistory([]); setScreen(id); setParams({}); };
+
+  const exitWarnedRef = useRef(false);
+  useEffect(() => {
+    let listenerHandle;
+    CapApp.addListener("backButton", () => {
+      if (confirmLogoutOpen) { setConfirmLogoutOpen(false); return; }
+      if (phase !== "app") {
+        // Auth flow: let the back button retrace login/signup/onboarding steps
+        // instead of throwing the person out of the app entirely.
+        if (phase === "login" || phase === "signup") { setPhase("welcome"); return; }
+        if (phase === "welcome") { CapApp.exitApp(); return; }
+        return; // onboarding/language: no natural "back" target, ignore
+      }
+      if (navHistory.length > 0) { back(); return; }
+      if (screen !== "home") { onNavChange("home"); return; }
+      // At the Home tab with nothing left to pop — require a second press to exit.
+      if (exitWarnedRef.current) { CapApp.exitApp(); return; }
+      exitWarnedRef.current = true;
+      showToast("Press back again to exit");
+      setTimeout(() => { exitWarnedRef.current = false; }, 2000);
+    }).then((h) => { listenerHandle = h; });
+    return () => { if (listenerHandle) listenerHandle.remove(); };
+  }, [phase, screen, navHistory, confirmLogoutOpen]); // eslint-disable-line
 
   const doAwardXp = (amount) => {
     const next = clone(data);
@@ -2054,22 +2533,33 @@ export default function GymApp() {
   };
 
   const C = data.settings.theme === "light" ? LIGHT : DARK;
-  const ui = { C };
+  const lang = data.settings.language || localLang || "en";
+  const ui = { C, lang };
 
   if (phase === "splash") {
-    return <UIContext.Provider value={{ C: DARK }}><div style={{ maxWidth: 430, margin: "0 auto" }}><SplashScreen /></div></UIContext.Provider>;
+    return <UIContext.Provider value={{ C: DARK, lang: "en" }}><div style={{ maxWidth: 430, margin: "0 auto" }}><SplashScreen /></div></UIContext.Provider>;
+  }
+
+  if (phase === "language") {
+    return (
+      <UIContext.Provider value={{ C, lang: "en" }}>
+        <div style={{ background: C.bg, minHeight: "100vh", maxWidth: 430, margin: "0 auto", fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif" }}>
+          <LanguageScreen onPick={pickLanguage} />
+        </div>
+      </UIContext.Provider>
+    );
   }
 
   let authScreen = null;
   if (phase === "welcome") authScreen = <WelcomeScreen go={setPhase} />;
   else if (phase === "login") authScreen = <LoginScreen go={setPhase} showToast={showToast} />;
-  else if (phase === "signup") authScreen = <SignUpScreen go={setPhase} showToast={showToast} />;
+  else if (phase === "signup") authScreen = <SignUpScreen go={setPhase} showToast={showToast} localLang={localLang} />;
   else if (phase === "onboarding") authScreen = <OnboardingScreen data={data} setData={setData} go={setPhase} showToast={showToast} />;
 
   if (authScreen) {
     return (
       <UIContext.Provider value={ui}>
-        <div style={{ background: C.bg, minHeight: "100vh", maxWidth: 430, margin: "0 auto", fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif" }}>
+        <div dir={lang === "ar" ? "rtl" : "ltr"} style={{ background: C.bg, minHeight: "100vh", maxWidth: 430, margin: "0 auto", fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif" }}>
           {authScreen}<Toast message={toast} />
         </div>
       </UIContext.Provider>
@@ -2087,13 +2577,14 @@ export default function GymApp() {
   else if (screen === "plans") content = <PlansScreen data={data} setData={setData} go={go} showToast={showToast} />;
   else if (screen === "planDetail") content = <PlanDetailScreen data={data} setData={setData} back={back} planId={params.planId} showToast={showToast} />;
   else if (screen === "paywall") content = <PaywallScreen data={data} setData={setData} back={back} showToast={showToast} />;
-  else if (screen === "profile") content = <ProfileScreen data={data} go={go} />;
+  else if (screen === "profile") content = <ProfileScreen data={data} go={go} isAdmin={isAdmin} />;
   else if (screen === "personalInfo") content = <PersonalInfoScreen data={data} setData={setData} back={back} showToast={showToast} />;
   else if (screen === "goals") content = <GoalsScreen data={data} setData={setData} back={back} showToast={showToast} />;
   else if (screen === "measurements") content = <MeasurementsScreen data={data} back={back} go={go} />;
   else if (screen === "reminders") content = <RemindersScreen data={data} setData={setData} back={back} showToast={showToast} />;
   else if (screen === "help") content = <HelpScreen back={back} showToast={showToast} />;
   else if (screen === "settings") content = <SettingsScreen data={data} setData={setData} back={back} go={go} showToast={showToast} />;
+  else if (screen === "admin") content = <AdminScreen back={back} showToast={showToast} />;
   else content = <HomeScreen data={data} go={go} />;
 
   const showNav = tabs.includes(screen);
@@ -2101,7 +2592,10 @@ export default function GymApp() {
   return (
     <UIContext.Provider value={ui}>
       <div style={{ background: C.bg, minHeight: "100vh", maxWidth: 430, margin: "0 auto", display: "flex", flexDirection: "column", fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif" }}>
-        <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>{content}</div>
+        <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
+          <style>{"@keyframes screenIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }"}</style>
+          <div key={screen + JSON.stringify(params)} style={{ animation: "screenIn 0.22s ease-out" }}>{content}</div>
+        </div>
         {showNav && <BottomNav active={screen} onChange={onNavChange} />}
         {confirmLogoutOpen && (
           <ConfirmDialog title="Log out?" message="You'll need to log back in to see your workouts, weight and meal history." confirmLabel="Log Out" danger onConfirm={doLogout} onCancel={() => setConfirmLogoutOpen(false)} />

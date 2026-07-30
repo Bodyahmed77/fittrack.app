@@ -41,11 +41,12 @@ jobs:
       - name: Add google-services.json (for Google Sign-In)
         run: echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
 
-      - name: Apply the Google Services Gradle plugin
+      - name: Apply the Google Services Gradle plugin & Auth Dependency
         run: |
           sed -i "s#dependencies {#dependencies {\n        classpath 'com.google.gms:google-services:4.4.2'#" android/build.gradle
           echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
-          sed -i "s#dependencies {#dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'#" android/app/build.gradle
+          echo "dependencies { implementation 'com.google.android.gms:play-services-auth:21.0.0' }" >> android/app/build.gradle
+      
       - name: Generate real app icon and splash screen
         run: npx capacitor-assets generate --android
 

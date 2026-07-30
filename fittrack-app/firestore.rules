@@ -1,0 +1,25 @@
+rules_version = '2';
+
+// Deploy these in Firebase Console → Firestore Database → Rules (paste and Publish),
+// or via the Firebase CLI: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Marks who is an admin. A document only exists here if YOU created it
+    // by hand in the Firebase Console — no client, admin or not, can ever
+    // write to this collection, so nobody can grant themselves access.
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Every signed-in user has exactly one document at users/{their own uid}.
+    // They can always read/write their own. An admin (see above) can read
+    // and write ANY user's document too, for support/moderation.
+    match /users/{userId} {
+      allow read, write: if request.auth != null && (
+        request.auth.uid == userId ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+  }
+}

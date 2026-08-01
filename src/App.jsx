@@ -422,6 +422,9 @@ function getUsableExercises(data, day) {
 }
 
 /* ============================== SHARED UI ============================== */
+function chamfer(cut) {
+  return `polygon(0 0, calc(100% - ${cut}px) 0, 100% ${cut}px, 100% 100%, ${cut}px 100%, 0 calc(100% - ${cut}px))`;
+}
 function IconBtn({ children, onClick, style }) {
   const { C } = useUI();
   return (

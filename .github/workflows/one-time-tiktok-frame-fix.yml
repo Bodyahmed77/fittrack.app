@@ -1,0 +1,65 @@
+name: One-time TikTok frame safety patch
+
+on:
+  push:
+    branches:
+      - fix/tiktok-video-frame
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor == 'Bodyahmed77'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/tiktok-video-frame
+          fetch-depth: 0
+
+      - name: Add sandbox to embedded exercise video iframe
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('src/App.jsx')
+          text = path.read_text(encoding='utf-8')
+
+          if 'sandbox="allow-scripts allow-same-origin allow-forms"' in text:
+              print('Sandbox already present; nothing to do.')
+          else:
+              start = text.find('function VideoPlayer(')
+              if start < 0:
+                  raise SystemExit('VideoPlayer component not found')
+              end = text.find('/* ============================== NO INTERNET SCREEN', start)
+              if end < 0:
+                  raise SystemExit('VideoPlayer boundary not found')
+
+              block = text[start:end]
+              pattern = r'(<iframe\\b[\\s\\S]*?allowFullScreen\\s*/>)'
+              match = re.search(pattern, block)
+              if not match:
+                  raise SystemExit('Video iframe not found inside VideoPlayer')
+
+              iframe = match.group(1)
+              patched = iframe.replace(
+                  'allowFullScreen',
+                  'sandbox="allow-scripts allow-same-origin allow-forms"\\n            allowFullScreen',
+                  1,
+              )
+              block = block[:match.start(1)] + patched + block[match.end(1):]
+              text = text[:start] + block + text[end:]
+              path.write_text(text, encoding='utf-8')
+              print('Added sandbox to exercise video iframe.')
+          PY
+
+      - name: Commit patch and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          git rm .github/workflows/one-time-tiktok-frame-fix.yml
+          git commit -m "fix(android): keep exercise videos inside app frame" || exit 0
+          git push origin fix/tiktok-video-frame

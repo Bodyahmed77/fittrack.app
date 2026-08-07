@@ -130,22 +130,16 @@ export async function restorePurchases() {
       purchases = (await billing.getPurchases()) || [];
     }
 
-    // In Google Play Billing, queryPurchases returns active subscriptions
-    // keyed by product. Map any returned product IDs back to our plans.
-    const ids = Array.isArray(purchases) ? purchases : [];
-    const normalized = Array.isArray(ids) ? ids : [];
-    const activeIds = normalized.map((p) => p?.productId || p?.product || p);
-    if (activeIds.length === 0) {
-      // Fallback: probe each product individually (older plugin shape).
-      for (const pid of allProductIds()) {
-        let res = null;
-        if (typeof billing.querySkuDetails === "function") {
-          res = await billing.querySkuDetails({ product: pid, type: "SUBS" });
-        }
-        const found = Array.isArray(res) ? res.length > 0 : !!res;
-        if (found) activeIds.push(pid);
-      }
-    }
+    // Only purchase records can grant entitlements. Product-detail queries
+    // describe catalog items and must never be treated as purchases.
+    const activeIds = (Array.isArray(purchases) ? purchases : []).flatMap(
+      (purchase) => {
+        const ids = purchase?.productIds || purchase?.products;
+        if (Array.isArray(ids)) return ids;
+        const id = purchase?.productId || purchase?.product;
+        return id ? [id] : [];
+      },
+    );
 
     // Map product IDs back to plan keys (training / nutrition / both).
     const idToPlan = {};

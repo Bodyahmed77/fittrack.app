@@ -1,0 +1,83 @@
+name: Apply verified workout day fix
+
+on:
+  push:
+    branches:
+      - fix/android-chart-and-workout-days
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix(workout): prevent future days from becoming missed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch day status logic
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('src/App.jsx')
+          text = path.read_text(encoding='utf-8')
+
+          pattern = re.compile(r"function dayStatus\(data, dayName\) \{.*?\n\}", re.S)
+          replacement = '''function dayStatus(data, dayName) {
+  const activePlan =
+    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+  const exercises = activePlan.schedule[dayName]?.exercises || [];
+  if (exercises.length === 0) return "rest";
+
+  const dayIndex = DAYS.indexOf(dayName);
+  const todayIndex = (() => {
+    const day = new Date().getDay();
+    return day === 0 ? 6 : day - 1;
+  })();
+
+  // Never mark a future weekday as missed. Future days are always pending.
+  if (dayIndex > todayIndex) return "pending";
+
+  const monday = mondayOf(dateKey(0));
+  const targetDate = addDays(monday, dayIndex);
+  const startDate = data.workoutStartDate
+    ? String(data.workoutStartDate).slice(0, 10)
+    : null;
+
+  // Days before the user's actual program start are neutral/pending,
+  // regardless of whether they belong to the current calendar week.
+  if (startDate && targetDate < startDate) return "pending";
+
+  const log = data.logs[targetDate] || {};
+  const done = exercises.every(
+    (e) => log[e.id]?.finished || (log[e.id]?.sets || []).some((s) => s.done),
+  );
+
+  if (done) return "done";
+  if (dayIndex < todayIndex) return "missed";
+  return "pending";
+}'''
+
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('dayStatus function was not found exactly once')
+          path.write_text(updated, encoding='utf-8')
+
+      - name: Verify patch and build
+        run: |
+          grep -n "Never mark a future weekday as missed" src/App.jsx
+          npm ci
+          npm run build
+
+      - name: Commit patch and remove temporary workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -f .github/workflows/apply-workout-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx .github/workflows/apply-workout-fix.yml
+          git commit -m "fix(workout): prevent future days from becoming missed"
+          git push

@@ -1,0 +1,85 @@
+name: Apply verified workout day fix
+
+on:
+  push:
+    branches:
+      - fix/android-chart-and-workout-days
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix(workout): prevent future days from becoming missed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore App.jsx from main and patch day status
+        shell: python
+        run: |
+          import subprocess
+          from pathlib import Path
+          import re
+
+          subprocess.run(["git", "fetch", "origin", "main"], check=True)
+          subprocess.run(["git", "checkout", "origin/main", "--", "src/App.jsx"], check=True)
+
+          path = Path('src/App.jsx')
+          text = path.read_text(encoding='utf-8')
+
+          pattern = re.compile(r"function dayStatus\(data, dayName\) \{.*?\n\}", re.S)
+          replacement = '''function dayStatus(data, dayName) {
+  const activePlan =
+    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+  const exercises = activePlan.schedule[dayName]?.exercises || [];
+  if (exercises.length === 0) return "rest";
+
+  const dayIndex = DAYS.indexOf(dayName);
+  const jsDay = new Date().getDay();
+  const todayIndex = jsDay === 0 ? 6 : jsDay - 1;
+
+  // A future weekday can never be missed/red.
+  if (dayIndex > todayIndex) return "pending";
+
+  const monday = mondayOf(dateKey(0));
+  const targetDate = addDays(monday, dayIndex);
+  const startDate = data.workoutStartDate
+    ? String(data.workoutStartDate).slice(0, 10)
+    : null;
+
+  // Days before the user actually started the program are neutral.
+  if (startDate && targetDate < startDate) return "pending";
+
+  const log = data.logs[targetDate] || {};
+  const done = exercises.every(
+    (e) => log[e.id]?.finished || (log[e.id]?.sets || []).some((s) => s.done),
+  );
+
+  if (done) return "done";
+  if (dayIndex < todayIndex) return "missed";
+  return "pending";
+}'''
+
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('dayStatus function was not found exactly once')
+          path.write_text(updated, encoding='utf-8')
+
+      - name: Verify source and production build
+        run: |
+          grep -n "A future weekday can never be missed" src/App.jsx
+          grep -n "function dayStatus" src/App.jsx
+          npm ci
+          npm run build
+
+      - name: Commit verified App.jsx and remove temporary workflow
+        run: |
+          rm -f .github/workflows/apply-workout-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx .github/workflows/apply-workout-fix.yml
+          git commit -m "fix(workout): prevent future days from becoming missed"
+          git push

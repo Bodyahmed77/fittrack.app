@@ -1,6 +1,6 @@
 {
   "appId": "com.fittrack.app",
-  "appName": "Fifty",
+  "appName": "Fifty Fit",
   "webDir": "dist",
   "backgroundColor": "#000000",
   "server": {
@@ -16,6 +16,10 @@
     "StatusBar": {
       "style": "LIGHT",
       "backgroundColor": "#000000"
+    },
+    "FirebaseAuthentication": {
+      "skipNativeAuth": false,
+      "providers": ["google.com"]
     }
   }
 }

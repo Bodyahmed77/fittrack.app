@@ -1847,10 +1847,12 @@ function useFirebaseSession() {
 function useAppData(uid) {
   const [data, setDataRaw] = useState(freshState());
   const [loaded, setLoaded] = useState(false);
+  const verifiedEntitlementsRef = useRef(null);
 
   useEffect(() => {
     if (!uid) {
       setLoaded(false);
+      verifiedEntitlementsRef.current = null;
       return;
     }
     setLoaded(false);
@@ -1868,19 +1870,10 @@ function useAppData(uid) {
           profile: { ...fresh.profile, ...(parsed.profile || {}) },
           entitlements: {
             ...fresh.entitlements,
-            ...(parsed.entitlements || {}),
+            ...(verifiedEntitlementsRef.current || {}),
           },
           customPlan: parsed.customPlan || {},
         };
-        // Pro is a 30-day subscription — expire it automatically once the date has passed.
-        if (
-          merged.entitlements.proExpiresAt &&
-          merged.entitlements.proExpiresAt < dateKey(0)
-        ) {
-          merged.entitlements.trainingPro = false;
-          merged.entitlements.nutritionPro = false;
-          merged.entitlements.proExpiresAt = null;
-        }
         setDataRaw(merged);
         setLoaded(true);
       },
@@ -1892,14 +1885,30 @@ function useAppData(uid) {
     return unsub;
   }, [uid]);
 
+  const setVerifiedEntitlements = useCallback((entitlements) => {
+    verifiedEntitlementsRef.current = {
+      nutritionPro: !!entitlements?.nutritionPro,
+      trainingPro: !!entitlements?.trainingPro,
+      proExpiresAt: entitlements?.proExpiresAt || null,
+    };
+    setDataRaw((current) => ({
+      ...current,
+      entitlements: verifiedEntitlementsRef.current,
+    }));
+  }, []);
+
   const setData = useCallback(
     async (next) => {
+      verifiedEntitlementsRef.current = next.entitlements;
       setDataRaw(next);
       if (!uid) return;
       try {
+        const persisted = Object.fromEntries(
+          Object.entries(next).filter(([key]) => key !== "entitlements"),
+        );
         await setDoc(
           doc(db, "users", uid),
-          { ...next, updatedAt: new Date().toISOString() },
+          { ...persisted, updatedAt: new Date().toISOString() },
           { merge: true },
         );
       } catch (e) {
@@ -1909,7 +1918,7 @@ function useAppData(uid) {
     [uid],
   );
 
-  return { data, setData, loaded };
+  return { data, setData, setVerifiedEntitlements, loaded };
 }
 
 /* ============================== EXERCISE MERGE HELPERS ============================== */
@@ -7845,6 +7854,12 @@ function PaywallScreen({ data, setData, back, showToast }) {
   const price = plan?.prices?.[selectedDuration] || 0;
   const currency = ar ? "جنيه" : "EGP";
   const durationLabel = ar ? duration?.label : duration?.labelEn;
+  const selectedPlanActive =
+    selectedPlan === "training"
+      ? data.entitlements.trainingPro
+      : selectedPlan === "nutrition"
+      ? data.entitlements.nutritionPro
+      : data.entitlements.trainingPro && data.entitlements.nutritionPro;
 
   // Apply the unlocked entitlement(s) to the data and persist.
   const unlockPlans = (next, planId) => {
@@ -7867,10 +7882,8 @@ function PaywallScreen({ data, setData, back, showToast }) {
         preview: true,
       }));
 
-      // Only unlock when the purchase actually succeeded OR we are in preview
-      // mode (dev / web). A failed / cancelled / missing-product purchase must
-      // NOT grant access.
-      const shouldUnlock = result?.success === true || result?.preview === true;
+      // Only unlock after the native bridge returns an acknowledged purchase.
+      const shouldUnlock = result?.success === true && result?.verified === true;
       if (!shouldUnlock) {
         showToast(
           ar
@@ -7883,9 +7896,7 @@ function PaywallScreen({ data, setData, back, showToast }) {
       // 2) Unlock entitlements locally (and persist via setData).
       const next = clone(data);
       unlockPlans(next, planId);
-      const monthsToAdd =
-        DURATIONS.find((d) => d.id === durationId)?.months || 1;
-      next.entitlements.proExpiresAt = dateKey(30 * monthsToAdd);
+      next.entitlements.proExpiresAt = null;
       if (next.entitlements.trainingPro) {
         const personalizedPlan = buildPersonalizedProPlan(next);
         next.proPlan = personalizedPlan;
@@ -7904,7 +7915,7 @@ function PaywallScreen({ data, setData, back, showToast }) {
             : `Plan tailored to your goal (${personalizedPlan.nutritionFocus})`,
         };
       }
-      setData(next);
+      await setData(next);
 
       // 3) Show a clear confirmation message on success.
       //    For the Nutrition plan (or "both"), include the WhatsApp note.
@@ -7948,6 +7959,14 @@ function PaywallScreen({ data, setData, back, showToast }) {
         preview: true,
       }));
       const restored = res?.restoredPlans || [];
+      if (res?.unsupported) {
+        showToast(
+          ar
+            ? "استرجاع الاشتراك غير مدعوم في إصدار الفوترة الحالي"
+            : "Subscription restore is unavailable in this billing build",
+        );
+        return;
+      }
       if (restored.length === 0 && !res?.preview) {
         showToast(
           ar
@@ -7960,13 +7979,13 @@ function PaywallScreen({ data, setData, back, showToast }) {
       const next = clone(data);
       restored.forEach((p) => unlockPlans(next, p));
       if (restored.length > 0) {
-        next.entitlements.proExpiresAt = dateKey(30);
+        next.entitlements.proExpiresAt = null;
         if (next.entitlements.trainingPro) {
           const personalizedPlan = buildPersonalizedProPlan(next);
           next.proPlan = personalizedPlan;
           next.activePlanId = personalizedPlan.workoutPlanId;
         }
-        setData(next);
+        await setData(next);
         showToast(
           ar
             ? "تم استرجاع اشتراكك بنجاح!"
@@ -7975,8 +7994,8 @@ function PaywallScreen({ data, setData, back, showToast }) {
       } else if (res?.preview) {
         showToast(
           ar
-            ? "وضع المعاينة — افتح الاشتراك من المتجر"
-            : "Preview mode — subscribe from the store to unlock",
+            ? "الفوترة غير متاحة خارج تطبيق Android"
+            : "Billing is unavailable outside the Android app",
         );
       }
     } catch (e) {
@@ -8117,19 +8136,25 @@ function PaywallScreen({ data, setData, back, showToast }) {
             <span style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>
               {ar ? plan.titleAr : plan.title}
             </span>
-            <span
-              style={{
-                color: C.green,
-                fontWeight: 800,
-                fontSize: 16,
-              }}
-            >
-              {price} {currency}
-              <span style={{ color: C.sub, fontSize: 11, fontWeight: 500 }}>
-                {" "}
-                / {durationLabel}
+            {selectedPlanActive ? (
+              <span style={{ color: C.green, fontWeight: 800, fontSize: 13 }}>
+                {ar ? "الاشتراك نشط" : "Subscription Active"}
               </span>
-            </span>
+            ) : (
+              <span
+                style={{
+                  color: C.green,
+                  fontWeight: 800,
+                  fontSize: 16,
+                }}
+              >
+                {price} {currency}
+                <span style={{ color: C.sub, fontSize: 11, fontWeight: 500 }}>
+                  {" "}
+                  / {durationLabel}
+                </span>
+              </span>
+            )}
           </div>
           <div
             style={{
@@ -8217,6 +8242,34 @@ function PaywallScreen({ data, setData, back, showToast }) {
             ? "الدفع يتم بشكل آمن عبر Google Play Billing. الاشتراك بيتجدد تلقائيًا وبتقدر تلغيه في أي وقت."
             : "Payments are processed securely via Google Play Billing. Subscriptions auto-renew and can be cancelled anytime."}
         </div>
+        {(data.entitlements.trainingPro || data.entitlements.nutritionPro) && (
+          <div style={{ textAlign: "center", margin: "22px 0 8px" }}>
+            <button
+              onClick={() =>
+                window.open(
+                  "https://play.google.com/store/account/subscriptions?package=com.fittrack.app",
+                  "_blank",
+                  "noopener,noreferrer",
+                )
+              }
+              style={{
+                border: "none",
+                background: "transparent",
+                color: C.sub,
+                fontSize: 12,
+                textDecoration: "underline",
+                cursor: "pointer",
+              }}
+            >
+              {ar ? "إدارة الاشتراك" : "Manage Subscription"}
+            </button>
+            <div style={{ color: C.sub2, fontSize: 10.5, marginTop: 4 }}>
+              {ar
+                ? "يمكنك إدارة أو إلغاء اشتراكك من خلال Google Play."
+                : "Manage or cancel your subscription through Google Play."}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -9308,8 +9361,8 @@ function DeleteAccountScreen({
             </div>
             <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
               {ar
-                ? "هيتم حذف كل بياناتك: التمارين، الوزن، الوجبات، والاشتراك."
-                : "This will permanently delete all your data: workouts, weight, meals, and subscription."}
+                ? "هيتم حذف بيانات Fifty Fit: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
+                : "This permanently deletes your Fifty Fit data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
             </div>
           </div>
         </Card>
@@ -9383,6 +9436,7 @@ function DeleteAccountScreen({
 function SettingsScreen({ data, setData, back, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
+  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro;
   const setTheme = (mode) => {
     const next = clone(data);
     next.settings.theme = mode;
@@ -9601,7 +9655,13 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
             <span
               style={{ flex: 1, color: C.text, fontSize: 14, fontWeight: 600 }}
             >
-              {ar ? "إدارة الاشتراك" : "Manage Subscription"}
+              {pro
+                ? ar
+                  ? "إدارة الاشتراك"
+                  : "Manage Subscription"
+                : ar
+                ? "خطط البرو"
+                : "View Pro Plans"}
             </span>
             <ChevronRight
               size={16}
@@ -10092,7 +10152,9 @@ export default function GymApp() {
   const [online, setOnline] = useNetworkStatus(); // live internet status (true = online)
   const [checking, setChecking] = useState(false);
   const firebaseUser = useFirebaseSession(); // undefined = checking, null = signed out, object = signed in
-  const { data, setData, loaded } = useAppData(firebaseUser?.uid);
+  const { data, setData, setVerifiedEntitlements, loaded } = useAppData(
+    firebaseUser?.uid,
+  );
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     if (!firebaseUser) {
@@ -10103,6 +10165,34 @@ export default function GymApp() {
       .then((snap) => setIsAdmin(snap.exists()))
       .catch(() => setIsAdmin(false));
   }, [firebaseUser]);
+
+  useEffect(() => {
+    if (!firebaseUser || !loaded) return undefined;
+    let cancelled = false;
+    billingRestore()
+      .then((result) => {
+        if (cancelled) return;
+        const restored = result?.restoredPlans || [];
+        setVerifiedEntitlements({
+          trainingPro: restored.includes("training") || restored.includes("both"),
+          nutritionPro:
+            restored.includes("nutrition") || restored.includes("both"),
+          proExpiresAt: null,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setVerifiedEntitlements({
+            trainingPro: false,
+            nutritionPro: false,
+            proExpiresAt: null,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firebaseUser, loaded, setVerifiedEntitlements]);
   const [phase, setPhase] = useState("splash");
   const [localLang, setLocalLang] = useState(() => {
     try {

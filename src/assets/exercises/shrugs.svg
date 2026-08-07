@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d69e2e" />
+      <stop offset="100%" stop-color="#b7791f" />
+    </linearGradient>
+    <linearGradient id="dumbbell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4a5568" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+  </defs>
+  <!-- body standing -->
+  <rect x="78" y="82" width="44" height="70" rx="12" fill="url(#shirt)" />
+  <!-- head slightly lowered -->
+  <circle cx="100" cy="64" r="15" fill="url(#skin)" />
+  <!-- raised shoulders -->
+  <path
+    d="M80 84 L66 78 L56 80"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M120 84 L134 78 L144 80"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- hands -->
+  <circle cx="56" cy="80" r="8" fill="url(#skin)" />
+  <circle cx="144" cy="80" r="8" fill="url(#skin)" />
+  <!-- dumbbells -->
+  <rect x="42" y="70" width="11" height="15" rx="3" fill="url(#dumbbell)" />
+  <rect x="55" y="74" width="7" height="7" rx="2" fill="#cbd5e0" />
+  <rect x="64" y="70" width="11" height="15" rx="3" fill="url(#dumbbell)" />
+  <rect x="125" y="70" width="11" height="15" rx="3" fill="url(#dumbbell)" />
+  <rect x="138" y="74" width="7" height="7" rx="2" fill="#cbd5e0" />
+  <rect x="147" y="70" width="11" height="15" rx="3" fill="url(#dumbbell)" />
+  <!-- legs -->
+  <rect x="84" y="152" width="14" height="30" rx="5" fill="#2d3748" />
+  <rect x="102" y="152" width="14" height="30" rx="5" fill="#2d3748" />
+  <!-- feet -->
+  <rect x="76" y="186" width="26" height="8" rx="4" fill="#2d3748" />
+  <rect x="98" y="186" width="26" height="8" rx="4" fill="#2d3748" />
+</svg>

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dd6b20" />
+      <stop offset="100%" stop-color="#c05621" />
+    </linearGradient>
+    <linearGradient id="shorts" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3748" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#cbd5e0" />
+      <stop offset="100%" stop-color="#718096" />
+    </linearGradient>
+    <linearGradient id="plates" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4a5568" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+  </defs>
+  <!-- barbell on floor -->
+  <rect x="24" y="150" width="152" height="7" rx="3.5" fill="url(#bar)" />
+  <rect x="28" y="136" width="11" height="26" rx="2" fill="url(#plates)" />
+  <rect x="42" y="136" width="11" height="26" rx="2" fill="url(#plates)" />
+  <rect x="147" y="136" width="11" height="26" rx="2" fill="url(#plates)" />
+  <rect x="161" y="136" width="11" height="26" rx="2" fill="url(#plates)" />
+  <!-- body hinged at hips (romanian deadlift) -->
+  <path
+    d="M92 60 L110 76 L104 120 L78 150 L64 150 L86 96 Z"
+    fill="url(#shirt)"
+  />
+  <!-- head -->
+  <circle cx="86" cy="52" r="14" fill="url(#skin)" />
+  <!-- arms holding bar -->
+  <path
+    d="M96 90 L78 120 L70 150"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M112 100 L128 130 L136 150"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- hands -->
+  <circle cx="70" cy="150" r="8" fill="url(#skin)" />
+  <circle cx="136" cy="150" r="8" fill="url(#skin)" />
+  <!-- legs -->
+  <rect x="84" y="150" width="16" height="30" rx="5" fill="url(#shorts)" />
+  <rect x="112" y="150" width="16" height="30" rx="5" fill="url(#shorts)" />
+  <!-- feet -->
+  <rect x="74" y="184" width="28" height="8" rx="4" fill="#2d3748" />
+  <rect x="104" y="184" width="28" height="8" rx="4" fill="#2d3748" />
+</svg>

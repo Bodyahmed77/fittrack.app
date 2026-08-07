@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e53e3e" />
+      <stop offset="100%" stop-color="#c53030" />
+    </linearGradient>
+    <linearGradient id="shorts" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3748" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+    <linearGradient id="machine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a0aec0" />
+      <stop offset="100%" stop-color="#4a5568" />
+    </linearGradient>
+  </defs>
+  <!-- stationary bike frame -->
+  <circle
+    cx="100"
+    cy="150"
+    r="22"
+    fill="none"
+    stroke="url(#machine)"
+    stroke-width="20"
+  />
+  <circle cx="100" cy="150" r="8" fill="#4a5568" />
+  <path
+    d="M56 64 L60 120 L100 150 M78 60 L58 120 M100 150 L110 100 M144 64 L100 150"
+    fill="none"
+    stroke="#4a5568"
+    stroke-width="8"
+    stroke-linecap="round"
+  />
+  <!-- seat -->
+  <rect x="70" y="52" width="40" height="10" rx="5" fill="#2d3748" />
+  <!-- handlebars -->
+  <path
+    d="M120 90 L140 80 L142 70"
+    fill="none"
+    stroke="#4a5568"
+    stroke-width="8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- body seated on bike -->
+  <rect x="78" y="72" width="42" height="44" rx="12" fill="url(#shirt)" />
+  <!-- head -->
+  <circle cx="100" cy="58" r="15" fill="url(#skin)" />
+  <!-- arms to handlebars -->
+  <path
+    d="M88 80 L116 74 L136 70"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- legs pedaling -->
+  <path
+    d="M84 116 L70 132 L64 150"
+    fill="none"
+    stroke="url(#shorts)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M116 116 L130 130 L136 150"
+    fill="none"
+    stroke="url(#shorts)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- feet on pedals -->
+  <rect x="56" y="148" width="20" height="8" rx="4" fill="#2d3748" />
+  <rect x="132" y="148" width="20" height="8" rx="4" fill="#2d3748" />
+</svg>

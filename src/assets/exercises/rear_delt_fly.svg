@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3182ce" />
+      <stop offset="100%" stop-color="#2b6cb0" />
+    </linearGradient>
+    <linearGradient id="machine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a0aec0" />
+      <stop offset="100%" stop-color="#4a5568" />
+    </linearGradient>
+  </defs>
+  <!-- rear delt machine frame -->
+  <rect x="30" y="36" width="10" height="130" rx="5" fill="#718096" />
+  <rect x="160" y="36" width="10" height="130" rx="5" fill="#718096" />
+  <rect x="38" y="32" width="124" height="10" rx="5" fill="url(#machine)" />
+  <!-- seat -->
+  <rect x="80" y="150" width="40" height="10" rx="5" fill="#2d3748" />
+  <!-- body seated leaning forward -->
+  <rect x="78" y="90" width="44" height="60" rx="12" fill="url(#shirt)" />
+  <!-- head -->
+  <circle cx="88" cy="76" r="14" fill="url(#skin)" />
+  <!-- arms extended back on handles -->
+  <path
+    d="M84 100 L66 92 L56 78"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M116 100 L134 92 L144 78"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- hands -->
+  <circle cx="56" cy="78" r="8" fill="url(#skin)" />
+  <circle cx="144" cy="78" r="8" fill="url(#skin)" />
+  <!-- handles -->
+  <rect x="44" y="70" width="16" height="8" rx="4" fill="url(#machine)" />
+  <rect x="140" y="70" width="16" height="8" rx="4" fill="url(#machine)" />
+  <!-- legs -->
+  <rect x="84" y="150" width="14" height="26" rx="5" fill="#2d3748" />
+  <rect x="102" y="150" width="14" height="26" rx="5" fill="#2d3748" />
+  <!-- feet -->
+  <rect x="76" y="180" width="26" height="8" rx="4" fill="#2d3748" />
+  <rect x="98" y="180" width="26" height="8" rx="4" fill="#2d3748" />
+</svg>

@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d69e2e" />
+      <stop offset="100%" stop-color="#b7791f" />
+    </linearGradient>
+  </defs>
+  <!-- body in plank position (angled) -->
+  <path
+    d="M60 90 L100 70 L140 90 L140 108 L100 92 L60 112 Z"
+    fill="url(#shirt)"
+  />
+  <!-- head -->
+  <circle cx="48" cy="110" r="14" fill="url(#skin)" />
+  <!-- arms bent supporting -->
+  <path
+    d="M70 96 L70 120"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+  />
+  <circle cx="70" cy="124" r="9" fill="url(#skin)" />
+  <path
+    d="M100 82 L100 106"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+  />
+  <circle cx="100" cy="110" r="9" fill="url(#skin)" />
+  <!-- legs -->
+  <path
+    d="M140 100 L170 108 L170 116"
+    fill="none"
+    stroke="#2d3748"
+    stroke-width="13"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- feet -->
+  <rect x="162" y="114" width="22" height="8" rx="4" fill="#2d3748" />
+  <!-- floor -->
+  <rect x="20" y="150" width="160" height="6" rx="3" fill="#4a5568" />
+</svg>

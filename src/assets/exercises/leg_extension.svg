@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#38a169" />
+      <stop offset="100%" stop-color="#2f855a" />
+    </linearGradient>
+    <linearGradient id="shorts" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3748" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+    <linearGradient id="machine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a0aec0" />
+      <stop offset="100%" stop-color="#4a5568" />
+    </linearGradient>
+  </defs>
+  <!-- leg extension machine -->
+  <rect x="30" y="40" width="10" height="130" rx="5" fill="#718096" />
+  <rect x="160" y="40" width="10" height="130" rx="5" fill="#718096" />
+  <rect x="38" y="34" width="124" height="10" rx="5" fill="url(#machine)" />
+  <!-- body seated -->
+  <rect x="72" y="70" width="48" height="56" rx="12" fill="url(#shirt)" />
+  <!-- head -->
+  <circle cx="96" cy="54" r="15" fill="url(#skin)" />
+  <!-- thighs -->
+  <rect x="74" y="120" width="16" height="30" rx="5" fill="url(#shorts)" />
+  <rect x="112" y="120" width="16" height="30" rx="5" fill="url(#shorts)" />
+  <!-- shins extended upward -->
+  <rect x="70" y="66" width="14" height="40" rx="5" fill="url(#skin)" />
+  <rect x="118" y="66" width="14" height="40" rx="5" fill="url(#skin)" />
+  <!-- ankle pad bar -->
+  <rect x="62" y="58" width="78" height="9" rx="4.5" fill="url(#machine)" />
+  <!-- feet -->
+  <rect x="60" y="34" width="20" height="10" rx="4" fill="#2d3748" />
+  <rect x="122" y="34" width="20" height="10" rx="4" fill="#2d3748" />
+</svg>

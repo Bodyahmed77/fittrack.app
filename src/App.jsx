@@ -58,13 +58,15 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-} from "recharts";
+} from "./recharts";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  GoogleAuthProvider,
+  signInWithCredential,
   deleteUser,
 } from "firebase/auth";
 import {
@@ -162,6 +164,8 @@ const EXERCISE_IMG_MAP = {
   jump_rope: jump_ropeImg,
   burpees: burpeesImg,
 };
+import { App as CapApp } from "@capacitor/app";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import { isOnline as checkOnline, watchNetwork } from "./network";
 import {
   EXERCISE_IMAGES,
@@ -174,14 +178,6 @@ import {
   restorePurchases as billingRestore,
 } from "./billing";
 import { requestReview as requestInAppReview } from "./review";
-import { signInWithGoogleFlow } from "./googleAuth";
-import {
-  schedule as scheduleNotifications,
-  cancel as cancelNotifications,
-  requestPermissions as requestNotificationPermissions,
-  checkPermissions as checkNotificationPermissions,
-} from "./notifications";
-import { addBackButtonListener, exitApp } from "./appPlugin";
 import { APP_INFO, PRIVACY_POLICY_SECTIONS, TERMS_SECTIONS } from "./privacy";
 
 // Fixed notification IDs so we can reliably cancel/replace them later.
@@ -190,39 +186,43 @@ const NOTIF_ID_SUB_EXPIRY = 1002;
 
 async function scheduleDailyReminder(timeStr) {
   const [hour, minute] = (timeStr || "18:00").split(":").map(Number);
-  await cancelNotifications({
+  await LocalNotifications.cancel({
     notifications: [{ id: NOTIF_ID_DAILY_REMINDER }],
   });
-  await scheduleNotifications([
-    {
-      id: NOTIF_ID_DAILY_REMINDER,
-      title: "Fifty",
-      body: "Don't forget today's workout! 💪",
-      schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
-    },
-  ]);
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: NOTIF_ID_DAILY_REMINDER,
+        title: "Fifty",
+        body: "Don't forget today's workout! 💪",
+        schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
+      },
+    ],
+  });
 }
 async function cancelDailyReminder() {
-  await cancelNotifications({
+  await LocalNotifications.cancel({
     notifications: [{ id: NOTIF_ID_DAILY_REMINDER }],
   });
 }
 async function scheduleSubscriptionExpiryReminder(expiresAtISO) {
-  await cancelNotifications({
+  await LocalNotifications.cancel({
     notifications: [{ id: NOTIF_ID_SUB_EXPIRY }],
   });
   if (!expiresAtISO) return;
   const fireDate = new Date(expiresAtISO + "T10:00:00");
   fireDate.setDate(fireDate.getDate() - 5);
   if (fireDate <= new Date()) return; // less than 5 days left already — nothing to schedule
-  await scheduleNotifications([
-    {
-      id: NOTIF_ID_SUB_EXPIRY,
-      title: "Fifty Pro",
-      body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
-      schedule: { at: fireDate },
-    },
-  ]);
+  await LocalNotifications.schedule({
+    notifications: [
+      {
+        id: NOTIF_ID_SUB_EXPIRY,
+        title: "Fifty Pro",
+        body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
+        schedule: { at: fireDate },
+      },
+    ],
+  });
 }
 
 function authErrorMessage(err, ar) {
@@ -258,6 +258,8 @@ function authErrorMessage(err, ar) {
     return "Too many attempts — please wait a bit and try again";
   return "Something went wrong — please try again";
 }
+
+import { signInWithGoogleFlow } from "./googleAuth";
 
 /* ============================== THEME ============================== */
 const DARK = {
@@ -3449,7 +3451,7 @@ function LoginScreen({ go, showToast }) {
   const googleSignIn = async () => {
     setBusy(true);
     try {
-      await signInWithGoogleFlow();
+      await signInWithGoogleFlow(ar ? "ar" : "en", freshState);
       showToast(ar ? "أهلاً بيك!" : "Welcome!");
     } catch (err) {
       showToast(
@@ -3666,7 +3668,7 @@ function SignUpScreen({ go, showToast, localLang }) {
   const googleSignIn = async () => {
     setBusy(true);
     try {
-      await signInWithGoogleFlow(localLang);
+      await signInWithGoogleFlow(localLang, freshState);
       showToast(ar ? "أهلاً بيك!" : "Welcome!");
     } catch (err) {
       showToast(
@@ -8715,7 +8717,7 @@ function RemindersScreen({ data, setData, back, showToast }) {
 
   const requestPermission = async () => {
     try {
-      const perm = await requestNotificationPermissions();
+      const perm = await LocalNotifications.requestPermissions();
       if (perm.display !== "granted") {
         showToast(
           ar
@@ -8746,7 +8748,7 @@ function RemindersScreen({ data, setData, back, showToast }) {
   const sendTest = async () => {
     setBusy(true);
     try {
-      const perm = await checkNotificationPermissions();
+      const perm = await LocalNotifications.checkPermissions();
       if (perm.display !== "granted") {
         const granted = await requestPermission();
         if (!granted) {
@@ -8754,7 +8756,8 @@ function RemindersScreen({ data, setData, back, showToast }) {
           return;
         }
       }
-      await scheduleNotifications([
+      await LocalNotifications.schedule({
+        notifications: [
           {
             id: 9999,
             title: "Fifty Fit",
@@ -8763,7 +8766,8 @@ function RemindersScreen({ data, setData, back, showToast }) {
               : "Don't forget today's workout! 💪",
             schedule: { at: new Date(Date.now() + 3000) },
           },
-      ]);
+        ],
+      });
       showToast(
         ar
           ? "الإشعار التجريبي هيظهر خلال ثواني"
@@ -10125,7 +10129,7 @@ export default function GymApp() {
   const exitWarnedRef = useRef(false);
   useEffect(() => {
     let listenerHandle;
-    addBackButtonListener(() => {
+    CapApp.addListener("backButton", () => {
       if (confirmLogoutOpen) {
         setConfirmLogoutOpen(false);
         return;
@@ -10138,7 +10142,7 @@ export default function GymApp() {
           return;
         }
         if (phase === "welcome") {
-          exitApp();
+          CapApp.exitApp();
           return;
         }
         return; // onboarding/language: no natural "back" target, ignore
@@ -10153,7 +10157,7 @@ export default function GymApp() {
       }
       // At the Home tab with nothing left to pop — require a second press to exit.
       if (exitWarnedRef.current) {
-        exitApp();
+        CapApp.exitApp();
         return;
       }
       exitWarnedRef.current = true;

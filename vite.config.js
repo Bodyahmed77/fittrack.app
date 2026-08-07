@@ -8,6 +8,9 @@ export default defineConfig({
   base: "./",
   build: {
     outDir: "dist",
+    // Do not emit modulepreload links for large secondary chunks. The app shell
+    // is lazy-loaded so Firebase/Recharts can initialize after first paint.
+    modulePreload: false,
     // These native-only plugins are dynamically imported at runtime and are
     // not installed in the web build. Externalize them so Vite/Rollup does
     // not try to bundle them (they resolve at runtime on device).

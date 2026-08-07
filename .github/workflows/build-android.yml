@@ -41,13 +41,22 @@ jobs:
       - name: Inject google-services.json (required for Firebase + Google Sign-In)
         run: echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
 
-      - name: Apply Google Services Gradle plugin
+      - name: Configure Google Services and Google Sign-In
         run: |
-          # Add the Google Services classpath to the project-level build.gradle
-          sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.2'" android/build.gradle
-          # Apply the plugin at the bottom of the app-level build.gradle
-          echo "" >> android/app/build.gradle
-          echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
+          # Capacitor's generated project already declares this plugin classpath.
+          # Keep the fallback for generated projects that do not.
+          if ! grep -q "com.google.gms:google-services" android/build.gradle; then
+            sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.0'" android/build.gradle
+          fi
+          # @capacitor-firebase/authentication declares this optional dependency
+          # compileOnly, so add it to the application that ships the release APK/AAB.
+          sed -i "/dependencies {/a\\    implementation 'com.google.android.gms:play-services-auth:21.0.0'" android/app/build.gradle
+          # Keep the plugin applied for generated projects that do not already
+          # include Capacitor's conditional google-services setup.
+          if ! grep -q "apply plugin: 'com.google.gms.google-services'" android/app/build.gradle; then
+            echo "" >> android/app/build.gradle
+            echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
+          fi
 
       - name: Generate real app icon and splash screen
         run: npx capacitor-assets generate --android

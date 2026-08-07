@@ -36,7 +36,18 @@ jobs:
         run: npm run build
 
       - name: Add the Android platform
-        run: npx cap add android || npx cap sync android
+        run: npx cap add android || true
+
+      - name: Inject google-services.json (required for Firebase + Google Sign-In)
+        run: echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
+
+      - name: Apply Google Services Gradle plugin
+        run: |
+          # Add the Google Services classpath to the project-level build.gradle
+          sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.2'" android/build.gradle
+          # Apply the plugin at the bottom of the app-level build.gradle
+          echo "" >> android/app/build.gradle
+          echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
 
       - name: Generate real app icon and splash screen
         run: npx capacitor-assets generate --android

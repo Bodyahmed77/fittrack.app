@@ -46,8 +46,7 @@ jobs:
     ? String(data.workoutStartDate).slice(0, 10)
     : null;
 
-  // Days before the user's actual program start are neutral/pending,
-  // regardless of whether they belong to the current calendar week.
+  // Days before the user's actual program start are neutral/pending.
   if (startDate && targetDate < startDate) return "pending";
 
   const log = data.logs[targetDate] || {};
@@ -81,3 +80,5 @@ jobs:
           git add src/App.jsx .github/workflows/apply-workout-fix.yml
           git commit -m "fix(workout): prevent future days from becoming missed"
           git push
+
+# one-time trigger

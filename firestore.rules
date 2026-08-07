@@ -13,12 +13,25 @@ service cloud.firestore {
     }
 
     // Every signed-in user has exactly one document at users/{their own uid}.
-    // They can always read/write their own. An admin (see above) can read
-    // and write ANY user's document too, for support/moderation.
+    // A normal user can update application data on their own document, but
+    // subscription entitlements are immutable from the client. An admin (see
+    // above) can read/write ANY user's document for support/moderation.
     match /users/{userId} {
-      allow read, write: if request.auth != null && (
+      allow read: if request.auth != null && (
         request.auth.uid == userId ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+      allow create: if request.auth != null &&
+        request.auth.uid == userId &&
+        request.resource.data.get("entitlements", {}).get("trainingPro", false) == false &&
+        request.resource.data.get("entitlements", {}).get("nutritionPro", false) == false;
+      allow update: if request.auth != null && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (
+          request.auth.uid == userId &&
+          request.resource.data.get("entitlements", {}) ==
+            resource.data.get("entitlements", {})
+        )
       );
     }
   }

@@ -67,6 +67,8 @@ import {
   sendPasswordResetEmail,
   GoogleAuthProvider,
   signInWithCredential,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
   deleteUser,
 } from "firebase/auth";
 import {
@@ -259,7 +261,10 @@ function authErrorMessage(err, ar) {
   return "Something went wrong — please try again";
 }
 
-import { signInWithGoogleFlow } from "./googleAuth";
+import {
+  reauthenticateWithGoogleFlow,
+  signInWithGoogleFlow,
+} from "./googleAuth";
 
 /* ============================== THEME ============================== */
 const DARK = {
@@ -534,6 +539,9 @@ function dayStatus(data, dayName) {
   const dayIndex = DAYS.indexOf(dayName);
   const monday = mondayOf(dateKey(0));
   const targetDate = addDays(monday, dayIndex);
+  if (data.workoutStartDate && targetDate < data.workoutStartDate) {
+    return "pending";
+  }
   const log = data.logs[targetDate] || {};
   const done = exercises.every(
     (e) => log[e.id]?.finished || (log[e.id]?.sets || []).some((s) => s.done),
@@ -854,11 +862,6 @@ const PLAN_TEMPLATES = {
           mkEx("barbell_row", 2, "6-10"),
           mkEx("incline_db_press", 2, "6-10"),
           mkEx("lat_pulldown", 2, "6-10"),
-          mkEx("lateral_raise", 2, "8-10"),
-          mkEx("bicep_curl", 2, "6-10"),
-          mkEx("zigzag_tricep_ext", 2, "6-10"),
-          mkEx("shrugs", 2, "8-12"),
-          mkEx("reverse_curl", 2, "8-12"),
         ],
       },
       Tue: {
@@ -869,9 +872,6 @@ const PLAN_TEMPLATES = {
           mkEx("leg_curl", 2, "8-12"),
           mkEx("leg_extension", 2, "6-10"),
           mkEx("abduction", 2, "6-10"),
-          mkEx("calf_raise", 3, "8-12"),
-          mkEx("crunches", 2, "6-10"),
-          mkEx("rear_delt_fly", 2, "6-10"),
         ],
       },
       Wed: {
@@ -887,11 +887,6 @@ const PLAN_TEMPLATES = {
           mkEx("bench_press", 2, "6-10"),
           mkEx("barbell_row", 2, "6-10"),
           mkEx("single_arm_seated_row", 2, "6-10"),
-          mkEx("lateral_raise", 2, "8-12"),
-          mkEx("behind_body_bicep_curl", 2, "6-10"),
-          mkEx("overhead_ext", 2, "6-10"),
-          mkEx("shrugs", 2, "6-10"),
-          mkEx("crunches", 2, "6-10"),
         ],
       },
       Fri: {
@@ -903,7 +898,6 @@ const PLAN_TEMPLATES = {
           mkEx("lunges", 2, "8-12"),
           mkEx("leg_curl", 2, "6-10"),
           mkEx("leg_extension", 2, "6-10"),
-          mkEx("calf_raise", 3, "8-12"),
         ],
       },
       Sat: {
@@ -1434,6 +1428,15 @@ const FOOD_DB = [
     fat: 0.4,
   },
   {
+    id: "chickpeas_cooked",
+    name: "Chickpeas (cooked)",
+    nameAr: "حمص (مطبوخ)",
+    kcal: 164,
+    protein: 8.9,
+    carbs: 27.4,
+    fat: 2.6,
+  },
+  {
     id: "peanuts",
     name: "Peanuts",
     nameAr: "فول سوداني",
@@ -1478,6 +1481,24 @@ const FOOD_DB = [
     protein: 3.2,
     carbs: 4.8,
     fat: 3.3,
+  },
+  {
+    id: "milk_low_fat",
+    name: "Low-Fat Milk (2%)",
+    nameAr: "لبن قليل الدسم (٢٪)",
+    kcal: 50,
+    protein: 3.3,
+    carbs: 4.8,
+    fat: 2.0,
+  },
+  {
+    id: "milk_skim",
+    name: "Skimmed Milk",
+    nameAr: "لبن خالي الدسم",
+    kcal: 34,
+    protein: 3.4,
+    carbs: 5.0,
+    fat: 0.1,
   },
   {
     id: "yogurt",
@@ -1767,12 +1788,13 @@ const GOALS = [
   },
 ];
 
-const FREE_EXERCISE_CAP = 999;
+const FREE_EXERCISE_CAP = 4;
 
 /* ============================== DEFAULT STATE ============================== */
 function freshState() {
   return {
     onboarded: false,
+    workoutStartDate: null,
     account: {
       name: "",
       email: "",
@@ -1780,6 +1802,7 @@ function freshState() {
       gender: "",
       age: "",
       height: "",
+      weight: "",
       goal: "",
       daysPerWeek: 4,
       activityLevel: "moderate",
@@ -1874,7 +1897,11 @@ function useAppData(uid) {
       setDataRaw(next);
       if (!uid) return;
       try {
-        await setDoc(doc(db, "users", uid), next);
+        await setDoc(
+          doc(db, "users", uid),
+          { ...next, updatedAt: new Date().toISOString() },
+          { merge: true },
+        );
       } catch (e) {
         console.error("save failed", e);
       }
@@ -3655,6 +3682,7 @@ function SignUpScreen({ go, showToast, localLang }) {
       initial.account.email = email.trim();
       initial.account.phone = phone.trim();
       initial.settings.language = localLang || "en";
+      initial.createdAt = new Date().toISOString();
       await setDoc(doc(db, "users", cred.user.uid), initial);
       showToast(ar ? "تم إنشاء الحساب!" : "Account created!");
       // Root component sees the new signed-in user and routes to onboarding automatically.
@@ -4006,11 +4034,13 @@ function OnboardingScreen({ data, setData, go, showToast }) {
       gender,
       age: Number(age),
       height: Number(height),
+      weight: Number(weight),
       goal,
       daysPerWeek: days,
       activityLevel,
     };
     next.activePlanId = "beginner";
+    next.workoutStartDate = next.workoutStartDate || dateKey(0);
     next.bodyWeight = [createWeightEntry(Number(weight), dateKey(0))];
     const tdeeResult = calcTDEE({
       weight: Number(weight),
@@ -7856,19 +7886,24 @@ function PaywallScreen({ data, setData, back, showToast }) {
       const monthsToAdd =
         DURATIONS.find((d) => d.id === durationId)?.months || 1;
       next.entitlements.proExpiresAt = dateKey(30 * monthsToAdd);
-      const personalizedPlan = buildPersonalizedProPlan(next);
-      next.proPlan = personalizedPlan;
-      next.activePlanId = personalizedPlan.workoutPlanId;
-      next.nutritionPlan = {
-        ...(next.nutritionPlan || {}),
-        unread: true,
-        generatedAt: dateKey(0),
-        title: ar ? "خطة برو غذائية جاهزة" : "Pro nutrition plan is ready",
-        titleAr: ar ? "خطة برو غذائية جاهزة" : "Pro nutrition plan is ready",
-        summary: ar
-          ? `خطة مبنية على هدفك (${personalizedPlan.nutritionFocus})`
-          : `Plan tailored to your goal (${personalizedPlan.nutritionFocus})`,
-      };
+      if (next.entitlements.trainingPro) {
+        const personalizedPlan = buildPersonalizedProPlan(next);
+        next.proPlan = personalizedPlan;
+        next.activePlanId = personalizedPlan.workoutPlanId;
+      }
+      if (next.entitlements.nutritionPro) {
+        const personalizedPlan = buildPersonalizedProPlan(next);
+        next.nutritionPlan = {
+          ...(next.nutritionPlan || {}),
+          unread: true,
+          generatedAt: dateKey(0),
+          title: ar ? "خطة برو غذائية جاهزة" : "Pro nutrition plan is ready",
+          titleAr: ar ? "خطة برو غذائية جاهزة" : "Pro nutrition plan is ready",
+          summary: ar
+            ? `خطة مبنية على هدفك (${personalizedPlan.nutritionFocus})`
+            : `Plan tailored to your goal (${personalizedPlan.nutritionFocus})`,
+        };
+      }
       setData(next);
 
       // 3) Show a clear confirmation message on success.
@@ -7926,6 +7961,11 @@ function PaywallScreen({ data, setData, back, showToast }) {
       restored.forEach((p) => unlockPlans(next, p));
       if (restored.length > 0) {
         next.entitlements.proExpiresAt = dateKey(30);
+        if (next.entitlements.trainingPro) {
+          const personalizedPlan = buildPersonalizedProPlan(next);
+          next.proPlan = personalizedPlan;
+          next.activePlanId = personalizedPlan.workoutPlanId;
+        }
         setData(next);
         showToast(
           ar
@@ -9199,6 +9239,7 @@ function DeleteAccountScreen({
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const [confirm, setConfirm] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -9212,19 +9253,28 @@ function DeleteAccountScreen({
     }
     setBusy(true);
     try {
-      // 1) Remove the user's Firestore document first.
-      if (firebaseUser?.uid) {
-        try {
-          await deleteDoc(doc(db, "users", firebaseUser.uid));
-        } catch (fsErr) {
-          console.error("Firestore delete failed", fsErr);
+      const providerId = firebaseUser?.providerData?.[0]?.providerId;
+      if (firebaseUser && providerId === "password") {
+        if (!password) {
+          setError(ar ? "اكتب كلمة السر الحالية" : "Enter your current password");
+          return;
         }
+        await reauthenticateWithCredential(
+          firebaseUser,
+          EmailAuthProvider.credential(firebaseUser.email, password),
+        );
+      } else if (firebaseUser && providerId === "google.com") {
+        await reauthenticateWithGoogleFlow(firebaseUser);
       }
-      // 2) Delete the Firebase Authentication account.
+
+      // Delete the application document only after recent authentication
+      // succeeds, so a failed account deletion does not orphan user data.
+      if (firebaseUser?.uid) {
+        await deleteDoc(doc(db, "users", firebaseUser.uid));
+      }
       if (firebaseUser) {
         await deleteUser(firebaseUser);
       }
-      // 3) Reset local state and route back to the auth flow.
       resetAfterDelete();
     } catch (e) {
       setError(
@@ -9280,6 +9330,14 @@ function DeleteAccountScreen({
           placeholder={ar ? "DELETE" : "DELETE"}
           error={error}
         />
+        {firebaseUser?.providerData?.[0]?.providerId === "password" && (
+          <TextField
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={ar ? "كلمة السر الحالية" : "Current password"}
+          />
+        )}
 
         <div style={{ marginTop: 18, display: "flex", gap: 10 }}>
           <GreenButton variant="outline" onClick={back} style={{ flex: 1 }}>
@@ -10081,14 +10139,18 @@ export default function GymApp() {
   }, [setOnline]);
 
   useEffect(() => {
+    if (!localLang) {
+      setPhase("language");
+      return;
+    }
     if (firebaseUser === undefined) return; // Firebase hasn't reported yet — stay on splash
     if (firebaseUser === null) {
-      setPhase(localLang ? "welcome" : "language");
+      setPhase("welcome");
       return;
     }
     if (!loaded) return; // signed in, waiting on their Firestore document to load
     setPhase(data.onboarded ? "app" : "onboarding");
-  }, [firebaseUser, loaded]); // eslint-disable-line
+  }, [firebaseUser, loaded, localLang, data.onboarded]); // eslint-disable-line
 
   const pickLanguage = (lang) => {
     try {
@@ -10204,7 +10266,7 @@ export default function GymApp() {
   // No internet: block the whole app behind a full-screen gate. This runs
   // on launch AND continuously — if the device drops offline mid-session,
   // the offline screen takes over and auto-resumes when connectivity returns.
-  if (!online) {
+  if (!online && phase !== "language") {
     return (
       <UIContext.Provider value={ui}>
         <div

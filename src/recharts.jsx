@@ -4,6 +4,7 @@ import {
   Line as RCLine,
   AreaChart as RCAreaChart,
   Area as RCArea,
+  ComposedChart as RCComposedChart,
   XAxis as RCXAxis,
   YAxis as RCYAxis,
   CartesianGrid as RCCartesianGrid,
@@ -103,6 +104,7 @@ export const LineChart = RCLineChart;
 export const Line = RCLine;
 export const AreaChart = RCAreaChart;
 export const Area = RCArea;
+export const ComposedChart = RCComposedChart;
 export const XAxis = RCXAxis;
 export const YAxis = RCYAxis;
 export const CartesianGrid = RCCartesianGrid;

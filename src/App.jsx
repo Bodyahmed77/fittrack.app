@@ -53,6 +53,7 @@ import {
   Line,
   AreaChart,
   Area,
+  ComposedChart,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -5071,10 +5072,12 @@ function HomeScreen({ data, go }) {
             </div>
             <div style={{ width: 280, height: 150 }}>
               <ResponsiveContainer width="100%" height="100%">
-                {weightSeries.length > 1 ? (
-                  <AreaChart
+                {weightSeries.length > 0 ? (
+                  // ComposedChart so the stroked line and its dots render next
+                  // to the gradient area (AreaChart ignores <Line> children).
+                  <ComposedChart
                     data={weightSeries}
-                    margin={{ top: 6, right: 0, bottom: 0, left: 0 }}
+                    margin={{ top: 8, right: 4, bottom: 4, left: 4 }}
                   >
                     <defs>
                       <linearGradient
@@ -5096,16 +5099,8 @@ function HomeScreen({ data, go }) {
                         />
                       </linearGradient>
                     </defs>
-                    <XAxis hide />
-                    <YAxis hide domain={["dataMin - 0.2", "dataMax + 0.2"]} />
-                    <Line
-                      type="monotone"
-                      dataKey="kg"
-                      stroke={C.green}
-                      strokeWidth={3}
-                      dot={{ r: 3, fill: C.green, strokeWidth: 0 }}
-                      isAnimationActive={true}
-                    />
+                    <XAxis hide dataKey="date" />
+                    <YAxis hide domain={["dataMin - 0.5", "dataMax + 0.5"]} />
                     <Area
                       type="monotone"
                       dataKey="kg"
@@ -5113,52 +5108,49 @@ function HomeScreen({ data, go }) {
                       fill="url(#weightFill)"
                       isAnimationActive={true}
                     />
-                  </AreaChart>
-                ) : (
-                  <AreaChart
-                    data={[
-                      { date: "—", kg: currentWeight },
-                      { date: "→", kg: currentWeight },
-                    ]}
-                    margin={{ top: 6, right: 0, bottom: 0, left: 0 }}
-                  >
-                    <defs>
-                      <linearGradient
-                        id="weightFillEmpty"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor={C.green}
-                          stopOpacity={0.6}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor={C.green}
-                          stopOpacity={0.15}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <XAxis hide />
-                    <YAxis hide domain={["dataMin - 0.2", "dataMax + 0.2"]} />
                     <Line
                       type="monotone"
                       dataKey="kg"
                       stroke={C.green}
-                      strokeWidth={2.6}
-                      dot={false}
-                      strokeDasharray="4 4"
+                      strokeWidth={2.8}
+                      dot={{
+                        r: 3.5,
+                        fill: C.green,
+                        stroke: C.card,
+                        strokeWidth: 2,
+                      }}
+                      activeDot={{
+                        r: 5.5,
+                        fill: C.green,
+                        stroke: C.card,
+                        strokeWidth: 2,
+                      }}
+                      isAnimationActive={true}
                     />
-                    <Area
-                      type="monotone"
+                  </ComposedChart>
+                ) : (
+                  // No logged weights yet: a purely decorative baseline, never
+                  // a data point.
+                  <ComposedChart
+                    data={[
+                      { date: "a", kg: 1 },
+                      { date: "b", kg: 1 },
+                    ]}
+                    margin={{ top: 8, right: 4, bottom: 4, left: 4 }}
+                  >
+                    <XAxis hide dataKey="date" />
+                    <YAxis hide domain={[0, 2]} />
+                    <Line
+                      type="linear"
                       dataKey="kg"
-                      stroke="none"
-                      fill="url(#weightFillEmpty)"
+                      stroke={C.green}
+                      strokeOpacity={0.35}
+                      strokeWidth={1.5}
+                      dot={false}
+                      activeDot={false}
+                      isAnimationActive={false}
                     />
-                  </AreaChart>
+                  </ComposedChart>
                 )}
               </ResponsiveContainer>
             </div>
@@ -7216,7 +7208,24 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
 
         {view === "graph" ? (
           <Card>
-            <div style={{ height: 220 }}>
+            <div style={{ height: 220, position: "relative" }}>
+              {allSorted.length === 0 && (
+                /* Decorative baseline while there is no logged weight yet —
+                   never a data point, no synthetic entry is added. */
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 26,
+                    right: 10,
+                    top: "50%",
+                    height: 1.5,
+                    background: C.green,
+                    opacity: 0.35,
+                    borderRadius: 999,
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={chartData}
@@ -8633,38 +8642,51 @@ function PaywallScreen({ data, setData, back, showToast }) {
           ))}
         </div>
 
-        {/* Selected plan card */}
-        <Card
+        {/* Selected plan card. The badge lives outside the Card because the
+            Card's clip-path would crop anything overflowing its top edge. */}
+        <div
           style={{
-            border:
-              plan?.best === true
-                ? `1.5px solid ${C.gold}`
-                : `1px solid ${C.border}`,
             position: "relative",
-            paddingTop: 16,
+            paddingTop: plan?.best === true ? 16 : 0,
           }}
         >
           {plan?.best === true && (
             <div
               style={{
                 position: "absolute",
-                top: -10,
+                top: 0,
                 left: "50%",
                 transform: "translateX(-50%)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 background: "linear-gradient(90deg, #f59e0b, #fde68a)",
                 color: "#1a1200",
-                fontSize: 10,
+                fontSize: 10.5,
                 fontWeight: 800,
-                padding: "4px 12px",
+                lineHeight: 1.6,
+                padding: "5px 14px",
                 borderRadius: 999,
                 boxShadow: "0 4px 12px rgba(245, 158, 11, 0.22)",
                 whiteSpace: "nowrap",
-                zIndex: 2,
+                maxWidth: "92%",
+                overflow: "visible",
+                zIndex: 3,
               }}
             >
               {ar ? "أفضل قيمة 🏆" : "BEST VALUE 🏆"}
             </div>
           )}
+          <Card
+            style={{
+              border:
+                plan?.best === true
+                  ? `1.5px solid ${C.gold}`
+                  : `1px solid ${C.border}`,
+              position: "relative",
+              paddingTop: plan?.best === true ? 24 : 16,
+            }}
+          >
           <div
             style={{
               display: "flex",
@@ -8769,7 +8791,8 @@ function PaywallScreen({ data, setData, back, showToast }) {
               ? "استرجاع المشتريات"
               : "Restore Purchases"}
           </button>
-        </Card>
+          </Card>
+        </div>
 
         <div
           style={{

@@ -1,45 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
+import * as Recharts from "recharts";
 
-// Recharts is intentionally loaded only after the application shell has rendered.
-// This prevents the ~500 KB chart library from blocking Android startup.
-let rechartsPromise;
-function loadRecharts() {
-  if (!rechartsPromise) {
-    rechartsPromise = import("recharts");
-  }
-  return rechartsPromise;
-}
-
-function lazyRechartsComponent(name) {
-  return function LazyRechartsComponent(props) {
-    const [Component, setComponent] = useState(null);
-
-    useEffect(() => {
-      let active = true;
-      loadRecharts()
-        .then((mod) => {
-          if (active && mod?.[name]) setComponent(() => mod[name]);
-        })
-        .catch((error) => {
-          console.error(`Failed to load Recharts component: ${name}`, error);
-        });
-      return () => {
-        active = false;
-      };
-    }, []);
-
-    if (!Component) return null;
-
-    const { children, ...rest } = props;
-    return React.createElement(Component, rest, children);
-  };
-}
-
-// Android WebView can occasionally report a zero/unstable percentage size to
-// Recharts' ResponsiveContainer during the first layout pass. Keep the real
-// Recharts renderer and all of its styling/interaction intact, but measure the
-// actual DOM box ourselves and pass explicit pixel dimensions to the chart.
-// This avoids changing the chart implementation or visual quality.
+// Keep the real Recharts components and their existing visual configuration.
+// The Android fix is only concerned with reliable WebView layout measurement.
 function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", children, ...rest }) {
   const hostRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -49,37 +12,34 @@ function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", child
     if (!host) return undefined;
 
     let frame = 0;
-    let retryTimer = 0;
-
     const measure = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const rect = host.getBoundingClientRect();
-        const nextWidth = Math.max(1, Math.floor(rect.width));
-        const nextHeight = Math.max(1, Math.floor(rect.height));
-        setSize((prev) =>
-          prev.width === nextWidth && prev.height === nextHeight
-            ? prev
-            : { width: nextWidth, height: nextHeight },
-        );
+        const nextWidth = Math.max(1, Math.floor(rect.width || host.clientWidth || 0));
+        const nextHeight = Math.max(1, Math.floor(rect.height || host.clientHeight || 0));
+        if (nextWidth > 1 && nextHeight > 1) {
+          setSize((prev) =>
+            prev.width === nextWidth && prev.height === nextHeight
+              ? prev
+              : { width: nextWidth, height: nextHeight },
+          );
+        }
       });
     };
 
     measure();
-    retryTimer = window.setTimeout(measure, 80);
-    const lateRetryTimer = window.setTimeout(measure, 300);
-
+    const timers = [50, 150, 300, 600].map((delay) => window.setTimeout(measure, delay));
     let observer;
     if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(measure);
       observer.observe(host);
     }
-
     window.addEventListener("resize", measure);
+
     return () => {
       cancelAnimationFrame(frame);
-      window.clearTimeout(retryTimer);
-      window.clearTimeout(lateRetryTimer);
+      timers.forEach((timer) => window.clearTimeout(timer));
       observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
@@ -112,12 +72,12 @@ function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", child
   );
 }
 
-export const LineChart = lazyRechartsComponent("LineChart");
-export const Line = lazyRechartsComponent("Line");
-export const AreaChart = lazyRechartsComponent("AreaChart");
-export const Area = lazyRechartsComponent("Area");
-export const XAxis = lazyRechartsComponent("XAxis");
-export const YAxis = lazyRechartsComponent("YAxis");
-export const CartesianGrid = lazyRechartsComponent("CartesianGrid");
-export const Tooltip = lazyRechartsComponent("Tooltip");
+export const LineChart = Recharts.LineChart;
+export const Line = Recharts.Line;
+export const AreaChart = Recharts.AreaChart;
+export const Area = Recharts.Area;
+export const XAxis = Recharts.XAxis;
+export const YAxis = Recharts.YAxis;
+export const CartesianGrid = Recharts.CartesianGrid;
+export const Tooltip = Recharts.Tooltip;
 export const ResponsiveContainer = AndroidSafeResponsiveContainer;

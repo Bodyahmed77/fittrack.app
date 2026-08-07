@@ -1,45 +1,25 @@
 import React, { useEffect, useRef, useState } from "react";
+import {
+  LineChart as RCLineChart,
+  Line as RCLine,
+  AreaChart as RCAreaChart,
+  Area as RCArea,
+  ComposedChart as RCComposedChart,
+  XAxis as RCXAxis,
+  YAxis as RCYAxis,
+  CartesianGrid as RCCartesianGrid,
+  Tooltip as RCTooltip,
+} from "recharts";
 
-// Recharts is intentionally loaded only after the application shell has rendered.
-// This prevents the ~500 KB chart library from blocking Android startup.
-let rechartsPromise;
-function loadRecharts() {
-  if (!rechartsPromise) {
-    rechartsPromise = import("recharts");
-  }
-  return rechartsPromise;
-}
+// Recharts identifies its own children by component type (Line, XAxis, ...),
+// so the real Recharts components must be used directly as element types.
+// Wrapping them in lazy placeholders makes the chart render empty.
+// Recharts still lives in its own Rollup chunk (see vite.config.js).
 
-function lazyRechartsComponent(name) {
-  return function LazyRechartsComponent(props) {
-    const [Component, setComponent] = useState(null);
-
-    useEffect(() => {
-      let active = true;
-      loadRecharts()
-        .then((mod) => {
-          if (active && mod?.[name]) setComponent(() => mod[name]);
-        })
-        .catch((error) => {
-          console.error(`Failed to load Recharts component: ${name}`, error);
-        });
-      return () => {
-        active = false;
-      };
-    }, []);
-
-    if (!Component) return null;
-
-    const { children, ...rest } = props;
-    return React.createElement(Component, rest, children);
-  };
-}
-
-// Android WebView can occasionally report a zero/unstable percentage size to
-// Recharts' ResponsiveContainer during the first layout pass. Keep the real
-// Recharts renderer and all of its styling/interaction intact, but measure the
-// actual DOM box ourselves and pass explicit pixel dimensions to the chart.
-// This avoids changing the chart implementation or visual quality.
+// Android WebView can report a zero/unstable percentage size during the first
+// layout pass, which makes Recharts' own ResponsiveContainer render nothing.
+// Measure the host box here and hand explicit pixel dimensions to the chart so
+// the existing chart implementation and styling stay untouched.
 function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", children, ...rest }) {
   const hostRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -49,14 +29,16 @@ function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", child
     if (!host) return undefined;
 
     let frame = 0;
-    let retryTimer = 0;
+    const timers = [];
 
     const measure = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const rect = host.getBoundingClientRect();
-        const nextWidth = Math.max(1, Math.floor(rect.width));
-        const nextHeight = Math.max(1, Math.floor(rect.height));
+        const parentRect = host.parentElement?.getBoundingClientRect();
+        const nextWidth = Math.floor(rect.width || parentRect?.width || 0);
+        const nextHeight = Math.floor(rect.height || parentRect?.height || 0);
+        if (nextWidth <= 0 || nextHeight <= 0) return;
         setSize((prev) =>
           prev.width === nextWidth && prev.height === nextHeight
             ? prev
@@ -66,22 +48,28 @@ function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", child
     };
 
     measure();
-    retryTimer = window.setTimeout(measure, 80);
-    const lateRetryTimer = window.setTimeout(measure, 300);
+    // Android WebView often settles its layout a few frames after mount.
+    [50, 150, 400, 1000].forEach((delay) => {
+      timers.push(window.setTimeout(measure, delay));
+    });
 
     let observer;
     if (typeof ResizeObserver !== "undefined") {
       observer = new ResizeObserver(measure);
       observer.observe(host);
+      if (host.parentElement) observer.observe(host.parentElement);
     }
 
     window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    document.addEventListener("visibilitychange", measure);
     return () => {
       cancelAnimationFrame(frame);
-      window.clearTimeout(retryTimer);
-      window.clearTimeout(lateRetryTimer);
+      timers.forEach((timer) => window.clearTimeout(timer));
       observer?.disconnect();
       window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+      document.removeEventListener("visibilitychange", measure);
     };
   }, []);
 
@@ -112,12 +100,13 @@ function AndroidSafeResponsiveContainer({ width = "100%", height = "100%", child
   );
 }
 
-export const LineChart = lazyRechartsComponent("LineChart");
-export const Line = lazyRechartsComponent("Line");
-export const AreaChart = lazyRechartsComponent("AreaChart");
-export const Area = lazyRechartsComponent("Area");
-export const XAxis = lazyRechartsComponent("XAxis");
-export const YAxis = lazyRechartsComponent("YAxis");
-export const CartesianGrid = lazyRechartsComponent("CartesianGrid");
-export const Tooltip = lazyRechartsComponent("Tooltip");
+export const LineChart = RCLineChart;
+export const Line = RCLine;
+export const AreaChart = RCAreaChart;
+export const Area = RCArea;
+export const ComposedChart = RCComposedChart;
+export const XAxis = RCXAxis;
+export const YAxis = RCYAxis;
+export const CartesianGrid = RCCartesianGrid;
+export const Tooltip = RCTooltip;
 export const ResponsiveContainer = AndroidSafeResponsiveContainer;

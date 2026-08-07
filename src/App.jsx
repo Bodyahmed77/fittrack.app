@@ -53,6 +53,7 @@ import {
   Line,
   AreaChart,
   Area,
+  ComposedChart,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -352,6 +353,22 @@ function clone(o) {
 function uid() {
   return Math.random().toString(36).slice(2, 9);
 }
+const LANG_STORAGE_KEY = "50fit-lang";
+// The chosen language lives in localStorage (survives app restarts) and, once
+// the user is signed in, in their Firestore profile (survives reinstalls).
+function readStoredLanguage() {
+  try {
+    const stored = localStorage.getItem(LANG_STORAGE_KEY);
+    return stored === "ar" || stored === "en" ? stored : null;
+  } catch (e) {
+    return null;
+  }
+}
+function persistLanguage(lang) {
+  try {
+    localStorage.setItem(LANG_STORAGE_KEY, lang);
+  } catch (e) {}
+}
 function isValidEmail(v) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 }
@@ -523,32 +540,52 @@ function setsCompletedInRange(data, startISO, endISO) {
   });
   return count;
 }
-// Returns 'done' | 'missed' | 'pending' | 'rest' for a given weekday.
-// - done: all exercises for that (current-week) training day are completed
-// - missed: a past training day (earlier this week) that was never completed
-// - pending: a not-yet-completed training day (today or future this week)
-// - rest: the day has no exercises scheduled
-function dayStatus(data, dayName) {
-  const activePlan =
-    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const exercises = activePlan.schedule[dayName]?.exercises || [];
-  if (exercises.length === 0) return "rest";
-  // Always resolve the date within the *current* week, anchored on Monday,
-  // so a future day this week is "pending" (never red) and only genuinely
-  // past skipped training days this week turn red.
-  const dayIndex = DAYS.indexOf(dayName);
-  const monday = mondayOf(dateKey(0));
-  const targetDate = addDays(monday, dayIndex);
-  if (data.workoutStartDate && targetDate < data.workoutStartDate) {
-    return "pending";
-  }
+// Calendar date of a weekday inside the current (Monday-anchored) week.
+function dateForDay(dayName) {
+  return addDays(mondayOf(dateKey(0)), DAYS.indexOf(dayName));
+}
+
+// A day counts as trained when every exercise the user can actually open that
+// day has been logged.
+function isDayCompleted(data, dayName, targetDate = dateForDay(dayName)) {
+  const exercises = getUsableExercises(data, dayName).list;
+  if (exercises.length === 0) return false;
   const log = data.logs[targetDate] || {};
-  const done = exercises.every(
+  return exercises.every(
     (e) => log[e.id]?.finished || (log[e.id]?.sets || []).some((s) => s.done),
   );
-  if (done) return "done";
+}
+
+// Returns 'done' | 'missed' | 'pending' | 'rest' for a given weekday.
+// - done:    the day's workout was completed
+// - missed:  a training day that is already in the past, started on or after
+//            the user's program start date, and was never completed
+// - pending: today, a future day, or a day before the program start date
+// - rest:    the day has no exercises scheduled
+function dayStatus(data, dayName) {
+  const exercises = getUsableExercises(data, dayName).list;
+  if (exercises.length === 0) return "rest";
+  const targetDate = dateForDay(dayName);
+  if (isDayCompleted(data, dayName, targetDate)) return "done";
+  // Days before the user started the program were never theirs to miss, and a
+  // user without a stored start date is never blamed for the past either.
+  if (!data.workoutStartDate || targetDate < data.workoutStartDate)
+    return "pending";
   if (targetDate < dateKey(0)) return "missed";
   return "pending";
+}
+
+// The day the program is currently on: today when today is a training day,
+// otherwise the next scheduled training day (rest days are skipped, never
+// treated as missed workouts).
+function activeTrainingDay(data) {
+  for (let offset = 0; offset < DAYS.length; offset += 1) {
+    const day = DAYS[(todayIdx + offset) % DAYS.length];
+    if (getUsableExercises(data, day).list.length === 0) continue;
+    if (offset === 0 && isDayCompleted(data, day)) continue;
+    return day;
+  }
+  return DAYS[todayIdx];
 }
 
 /* ============================== EXERCISE LIBRARY ============================== */
@@ -1756,6 +1793,473 @@ const FOOD_DB = [
     carbs: 21.2,
     fat: 53.8,
   },
+  // القسم التالي مضاف من USDA FoodData Central (SR Legacy) — لكل 100 جرام
+  // قسم: لحوم وأسماك إضافية
+  {
+    id: "chicken_whole_roasted",
+    name: "Roast Chicken (meat only)",
+    nameAr: "فراخ مشوية (لحم فقط)",
+    kcal: 190,
+    protein: 28.9,
+    carbs: 0.0,
+    fat: 7.4,
+  },
+  {
+    id: "chicken_drumstick",
+    name: "Chicken Drumstick (roasted, meat only)",
+    nameAr: "دبوس فراخ (مشوي)",
+    kcal: 172,
+    protein: 28.3,
+    carbs: 0.0,
+    fat: 5.7,
+  },
+  {
+    id: "chicken_liver",
+    name: "Chicken Liver (cooked)",
+    nameAr: "كبدة فراخ (مطبوخة)",
+    kcal: 167,
+    protein: 24.5,
+    carbs: 0.9,
+    fat: 6.5,
+  },
+  {
+    id: "beef_liver",
+    name: "Beef Liver (cooked)",
+    nameAr: "كبدة بقري (مطبوخة)",
+    kcal: 175,
+    protein: 26.5,
+    carbs: 5.1,
+    fat: 4.7,
+  },
+  {
+    id: "lamb_lean",
+    name: "Lamb (cooked, lean)",
+    nameAr: "لحم ضاني (مطبوخ)",
+    kcal: 258,
+    protein: 25.6,
+    carbs: 0.0,
+    fat: 16.5,
+  },
+  {
+    id: "sardines_canned",
+    name: "Sardines (canned in oil, drained)",
+    nameAr: "سردين (معلب بالزيت)",
+    kcal: 208,
+    protein: 24.6,
+    carbs: 0.0,
+    fat: 11.5,
+  },
+  {
+    id: "mackerel",
+    name: "Mackerel (cooked)",
+    nameAr: "ماكريل (مطبوخ)",
+    kcal: 262,
+    protein: 23.8,
+    carbs: 0.0,
+    fat: 17.8,
+  },
+  {
+    id: "tilapia",
+    name: "Tilapia (cooked)",
+    nameAr: "بلطي (مطبوخ)",
+    kcal: 129,
+    protein: 26.2,
+    carbs: 0.0,
+    fat: 2.7,
+  },
+  {
+    id: "cod",
+    name: "Cod (cooked)",
+    nameAr: "سمك قد (مطبوخ)",
+    kcal: 105,
+    protein: 22.8,
+    carbs: 0.0,
+    fat: 0.9,
+  },
+  // قسم: ألبان وأجبان إضافية
+  {
+    id: "mozzarella",
+    name: "Mozzarella (part-skim)",
+    nameAr: "موتزاريلا (نصف دسم)",
+    kcal: 254,
+    protein: 24.3,
+    carbs: 2.8,
+    fat: 15.9,
+  },
+  {
+    id: "cheddar",
+    name: "Cheddar Cheese",
+    nameAr: "جبنة شيدر",
+    kcal: 403,
+    protein: 22.9,
+    carbs: 3.1,
+    fat: 33.1,
+  },
+  {
+    id: "cream_cheese",
+    name: "Cream Cheese",
+    nameAr: "جبنة كريمي",
+    kcal: 350,
+    protein: 6.2,
+    carbs: 5.5,
+    fat: 34.4,
+  },
+  {
+    id: "soy_milk",
+    name: "Soy Milk (unsweetened)",
+    nameAr: "لبن صويا (بدون سكر)",
+    kcal: 33,
+    protein: 2.9,
+    carbs: 1.8,
+    fat: 1.6,
+  },
+  // قسم: نشويات إضافية
+  {
+    id: "pasta_whole_wheat",
+    name: "Whole Wheat Pasta (cooked)",
+    nameAr: "مكرونة أسمر (مسلوقة)",
+    kcal: 124,
+    protein: 5.3,
+    carbs: 26.5,
+    fat: 0.5,
+  },
+  {
+    id: "couscous_cooked",
+    name: "Couscous (cooked)",
+    nameAr: "كسكسي (مطبوخ)",
+    kcal: 112,
+    protein: 3.8,
+    carbs: 23.2,
+    fat: 0.2,
+  },
+  {
+    id: "cornflakes",
+    name: "Corn Flakes",
+    nameAr: "كورن فليكس",
+    kcal: 357,
+    protein: 7.5,
+    carbs: 84.1,
+    fat: 0.4,
+  },
+  {
+    id: "corn_cooked",
+    name: "Sweet Corn (cooked)",
+    nameAr: "ذرة حلوة (مسلوقة)",
+    kcal: 96,
+    protein: 3.4,
+    carbs: 21.0,
+    fat: 1.5,
+  },
+  // قسم: بقوليات إضافية
+  {
+    id: "kidney_beans_cooked",
+    name: "Kidney Beans (cooked)",
+    nameAr: "فاصوليا حمراء (مطبوخة)",
+    kcal: 127,
+    protein: 8.7,
+    carbs: 22.8,
+    fat: 0.5,
+  },
+  {
+    id: "white_beans_cooked",
+    name: "White Beans (cooked)",
+    nameAr: "فاصوليا بيضاء (مطبوخة)",
+    kcal: 139,
+    protein: 9.7,
+    carbs: 25.1,
+    fat: 0.4,
+  },
+  {
+    id: "black_beans_cooked",
+    name: "Black Beans (cooked)",
+    nameAr: "فاصوليا سوداء (مطبوخة)",
+    kcal: 132,
+    protein: 8.9,
+    carbs: 23.7,
+    fat: 0.5,
+  },
+  {
+    id: "edamame",
+    name: "Edamame (cooked)",
+    nameAr: "فول صويا أخضر (مسلوق)",
+    kcal: 122,
+    protein: 11.9,
+    carbs: 9.9,
+    fat: 5.2,
+  },
+  {
+    id: "green_peas",
+    name: "Green Peas (cooked)",
+    nameAr: "بسلة (مسلوقة)",
+    kcal: 84,
+    protein: 5.4,
+    carbs: 15.6,
+    fat: 0.2,
+  },
+  // قسم: خضار إضافية
+  {
+    id: "green_beans",
+    name: "Green Beans (cooked)",
+    nameAr: "فاصوليا خضراء (مسلوقة)",
+    kcal: 35,
+    protein: 1.9,
+    carbs: 7.9,
+    fat: 0.3,
+  },
+  {
+    id: "carrot",
+    name: "Carrot (raw)",
+    nameAr: "جزر",
+    kcal: 41,
+    protein: 0.9,
+    carbs: 9.6,
+    fat: 0.2,
+  },
+  {
+    id: "zucchini",
+    name: "Zucchini (raw)",
+    nameAr: "كوسة",
+    kcal: 17,
+    protein: 1.2,
+    carbs: 3.1,
+    fat: 0.3,
+  },
+  {
+    id: "eggplant_cooked",
+    name: "Eggplant (cooked)",
+    nameAr: "باذنجان (مطبوخ)",
+    kcal: 35,
+    protein: 0.8,
+    carbs: 8.7,
+    fat: 0.2,
+  },
+  {
+    id: "okra_cooked",
+    name: "Okra (cooked)",
+    nameAr: "بامية (مطبوخة)",
+    kcal: 22,
+    protein: 1.9,
+    carbs: 4.5,
+    fat: 0.2,
+  },
+  {
+    id: "cabbage",
+    name: "Cabbage (raw)",
+    nameAr: "كرنب",
+    kcal: 25,
+    protein: 1.3,
+    carbs: 5.8,
+    fat: 0.1,
+  },
+  {
+    id: "cauliflower",
+    name: "Cauliflower (raw)",
+    nameAr: "قرنبيط",
+    kcal: 25,
+    protein: 1.9,
+    carbs: 5.0,
+    fat: 0.3,
+  },
+  {
+    id: "onion",
+    name: "Onion (raw)",
+    nameAr: "بصل",
+    kcal: 40,
+    protein: 1.1,
+    carbs: 9.3,
+    fat: 0.1,
+  },
+  {
+    id: "bell_pepper",
+    name: "Green Bell Pepper (raw)",
+    nameAr: "فلفل أخضر",
+    kcal: 20,
+    protein: 0.9,
+    carbs: 4.6,
+    fat: 0.2,
+  },
+  {
+    id: "mushrooms",
+    name: "White Mushrooms (raw)",
+    nameAr: "مشروم",
+    kcal: 22,
+    protein: 3.1,
+    carbs: 3.3,
+    fat: 0.3,
+  },
+  // قسم: فواكه إضافية
+  {
+    id: "kiwi",
+    name: "Kiwi",
+    nameAr: "كيوي",
+    kcal: 61,
+    protein: 1.1,
+    carbs: 14.7,
+    fat: 0.5,
+  },
+  {
+    id: "pineapple",
+    name: "Pineapple",
+    nameAr: "أناناس",
+    kcal: 50,
+    protein: 0.5,
+    carbs: 13.1,
+    fat: 0.1,
+  },
+  {
+    id: "pomegranate",
+    name: "Pomegranate",
+    nameAr: "رمان",
+    kcal: 83,
+    protein: 1.7,
+    carbs: 18.7,
+    fat: 1.2,
+  },
+  {
+    id: "guava",
+    name: "Guava",
+    nameAr: "جوافة",
+    kcal: 68,
+    protein: 2.6,
+    carbs: 14.3,
+    fat: 1.0,
+  },
+  {
+    id: "peach",
+    name: "Peach",
+    nameAr: "خوخ",
+    kcal: 39,
+    protein: 0.9,
+    carbs: 9.5,
+    fat: 0.3,
+  },
+  {
+    id: "pear",
+    name: "Pear",
+    nameAr: "كمثرى",
+    kcal: 57,
+    protein: 0.4,
+    carbs: 15.2,
+    fat: 0.1,
+  },
+  {
+    id: "blueberries",
+    name: "Blueberries",
+    nameAr: "توت أزرق",
+    kcal: 57,
+    protein: 0.7,
+    carbs: 14.5,
+    fat: 0.3,
+  },
+  {
+    id: "figs",
+    name: "Figs (fresh)",
+    nameAr: "تين طازج",
+    kcal: 74,
+    protein: 0.8,
+    carbs: 19.2,
+    fat: 0.3,
+  },
+  {
+    id: "raisins",
+    name: "Raisins",
+    nameAr: "زبيب",
+    kcal: 299,
+    protein: 3.1,
+    carbs: 79.2,
+    fat: 0.5,
+  },
+  {
+    id: "dried_apricots",
+    name: "Dried Apricots",
+    nameAr: "مشمش مجفف",
+    kcal: 241,
+    protein: 3.4,
+    carbs: 62.6,
+    fat: 0.5,
+  },
+  {
+    id: "orange_juice",
+    name: "Orange Juice (100%)",
+    nameAr: "عصير برتقال طبيعي",
+    kcal: 45,
+    protein: 0.7,
+    carbs: 10.4,
+    fat: 0.2,
+  },
+  // قسم: مكسرات وبذور ودهون إضافية
+  {
+    id: "walnuts",
+    name: "Walnuts",
+    nameAr: "عين جمل",
+    kcal: 654,
+    protein: 15.2,
+    carbs: 13.7,
+    fat: 65.2,
+  },
+  {
+    id: "cashews",
+    name: "Cashews",
+    nameAr: "كاجو",
+    kcal: 553,
+    protein: 18.2,
+    carbs: 30.2,
+    fat: 43.9,
+  },
+  {
+    id: "pistachios",
+    name: "Pistachios",
+    nameAr: "فستق",
+    kcal: 560,
+    protein: 20.2,
+    carbs: 27.2,
+    fat: 45.3,
+  },
+  {
+    id: "sunflower_seeds",
+    name: "Sunflower Seeds",
+    nameAr: "لب عباد الشمس",
+    kcal: 584,
+    protein: 20.8,
+    carbs: 20.0,
+    fat: 51.5,
+  },
+  {
+    id: "chia_seeds",
+    name: "Chia Seeds",
+    nameAr: "بذور الشيا",
+    kcal: 486,
+    protein: 16.5,
+    carbs: 42.1,
+    fat: 30.7,
+  },
+  {
+    id: "flaxseed",
+    name: "Flaxseed",
+    nameAr: "بذر الكتان",
+    kcal: 534,
+    protein: 18.3,
+    carbs: 28.9,
+    fat: 42.2,
+  },
+  {
+    id: "coconut_oil",
+    name: "Coconut Oil",
+    nameAr: "زيت جوز الهند",
+    kcal: 862,
+    protein: 0.0,
+    carbs: 0.0,
+    fat: 100.0,
+  },
+  {
+    id: "ghee",
+    name: "Ghee (clarified butter)",
+    nameAr: "سمنة",
+    kcal: 876,
+    protein: 0.3,
+    carbs: 0.0,
+    fat: 99.5,
+  },
 ];
 
 const GOALS = [
@@ -2416,10 +2920,19 @@ function VideoPlayer({ videoId, ar }) {
             borderRadius: 14,
             overflow: "hidden",
             background: "#000",
+            border: `1px solid ${C.border}`,
+            boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+            isolation: "isolate",
           }}
         >
+          {/* The iframe sandbox keeps the embed playable and interactive while
+              denying top-level navigation, popups and deep links, so tapping
+              the clip can no longer leave Fifty Fit for the TikTok app. */}
           <iframe
             src={embedSrc}
+            title={ar ? "فيديو التمرين" : "Exercise video"}
+            sandbox="allow-scripts allow-same-origin allow-presentation"
+            referrerPolicy="no-referrer"
             style={{
               position: "absolute",
               inset: 0,
@@ -2432,6 +2945,7 @@ function VideoPlayer({ videoId, ar }) {
           />
           <button
             onClick={() => setShow(false)}
+            aria-label={ar ? "إغلاق الفيديو" : "Close video"}
             style={{
               position: "absolute",
               top: 8,
@@ -4558,10 +5072,12 @@ function HomeScreen({ data, go }) {
             </div>
             <div style={{ width: 280, height: 150 }}>
               <ResponsiveContainer width="100%" height="100%">
-                {weightSeries.length > 1 ? (
-                  <AreaChart
+                {weightSeries.length > 0 ? (
+                  // ComposedChart so the stroked line and its dots render next
+                  // to the gradient area (AreaChart ignores <Line> children).
+                  <ComposedChart
                     data={weightSeries}
-                    margin={{ top: 6, right: 0, bottom: 0, left: 0 }}
+                    margin={{ top: 8, right: 4, bottom: 4, left: 4 }}
                   >
                     <defs>
                       <linearGradient
@@ -4583,16 +5099,8 @@ function HomeScreen({ data, go }) {
                         />
                       </linearGradient>
                     </defs>
-                    <XAxis hide />
-                    <YAxis hide domain={["dataMin - 0.2", "dataMax + 0.2"]} />
-                    <Line
-                      type="monotone"
-                      dataKey="kg"
-                      stroke={C.green}
-                      strokeWidth={3}
-                      dot={{ r: 3, fill: C.green, strokeWidth: 0 }}
-                      isAnimationActive={true}
-                    />
+                    <XAxis hide dataKey="date" />
+                    <YAxis hide domain={["dataMin - 0.5", "dataMax + 0.5"]} />
                     <Area
                       type="monotone"
                       dataKey="kg"
@@ -4600,52 +5108,49 @@ function HomeScreen({ data, go }) {
                       fill="url(#weightFill)"
                       isAnimationActive={true}
                     />
-                  </AreaChart>
-                ) : (
-                  <AreaChart
-                    data={[
-                      { date: "—", kg: currentWeight },
-                      { date: "→", kg: currentWeight },
-                    ]}
-                    margin={{ top: 6, right: 0, bottom: 0, left: 0 }}
-                  >
-                    <defs>
-                      <linearGradient
-                        id="weightFillEmpty"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor={C.green}
-                          stopOpacity={0.6}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor={C.green}
-                          stopOpacity={0.15}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <XAxis hide />
-                    <YAxis hide domain={["dataMin - 0.2", "dataMax + 0.2"]} />
                     <Line
                       type="monotone"
                       dataKey="kg"
                       stroke={C.green}
-                      strokeWidth={2.6}
-                      dot={false}
-                      strokeDasharray="4 4"
+                      strokeWidth={2.8}
+                      dot={{
+                        r: 3.5,
+                        fill: C.green,
+                        stroke: C.card,
+                        strokeWidth: 2,
+                      }}
+                      activeDot={{
+                        r: 5.5,
+                        fill: C.green,
+                        stroke: C.card,
+                        strokeWidth: 2,
+                      }}
+                      isAnimationActive={true}
                     />
-                    <Area
-                      type="monotone"
+                  </ComposedChart>
+                ) : (
+                  // No logged weights yet: a purely decorative baseline, never
+                  // a data point.
+                  <ComposedChart
+                    data={[
+                      { date: "a", kg: 1 },
+                      { date: "b", kg: 1 },
+                    ]}
+                    margin={{ top: 8, right: 4, bottom: 4, left: 4 }}
+                  >
+                    <XAxis hide dataKey="date" />
+                    <YAxis hide domain={[0, 2]} />
+                    <Line
+                      type="linear"
                       dataKey="kg"
-                      stroke="none"
-                      fill="url(#weightFillEmpty)"
+                      stroke={C.green}
+                      strokeOpacity={0.35}
+                      strokeWidth={1.5}
+                      dot={false}
+                      activeDot={false}
+                      isAnimationActive={false}
                     />
-                  </AreaChart>
+                  </ComposedChart>
                 )}
               </ResponsiveContainer>
             </div>
@@ -5081,6 +5586,7 @@ function WorkoutScreen({
     data,
     selectedDay,
   );
+  const activeDay = activeTrainingDay(data);
   const today = dateKey(0);
   const log = data.logs[today] || {};
   const [showAdd, setShowAdd] = useState(false);
@@ -5145,6 +5651,7 @@ function WorkoutScreen({
           {DAYS.map((d, i) => {
             const isSelected = d === selectedDay;
             const isToday = i === todayIdx;
+            const isActiveDay = d === activeDay;
             const status = dayStatus(data, d);
             const isDone = status === "done";
             const isMissed = status === "missed";
@@ -5181,7 +5688,7 @@ function WorkoutScreen({
                   borderRadius: 12,
                   cursor: "pointer",
                   border:
-                    isToday && !isSelected
+                    (isToday || isActiveDay) && !isSelected
                       ? `1px solid ${C.green}`
                       : "1px solid transparent",
                   background: bg,
@@ -5636,10 +6143,22 @@ function ExerciseScreen({
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const [tab, setTab] = useState("today");
+  // Only exercises inside the user's entitlement can be opened, so a free
+  // account can never reach exercise 5+ of the day through a stale link.
   const { list: exercises } = getUsableExercises(data, day);
-  const ex =
-    exercises.find((e) => e.id === exerciseId) ||
-    getMergedExercises(data, day).find((e) => e.id === exerciseId);
+  const ex = exercises.find((e) => e.id === exerciseId);
+  if (!ex) {
+    return (
+      <div dir={ar ? "rtl" : "ltr"}>
+        <TopBar title={ar ? "التمرين" : "Exercise"} onBack={back} />
+        <div style={{ padding: 18, color: C.sub, fontSize: 13.5 }}>
+          {ar
+            ? "التمرين ده مش متاح في خطتك الحالية."
+            : "This exercise isn't available on your current plan."}
+        </div>
+      </div>
+    );
+  }
   const today = dateKey(0);
 
   const existingLog = data.logs[today]?.[exerciseId];
@@ -6689,7 +7208,24 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
 
         {view === "graph" ? (
           <Card>
-            <div style={{ height: 220 }}>
+            <div style={{ height: 220, position: "relative" }}>
+              {allSorted.length === 0 && (
+                /* Decorative baseline while there is no logged weight yet —
+                   never a data point, no synthetic entry is added. */
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 26,
+                    right: 10,
+                    top: "50%",
+                    height: 1.5,
+                    background: C.green,
+                    opacity: 0.35,
+                    borderRadius: 999,
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={chartData}
@@ -6714,6 +7250,7 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
                     tickLine={false}
                     axisLine={false}
                     width={36}
+                    tick={chartData.length > 0}
                     domain={[Math.max(0, minWeight - 2), maxWeight + 2]}
                   />
                   <Tooltip
@@ -7689,6 +8226,12 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const plan = PLAN_TEMPLATES[planId];
   const isActive = data.activePlanId === planId;
   const daySchedule = plan.schedule[day];
+  // Free accounts preview the same four exercises they can actually train.
+  const trainingPro = data.entitlements.trainingPro;
+  const visibleExercises = trainingPro
+    ? daySchedule.exercises
+    : daySchedule.exercises.slice(0, FREE_EXERCISE_CAP);
+  const lockedCount = daySchedule.exercises.length - visibleExercises.length;
 
   const use = () => {
     const next = clone(data);
@@ -7780,7 +8323,7 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
               {ar ? "يوم راحة" : "Rest day"}
             </Card>
           )}
-          {daySchedule.exercises.map((ex, i) => (
+          {visibleExercises.map((ex, i) => (
             <Card
               key={ex.id}
               style={{
@@ -7821,6 +8364,15 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
               </div>
             </Card>
           ))}
+          {lockedCount > 0 && (
+            <Card style={{ textAlign: "center", padding: 14, color: C.sub }}>
+              {ar
+                ? `${lockedCount} تمرين إضافي مع Training Pro`
+                : `${lockedCount} more exercise${
+                    lockedCount > 1 ? "s" : ""
+                  } with Training Pro`}
+            </Card>
+          )}
         </div>
         <div style={{ margin: "18px 0 20px" }}>
           <GreenButton onClick={use} disabled={isActive}>
@@ -8091,38 +8643,51 @@ function PaywallScreen({ data, setData, back, showToast }) {
           ))}
         </div>
 
-        {/* Selected plan card */}
-        <Card
+        {/* Selected plan card. The badge lives outside the Card because the
+            Card's clip-path would crop anything overflowing its top edge. */}
+        <div
           style={{
-            border:
-              plan?.best === true
-                ? `1.5px solid ${C.gold}`
-                : `1px solid ${C.border}`,
             position: "relative",
-            paddingTop: 16,
+            paddingTop: plan?.best === true ? 16 : 0,
           }}
         >
           {plan?.best === true && (
             <div
               style={{
                 position: "absolute",
-                top: -10,
+                top: 0,
                 left: "50%",
                 transform: "translateX(-50%)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
                 background: "linear-gradient(90deg, #f59e0b, #fde68a)",
                 color: "#1a1200",
-                fontSize: 10,
+                fontSize: 10.5,
                 fontWeight: 800,
-                padding: "4px 12px",
+                lineHeight: 1.6,
+                padding: "5px 14px",
                 borderRadius: 999,
                 boxShadow: "0 4px 12px rgba(245, 158, 11, 0.22)",
                 whiteSpace: "nowrap",
-                zIndex: 2,
+                maxWidth: "92%",
+                overflow: "visible",
+                zIndex: 3,
               }}
             >
               {ar ? "أفضل قيمة 🏆" : "BEST VALUE 🏆"}
             </div>
           )}
+          <Card
+            style={{
+              border:
+                plan?.best === true
+                  ? `1.5px solid ${C.gold}`
+                  : `1px solid ${C.border}`,
+              position: "relative",
+              paddingTop: plan?.best === true ? 24 : 16,
+            }}
+          >
           <div
             style={{
               display: "flex",
@@ -8227,7 +8792,8 @@ function PaywallScreen({ data, setData, back, showToast }) {
               ? "استرجاع المشتريات"
               : "Restore Purchases"}
           </button>
-        </Card>
+          </Card>
+        </div>
 
         <div
           style={{
@@ -9445,6 +10011,7 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
   const setLang = (l) => {
     const next = clone(data);
     next.settings.language = l;
+    persistLanguage(l);
     setData(next);
   };
   const toggleNotif = () => {
@@ -10194,13 +10761,7 @@ export default function GymApp() {
     };
   }, [firebaseUser, loaded, setVerifiedEntitlements]);
   const [phase, setPhase] = useState("splash");
-  const [localLang, setLocalLang] = useState(() => {
-    try {
-      return localStorage.getItem("50fit-lang");
-    } catch (e) {
-      return null;
-    }
-  });
+  const [localLang, setLocalLang] = useState(readStoredLanguage);
   const [screen, setScreen] = useState("home");
   const [params, setParams] = useState({});
   const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);
@@ -10228,8 +10789,17 @@ export default function GymApp() {
     }
   }, [setOnline]);
 
+  // A signed-in user's saved language is authoritative: mirror it locally so
+  // the picker never reappears after a reinstall or on another device.
+  const savedLanguage = loaded ? data.settings.language : null;
   useEffect(() => {
-    if (!localLang) {
+    if (!savedLanguage || savedLanguage === localLang) return;
+    persistLanguage(savedLanguage);
+    setLocalLang(savedLanguage);
+  }, [savedLanguage]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!localLang && !savedLanguage) {
       setPhase("language");
       return;
     }
@@ -10240,13 +10810,49 @@ export default function GymApp() {
     }
     if (!loaded) return; // signed in, waiting on their Firestore document to load
     setPhase(data.onboarded ? "app" : "onboarding");
-  }, [firebaseUser, loaded, localLang, data.onboarded]); // eslint-disable-line
+  }, [firebaseUser, loaded, localLang, savedLanguage, data.onboarded]); // eslint-disable-line
+
+  // Keep the Firestore profile complete: the signed-in identity, the chosen
+  // language and the program start date are written once and then survive
+  // restarts, logouts and reinstalls.
+  const profileSyncedRef = useRef(null);
+  useEffect(() => {
+    if (!firebaseUser || !loaded) return;
+    if (profileSyncedRef.current === firebaseUser.uid) return;
+    const patch = {};
+    if (!data.account.email && firebaseUser.email)
+      patch.email = firebaseUser.email;
+    if (!data.account.name && firebaseUser.displayName)
+      patch.name = firebaseUser.displayName;
+    const needsLanguage = !data.settings.language && !!localLang;
+    const needsStartDate = data.onboarded && !data.workoutStartDate;
+    if (!Object.keys(patch).length && !needsLanguage && !needsStartDate) {
+      profileSyncedRef.current = firebaseUser.uid;
+      return;
+    }
+    profileSyncedRef.current = firebaseUser.uid;
+    const next = clone(data);
+    next.account = { ...next.account, ...patch };
+    if (needsLanguage) next.settings.language = localLang;
+    if (needsStartDate) next.workoutStartDate = dateKey(0);
+    setData(next);
+  }, [firebaseUser, loaded, data, localLang, setData]);
+
+  // Follow the program: once the current day's workout is finished (or today
+  // is a rest day) the selector moves on to the next scheduled training day.
+  const activeDay = loaded ? activeTrainingDay(data) : DAYS[todayIdx];
+  useEffect(() => {
+    setSelectedDay(activeDay);
+  }, [activeDay]);
 
   const pickLanguage = (lang) => {
-    try {
-      localStorage.setItem("50fit-lang", lang);
-    } catch (e) {}
+    persistLanguage(lang);
     setLocalLang(lang);
+    if (firebaseUser && loaded && data.settings.language !== lang) {
+      const next = clone(data);
+      next.settings.language = lang;
+      setData(next);
+    }
     setPhase("welcome");
   };
 

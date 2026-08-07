@@ -1,1 +1,1 @@
-// TEMP PATCH PLACEHOLDER
+// RESTORE REQUIRED: use GitHub main version

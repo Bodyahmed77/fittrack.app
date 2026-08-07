@@ -1,0 +1,157 @@
+name: Apply TikTok Frame Fix
+
+on:
+  push:
+    branches:
+      - fix/tiktok-video-frame
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: fix/tiktok-video-frame
+          fetch-depth: 0
+
+      - name: Patch VideoPlayer without changing video source or quality
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('src/App.jsx')
+          s = p.read_text(encoding='utf-8')
+
+          pattern = re.compile(r'function VideoPlayer\(\{ videoId, ar \}\) \{.*?\n\}\n\n/\* ============================== EXERCISE DETAIL SCREEN', re.S)
+          replacement = r'''function VideoPlayer({ videoId, ar }) {
+  const { C } = useUI();
+  const [show, setShow] = useState(false);
+  if (!videoId) return null;
+
+  const isTikTok = /^\d+$/.test(videoId);
+  const embedSrc = isTikTok
+    ? `https://www.tiktok.com/embed/v2/${videoId}`
+    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+
+  const closePlayer = () => setShow(false);
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+      }}
+    >
+      {!show ? (
+        <button
+          type="button"
+          onClick={() => setShow(true)}
+          style={{
+            width: "100%",
+            maxWidth: 360,
+            aspectRatio: "9/16",
+            background: C.card2,
+            border: `1px solid ${C.border}`,
+            borderRadius: 14,
+            cursor: "pointer",
+            color: C.text,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 14,
+            fontWeight: 700,
+          }}
+        >
+          {ar ? "▶ مشاهدة طريقة التمرين" : "▶ Watch exercise demo"}
+        </button>
+      ) : (
+        <div
+          style={{
+            position: "relative",
+            width: "100%",
+            maxWidth: 360,
+            aspectRatio: "9/16",
+            borderRadius: 14,
+            overflow: "hidden",
+            background: "#000",
+            border: `1px solid ${C.border}`,
+          }}
+        >
+          <iframe
+            src={embedSrc}
+            title={ar ? "فيديو التمرين" : "Exercise video"}
+            style={{
+              width: "100%",
+              height: "100%",
+              border: "none",
+              display: "block",
+            }}
+            // Keep the player embedded in Fifty Fit. The sandbox prevents
+            // the embedded page from navigating the top-level app or opening
+            // arbitrary external pages/apps. Scripts and same-origin access
+            // remain enabled because TikTok/YouTube embeds require them.
+            sandbox="allow-scripts allow-same-origin allow-presentation"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            referrerPolicy="strict-origin-when-cross-origin"
+            allowFullScreen
+          />
+
+          <button
+            type="button"
+            aria-label={ar ? "إغلاق الفيديو" : "Close video"}
+            onClick={closePlayer}
+            style={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              width: 36,
+              height: 36,
+              borderRadius: "50%",
+              border: `1px solid rgba(255,255,255,0.35)`,
+              background: "rgba(0,0,0,0.78)",
+              color: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              zIndex: 3,
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================== EXERCISE DETAIL SCREEN'''
+
+          out, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit(f'VideoPlayer replacement failed: matched {n} blocks')
+          p.write_text(out, encoding='utf-8')
+          print('VideoPlayer patched successfully')
+          PY
+
+      - name: Verify build syntax
+        run: |
+          npm install
+          npm run build
+
+      - name: Commit patch and remove one-shot workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/App.jsx .github/workflows/apply-tiktok-frame-fix.yml
+          git rm .github/workflows/apply-tiktok-frame-fix.yml
+          git commit -m 'fix(android): keep exercise videos inside app frame'
+          git push origin fix/tiktok-video-frame

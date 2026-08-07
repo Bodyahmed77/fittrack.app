@@ -14,12 +14,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Patch day status logic
+      - name: Restore App.jsx from main and patch day status
         shell: python
         run: |
+          import subprocess
           from pathlib import Path
           import re
+
+          subprocess.run(["git", "fetch", "origin", "main"], check=True)
+          subprocess.run(["git", "checkout", "origin/main", "--", "src/App.jsx"], check=True)
 
           path = Path('src/App.jsx')
           text = path.read_text(encoding='utf-8')
@@ -32,12 +38,10 @@ jobs:
   if (exercises.length === 0) return "rest";
 
   const dayIndex = DAYS.indexOf(dayName);
-  const todayIndex = (() => {
-    const day = new Date().getDay();
-    return day === 0 ? 6 : day - 1;
-  })();
+  const jsDay = new Date().getDay();
+  const todayIndex = jsDay === 0 ? 6 : jsDay - 1;
 
-  // Never mark a future weekday as missed. Future days are always pending.
+  // A future weekday can never be missed/red.
   if (dayIndex > todayIndex) return "pending";
 
   const monday = mondayOf(dateKey(0));
@@ -46,7 +50,7 @@ jobs:
     ? String(data.workoutStartDate).slice(0, 10)
     : null;
 
-  // Days before the user's actual program start are neutral/pending.
+  // Days before the user actually started the program are neutral.
   if (startDate && targetDate < startDate) return "pending";
 
   const log = data.logs[targetDate] || {};
@@ -64,15 +68,14 @@ jobs:
               raise SystemExit('dayStatus function was not found exactly once')
           path.write_text(updated, encoding='utf-8')
 
-      - name: Verify patch and build
+      - name: Verify source and production build
         run: |
-          grep -n "Never mark a future weekday as missed" src/App.jsx
+          grep -n "A future weekday can never be missed" src/App.jsx
+          grep -n "function dayStatus" src/App.jsx
           npm ci
           npm run build
 
-      - name: Commit patch and remove temporary workflow
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit verified App.jsx and remove temporary workflow
         run: |
           rm -f .github/workflows/apply-workout-fix.yml
           git config user.name "github-actions[bot]"
@@ -80,5 +83,3 @@ jobs:
           git add src/App.jsx .github/workflows/apply-workout-fix.yml
           git commit -m "fix(workout): prevent future days from becoming missed"
           git push
-
-# one-time trigger

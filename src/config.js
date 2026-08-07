@@ -7,6 +7,11 @@
 
 // ------------------------------------------------------------
 // EXERCISE IMAGES
+// Every exercise is rendered with a consistent, hand-crafted SVG
+// vector illustration (see the ExerciseVisual component in App.jsx).
+// The `variant` below maps each exercise to its illustration so the
+// whole app shares one clean, flat vector style — no external images,
+// no broken placeholders, works fully offline.
 // ------------------------------------------------------------
 export const EXERCISE_IMAGES = {
   bench_press: "bench",
@@ -51,52 +56,57 @@ export const EXERCISE_IMAGES = {
 };
 
 // ------------------------------------------------------------
-// EXERCISE VIDEO IDs
+// EXERCISE VIDEO IDs (TikTok Shorts / YouTube Shorts)
+// Exercises with a corresponding TikTok video use the TikTok
+// numeric video ID (embedded via https://www.tiktok.com/embed/v2/).
+// The remaining exercises keep their YouTube Shorts video.
 // ------------------------------------------------------------
 export const EXERCISE_VIDEOS = {
-  bench_press: "7603190204740013313",
-  incline_db_press: "7267987124610239762",
-  chest_fly: "eozdVDA78K0",
-  dips: "2z8JmcrW-As",
-  tricep_pushdown: "7586888221125070094",
-  zigzag_tricep_ext: "7586888221125070094",
-  overhead_ext: "7527210325834206486",
-  push_up: "IODxDxX7oi4",
-  lat_pulldown: "7665886081329532174",
-  barbell_row: "7532789627212631314",
-  seated_row: "7639010632561478934",
-  single_arm_seated_row: "7639010632561478934",
-  bicep_curl: "7636460964870720788",
-  behind_body_bicep_curl: "7636460964870720788",
-  hammer_curl: "7623849292461051156",
-  supported_db_curl: "7636460964870720788",
-  squat: "7513352117692665094",
-  hack_squat: "7513352117692665094",
-  leg_press: "7545454872586423574",
-  leg_extension: "7564750740061752598",
-  abduction: "7419086233487281415",
-  reverse_curl: "7214952400631778566",
-  face_pull: "7474058570451946757",
-  lunges: "7353289956699229472",
-  leg_curl: "7521556521390460166",
-  calf_raise: "7602285498962349342",
-  ohp: "7663674671677705488",
-  lateral_raise: "7486685939025054981",
-  rear_delt_fly: "7630410819259387158",
-  shrugs: "7500002250526395653",
-  deadlift: "7380964646062263558",
-  pull_up: "eGo4IYlbE5g",
-  plank: "pSHjTRCQxIw",
-  treadmill: "KyXBjRmE-W8",
-  bike: "zSNSNSBN8Og",
-  crunches: "7654453038815399171",
-  leg_raise: "hdng3ubkBrI",
-  jump_rope: "FJmRQ5iTXKE",
-  burpees: "dZgVxmf6jkA",
+  bench_press: "7603190204740013313", // Chest press machine
+  incline_db_press: "7267987124610239762", // Incline chest press machine
+  chest_fly: "eozdVDA78K0", // YouTube (no TikTok)
+  dips: "2z8JmcrW-As", // YouTube (no TikTok)
+  tricep_pushdown: "7586888221125070094", // Zigzag tricep extension
+  zigzag_tricep_ext: "7586888221125070094", // Zigzag tricep extension
+  overhead_ext: "7527210325834206486", // Overhead tricep extension
+  push_up: "IODxDxX7oi4", // YouTube (no TikTok)
+  lat_pulldown: "7665886081329532174", // Lat pulldown
+  barbell_row: "7532789627212631314", // T-bar row
+  seated_row: "7639010632561478934", // Seated row
+  single_arm_seated_row: "7639010632561478934", // Single arm seated row
+  bicep_curl: "7636460964870720788", // Behind body bicep curl
+  behind_body_bicep_curl: "7636460964870720788", // Behind body bicep curl
+  hammer_curl: "7623849292461051156", // Hammer curl
+  supported_db_curl: "7636460964870720788", // Supported dumbbell curl
+  squat: "7513352117692665094", // Smith machine squat
+  hack_squat: "7513352117692665094", // Hack squat
+  leg_press: "7545454872586423574", // Leg press
+  leg_extension: "7564750740061752598", // Leg extension
+  abduction: "7419086233487281415", // Abduction machine
+  reverse_curl: "7214952400631778566", // Cable reverse curl
+  face_pull: "7474058570451946757", // Face pull
+  lunges: "7353289956699229472", // Bulgarian split squat
+  leg_curl: "7521556521390460166", // Leg curl
+  calf_raise: "7602285498962349342", // Standing calf raises
+  ohp: "7663674671677705488", // Shoulder press machine
+  lateral_raise: "7486685939025054981", // Lateral raise
+  rear_delt_fly: "7630410819259387158", // Rear delt fly machine
+  shrugs: "7500002250526395653", // Dumb shrugs
+  deadlift: "7380964646062263558", // Romanian deadlift
+  pull_up: "eGo4IYlbE5g", // YouTube (no TikTok)
+  plank: "pSHjTRCQxIw", // YouTube (no TikTok)
+  treadmill: "KyXBjRmE-W8", // YouTube (no TikTok)
+  bike: "zSNSNSBN8Og", // YouTube (no TikTok)
+  crunches: "7654453038815399171", // Abs rope crunches
+  leg_raise: "hdng3ubkBrI", // YouTube (no TikTok)
+  jump_rope: "FJmRQ5iTXKE", // YouTube (no TikTok)
+  burpees: "dZgVxmf6jkA", // YouTube (no TikTok)
 };
 
 // ------------------------------------------------------------
 // GOOGLE PLAY BILLING PRODUCT IDs
+// Placeholder IDs — replace with your real Play Console IDs.
+// Using Google Play Billing ONLY (no RevenueCat).
 // ------------------------------------------------------------
 export const BILLING_PRODUCTS = {
   training: "training_pro",
@@ -104,6 +114,10 @@ export const BILLING_PRODUCTS = {
   both: "both_pro",
 };
 
+// ------------------------------------------------------------
+// PAYWALL OPTIONS
+// Duration tiers: month / 3mo / 6mo / year
+// ------------------------------------------------------------
 export const DURATIONS = [
   { id: "monthly", label: "شهري", labelEn: "Monthly", months: 1 },
   { id: "quarterly", label: "3 شهور", labelEn: "3 Months", months: 3 },
@@ -153,8 +167,3 @@ export const PAYWALL_PLANS = {
     featuresEn: ["Everything in both plans above", "Best value — save more"],
   },
 };
-
-// Standard/free plan: exactly four exercises per workout day.
-// This is intentionally kept as a single cap so all workout templates
-// remain intact for Pro users and the free plan only limits visible items.
-export const FREE_EXERCISE_CAP = 4;

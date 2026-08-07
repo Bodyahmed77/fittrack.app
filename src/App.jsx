@@ -7250,6 +7250,7 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
                     tickLine={false}
                     axisLine={false}
                     width={36}
+                    tick={chartData.length > 0}
                     domain={[Math.max(0, minWeight - 2), maxWeight + 2]}
                   />
                   <Tooltip

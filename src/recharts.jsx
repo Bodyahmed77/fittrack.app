@@ -1,13 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 // Recharts is loaded lazily so the chart library does not block Android startup.
-// If the WebView cannot load the split Recharts chunk, the chart components
-// fall back to a lightweight SVG renderer instead of disappearing completely.
+// If the WebView cannot load the split Recharts chunk, chart containers fall
+// back to a lightweight SVG renderer instead of disappearing completely.
 let rechartsPromise;
 function loadRecharts() {
-  if (!rechartsPromise) {
-    rechartsPromise = import("recharts");
-  }
+  if (!rechartsPromise) rechartsPromise = import("recharts");
   return rechartsPromise;
 }
 
@@ -59,8 +57,9 @@ function lazyRechartsComponent(name) {
       let active = true;
       loadRecharts()
         .then((mod) => {
-          if (active && mod?.[name]) setComponent(() => mod[name]);
-          else if (active) setFailed(true);
+          if (!active) return;
+          if (mod?.[name]) setComponent(() => mod[name]);
+          else setFailed(true);
         })
         .catch((error) => {
           console.error(`Failed to load Recharts component: ${name}`, error);
@@ -76,8 +75,25 @@ function lazyRechartsComponent(name) {
       return React.createElement(Component, rest, children);
     }
 
-    // Only chart containers need a visual fallback. Axis/grid/tooltip/line/area
-    // children can safely be ignored by the fallback renderer.
+    if (failed && name === "ResponsiveContainer") {
+      const { children, width = "100%", height = "100%", style, ...rest } = props;
+      return (
+        <div
+          {...rest}
+          style={{
+            width,
+            height,
+            minWidth: 0,
+            minHeight: 0,
+            position: "relative",
+            ...style,
+          }}
+        >
+          {children}
+        </div>
+      );
+    }
+
     if (failed && (name === "LineChart" || name === "AreaChart")) {
       return <FallbackChart {...props} />;
     }

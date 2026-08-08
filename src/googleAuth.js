@@ -26,9 +26,15 @@ export async function signInWithGoogleFlow(localLang = "en", createInitialState)
     throw new Error("Google Sign-In native plugin is unavailable");
   }
 
+  // Native Google Sign-In (Android). Requires google-services.json + SHA-1
+  // of the signing cert registered on the Firebase Android app.
   const result = await FirebaseAuthentication.signInWithGoogle();
   const idToken = result?.credential?.idToken;
-  if (!idToken) throw new Error("No ID token from Google");
+  if (!idToken) {
+    throw new Error(
+      "No ID token from Google — check SHA-1 fingerprints in Firebase and google-services.json",
+    );
+  }
 
   const credential = GoogleAuthProvider.credential(idToken);
   const userCred = await signInWithCredential(auth, credential);

@@ -2,8 +2,7 @@
 // AI Coach — client (Supabase Edge Function + Firebase Auth)
 // ============================================================
 // Chat transcripts live ONLY in React state (session).
-// Daily limits are enforced by the Supabase Edge Function.
-// Client counters are for UI only and are synced from the server.
+// Daily limits are enforced server-side by the Edge Function.
 // GEMINI_API_KEY must NEVER appear in this file or the app bundle.
 // ============================================================
 
@@ -19,7 +18,6 @@ export function aiDailyLimit(hasAiPro) {
   return hasAiPro ? PRO_AI_MESSAGES_PER_DAY : FREE_AI_MESSAGES_PER_DAY;
 }
 
-/** UI helper from last known usage (server is authoritative after each send). */
 export function aiUsageToday(data, todayISO) {
   const hasPro = !!data?.entitlements?.aiCoachPro;
   const limit = aiDailyLimit(hasPro);
@@ -100,19 +98,40 @@ function normalizeUsage(data, fallbackDate) {
 function extractReply(data) {
   if (!data || typeof data !== "object") return "";
   if (typeof data.reply === "string") return data.reply;
-  if (typeof data.message === "string" && data.error == null) return data.message;
+  if (typeof data.message === "string" && !data.error) return data.message;
   if (typeof data.response === "string") return data.response;
   if (typeof data.text === "string") return data.text;
   if (typeof data.content === "string") return data.content;
   return "";
 }
 
+function classifyHttpError(status, data) {
+  const msg = String(data?.message || data?.error || "");
+  if (status === 401) return "unauthenticated";
+  if (status === 403) return "forbidden";
+  if (status === 429) {
+    if (
+      data?.error === "daily_limit" ||
+      data?.code === "daily_limit" ||
+      /daily.?limit|limit reached|رسائل/i.test(msg)
+    ) {
+      return "daily_limit";
+    }
+    if (/quota|resource.?exhausted|rate.?limit/i.test(msg)) {
+      return "quota";
+    }
+    return "rate_limit";
+  }
+  if (status >= 500) return "backend_error";
+  if (status >= 400) return "bad_request";
+  return "backend_error";
+}
+
 /**
- * Call Supabase Edge Function `ai-coach` (which calls Gemini server-side).
- * Auth: Firebase ID token in Authorization (app auth is Firebase, not Supabase Auth).
- * Optional public Supabase anon key in `apikey` header for the Supabase gateway.
- *
- * @returns {{ reply: string, usage?: object }}
+ * Call Supabase Edge Function ai-coach.
+ * Uses Firebase ID token only in Authorization (CORS-safe).
+ * Do NOT send custom headers not listed in Access-Control-Allow-Headers —
+ * browsers will abort the request and surface it as a network failure.
  */
 export async function generateCoachReply({
   messages,
@@ -137,33 +156,27 @@ export async function generateCoachReply({
 
   let idToken;
   try {
-    idToken = await user.getIdToken();
+    idToken = await user.getIdToken(/* forceRefresh */ false);
   } catch (e) {
     const err = new Error("Could not refresh session");
     err.code = "unauthenticated";
     throw err;
   }
 
-  // Cost control: only recent turns
   const recent = (messages || []).slice(-6);
   const lastUser =
     [...recent].reverse().find((m) => m && m.role === "user" && m.content) ||
     null;
 
+  // ONLY headers allowed by Supabase CORS:
+  // authorization, x-client-info, apikey, content-type
   const headers = {
     "Content-Type": "application/json",
-    // Firebase ID token — Edge Function must verify this (verify_jwt=false on gateway)
     Authorization: `Bearer ${idToken}`,
-    // Backup header some backends use so gateway JWT check can use anon key instead
-    "X-Firebase-Token": idToken,
   };
-
   const anon = resolveAnonKey();
-  if (anon) {
-    headers.apikey = anon;
-  }
+  if (anon) headers.apikey = anon;
 
-  // Body: support both our contract (messages[]) and simple (message string)
   const body = {
     messages: recent,
     message: lastUser ? String(lastUser.content) : "",
@@ -186,7 +199,8 @@ export async function generateCoachReply({
       body: JSON.stringify(body),
     });
   } catch (e) {
-    const err = new Error("Network error");
+    // True network/CORS failure only — fetch threw before any HTTP response.
+    const err = new Error(e?.message || "Network error");
     err.code = "network";
     throw err;
   }
@@ -199,60 +213,24 @@ export async function generateCoachReply({
   }
 
   const usage = normalizeUsage(data, localDate);
+  const code = classifyHttpError(res.status, data);
 
-  // Daily limit (server authoritative)
-  if (
-    res.status === 429 &&
-    (data?.error === "daily_limit" ||
-      data?.code === "daily_limit" ||
-      /limit/i.test(String(data?.error || data?.message || "")))
-  ) {
+  if (!res.ok) {
     const err = new Error(
-      data?.message || data?.error || "Daily limit reached",
+      data?.message || data?.error || `HTTP ${res.status}`,
     );
-    err.code = "daily_limit";
-    err.usage = usage || {
-      date: data?.date || localDate,
-      count: data?.used ?? data?.count ?? 0,
-      used: data?.used ?? data?.count ?? 0,
-      limit: data?.limit,
-      remaining: 0,
-      hasPro: data?.hasPro,
-    };
-    throw err;
-  }
-
-  if (res.status === 401 || res.status === 403) {
-    const err = new Error(
-      data?.message ||
-        data?.error ||
-        "Unauthorized — check Firebase token / Supabase function JWT settings",
-    );
-    err.code = "unauthenticated";
-    throw err;
-  }
-
-  if (res.status === 429) {
-    const err = new Error(
-      data?.message || "AI is busy — try again in a minute",
-    );
-    err.code = "rate_limit";
-    throw err;
-  }
-
-  if (res.status >= 500) {
-    const err = new Error(
-      data?.message || "AI service temporarily unavailable",
-    );
-    err.code = "backend_error";
-    throw err;
-  }
-
-  if (res.status >= 400) {
-    const err = new Error(
-      data?.message || data?.error || "Bad request to AI service",
-    );
-    err.code = data?.error || "bad_request";
+    err.code = code;
+    err.status = res.status;
+    if (code === "daily_limit") {
+      err.usage = usage || {
+        date: data?.date || localDate,
+        count: data?.used ?? data?.count ?? 0,
+        used: data?.used ?? data?.count ?? 0,
+        limit: data?.limit,
+        remaining: 0,
+        hasPro: data?.hasPro,
+      };
+    }
     throw err;
   }
 
@@ -263,8 +241,5 @@ export async function generateCoachReply({
     throw err;
   }
 
-  return {
-    reply: String(reply),
-    usage,
-  };
+  return { reply: String(reply), usage };
 }

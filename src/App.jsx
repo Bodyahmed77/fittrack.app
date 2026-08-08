@@ -9156,34 +9156,84 @@ function PaywallScreen({ data, setData, back, showToast }) {
 /* ============================== AI COACH ============================== */
 // Messages stay in component state only (cleared when the screen unmounts
 // or the app session ends). Only a daily {date,count} counter is persisted.
-function AICoachScreen({ data, setData, back, showToast, go }) {
+function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const today = dateKey(0);
   const usage = aiUsageToday(data, today);
-  const [messages, setMessages] = useState([]); // session-only
+  const [messages, setMessages] = useState([]); // session-only — cleared when drawer closes
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const listRef = useRef(null);
+
+  // Fresh conversation every time the drawer opens.
+  useEffect(() => {
+    if (open) {
+      setMessages([]);
+      setInput("");
+      setBusy(false);
+    }
+  }, [open]);
 
   useEffect(() => {
     if (listRef.current)
       listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, busy]);
 
+  if (!open) return null;
+
+  const toastForError = (e) => {
+    const code = e?.code || "";
+    if (code === "daily_limit") {
+      return usage.hasPro || data.entitlements?.aiCoachPro
+        ? ar
+          ? "وصلت للحد اليومي (50 رسالة). حاول تاني بكرة."
+          : "Daily limit reached (50 messages). Try again tomorrow."
+        : ar
+          ? "لقد استخدمت رسائلك المجانية الثلاث لهذا اليوم. يمكنك العودة غدًا أو الترقية إلى AI Coach Pro."
+          : "You've used your 3 free AI messages for today. Come back tomorrow or upgrade to AI Coach Pro.";
+    }
+    if (code === "unauthenticated") {
+      return ar
+        ? "جلسة الدخول انتهت. سجل دخولك مرة تانية."
+        : "Your session expired. Please sign in again.";
+    }
+    if (code === "forbidden") {
+      return ar
+        ? "مش مسموح بالوصول للمدرب الذكي."
+        : "Access to AI Coach is not allowed.";
+    }
+    if (code === "quota") {
+      return ar
+        ? "المدرب الذكي وصل للحد المتاح حاليًا. حاول لاحقًا."
+        : "AI Coach has reached its current quota. Please try later.";
+    }
+    if (code === "rate_limit") {
+      return ar
+        ? "المدرب الذكي مشغول حاليًا. حاول بعد شوية."
+        : "AI Coach is busy right now. Try again shortly.";
+    }
+    if (code === "network") {
+      return ar
+        ? "تعذر الاتصال بالمدرب الذكي. تأكد من الإنترنت وحاول مرة تانية."
+        : "Could not reach AI Coach. Check your internet and try again.";
+    }
+    if (code === "no_endpoint") {
+      return ar
+        ? "خدمة الذكاء الاصطناعي مش مفعّلة لسه"
+        : "AI service is not configured yet";
+    }
+    // 500 / backend / empty / bad_request
+    return ar
+      ? "حصلت مشكلة في المدرب الذكي. حاول مرة تانية."
+      : "Something went wrong with AI Coach. Please try again.";
+  };
+
   const send = async () => {
     const textMsg = input.trim();
     if (!textMsg || busy) return;
     if (usage.remaining <= 0) {
-      showToast(
-        usage.hasPro
-          ? ar
-            ? "وصلت للحد اليومي لرسائل AI Coach Pro. حاول تاني بكرة."
-            : "You've reached today's AI Coach Pro message limit. Try again tomorrow."
-          : ar
-          ? "لقد استخدمت رسائلك المجانية الثلاث لهذا اليوم. يمكنك العودة غدًا أو الترقية إلى AI Coach Pro."
-          : "You've used your 3 free AI messages for today. Come back tomorrow or upgrade to AI Coach Pro.",
-      );
+      showToast(toastForError({ code: "daily_limit" }));
       return;
     }
     setInput("");
@@ -9217,177 +9267,306 @@ function AICoachScreen({ data, setData, back, showToast, go }) {
         setData(next);
       }
     } catch (e) {
-      if (e?.code === "daily_limit") {
-        if (e.usage) {
-          const next = clone(data);
-          next.aiUsage = {
-            date: e.usage.date || today,
-            count: e.usage.count ?? e.usage.used ?? 0,
-          };
-          setData(next);
-        }
-        showToast(
-          e.usage?.hasPro || data.entitlements?.aiCoachPro
-            ? ar
-              ? "وصلت للحد اليومي (50 رسالة). حاول تاني بكرة."
-              : "Daily limit reached (50 messages). Try again tomorrow."
-            : ar
-            ? "لقد استخدمت رسائلك المجانية الثلاث لهذا اليوم. يمكنك العودة غدًا أو الترقية إلى AI Coach Pro."
-            : "You've used your 3 free AI messages for today. Come back tomorrow or upgrade to AI Coach Pro.",
-        );
-      } else if (e?.code === "no_endpoint") {
-        showToast(
-          ar
-            ? "خدمة الذكاء الاصطناعي مش مفعّلة لسه"
-            : "AI service is not configured yet",
-        );
-        setMessages((m) => m.slice(0, -1));
-      } else if (e?.code === "unauthenticated") {
-        showToast(ar ? "سجّل دخولك عشان تستخدم مدرب AI" : "Sign in to use AI Coach");
-        setMessages((m) => m.slice(0, -1));
-      } else if (e?.code === "network") {
-        showToast(ar ? "مفيش إنترنت — راجع الاتصال" : "No internet — check your connection");
-        setMessages((m) => m.slice(0, -1));
-      } else if (e?.code === "rate_limit") {
-        showToast(
-          ar ? "الخدمة مشغولة دلوقتي — حاول بعد دقيقة" : "AI is busy — try again in a minute",
-        );
-        setMessages((m) => m.slice(0, -1));
+      if (e?.code === "daily_limit" && e.usage) {
+        const next = clone(data);
+        next.aiUsage = {
+          date: e.usage.date || today,
+          count: e.usage.count ?? e.usage.used ?? 0,
+        };
+        setData(next);
       } else {
-        showToast(
-          ar
-            ? "حصلت مشكلة في الاتصال بالمدرب الذكي. حاول مرة تانية."
-            : "Something went wrong connecting to your AI Coach. Please try again.",
-        );
+        // Roll back optimistic user bubble for non-limit failures
         setMessages((m) => m.slice(0, -1));
       }
+      showToast(toastForError(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const remainingAfter =
-    usage.remaining - (messages.filter((m) => m.role === "user").length > 0 ? 0 : 0);
+  // Arabic: panel from right (start in RTL). English: from right edge still (LTR end).
+  // Use physical right for LTR and physical left for RTL so it feels "side attached".
+  const fromStart = ar; // RTL → slide from left in physical terms if we use insetInlineStart
+  const panelSide = ar
+    ? { left: 0, borderRight: `1px solid ${C.border}` }
+    : { right: 0, borderLeft: `1px solid ${C.border}` };
+  const showUpgrade = usage.remaining <= 0 && !usage.hasPro;
 
   return (
-    <div dir={ar ? "rtl" : "ltr"} style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
-      <TopBar title={ar ? "مدرب AI" : "AI Coach"} onBack={back} />
-      <div style={{ padding: "0 18px 8px", color: C.sub, fontSize: 12 }}>
-        {ar
-          ? usage.remaining === 0
-            ? "لا رسائل متبقية اليوم"
-            : usage.remaining === 1
-            ? "متبقي رسالة واحدة للذكاء الاصطناعي اليوم"
-            : usage.remaining === 2
-            ? "متبقي رسالتان للذكاء الاصطناعي اليوم"
-            : `متبقي ${usage.remaining} رسائل للذكاء الاصطناعي اليوم`
-          : usage.remaining === 1
-          ? "1 AI message remaining today"
-          : `${usage.remaining} AI messages remaining today`}
-        {usage.hasPro
-          ? ar
-            ? " · AI Pro"
-            : " · AI Pro"
-          : ar
-          ? " · مجاني"
-          : " · Free"}
-      </div>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1200,
+        pointerEvents: "auto",
+      }}
+    >
+      {/* Backdrop */}
       <div
-        ref={listRef}
+        onClick={onClose}
         style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "8px 18px 12px",
+          position: "absolute",
+          inset: 0,
+          background: "rgba(0,0,0,0.45)",
+        }}
+      />
+      {/* Side panel */}
+      <div
+        dir={ar ? "rtl" : "ltr"}
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          width: "min(360px, 92vw)",
+          background: C.bg,
           display: "flex",
           flexDirection: "column",
-          gap: 10,
-          minHeight: 280,
-          maxHeight: "55vh",
+          boxShadow: "0 0 40px rgba(0,0,0,0.35)",
+          ...panelSide,
         }}
       >
-        {messages.length === 0 && (
-          <div style={{ color: C.sub, fontSize: 13.5, lineHeight: 1.55, marginTop: 12 }}>
-            {ar
-              ? "اسأل عن التمارين، التغذية، السعرات، أو التحفيز — بالعربي أو الإنجليزي. المحادثة تُمسح عند إغلاق التطبيق."
-              : "Ask about workouts, nutrition, calories, or motivation — in Arabic or English. Chat is cleared when you close the app."}
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            style={{
-              alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-              maxWidth: "88%",
-              background: m.role === "user" ? C.green : C.card2,
-              color: m.role === "user" ? C.onAccent : C.text,
-              padding: "10px 12px",
-              borderRadius: 14,
-              fontSize: 13.5,
-              lineHeight: 1.5,
-              border: m.role === "user" ? "none" : `1px solid ${C.border}`,
-            }}
-          >
-            {m.content}
-          </div>
-        ))}
-        {busy && (
-          <div style={{ color: C.sub, fontSize: 12 }}>{ar ? "بيفكر…" : "Thinking…"}</div>
-        )}
-      </div>
-      {usage.remaining <= 0 && (
-        <div style={{ padding: "8px 18px" }}>
-          <GreenButton onClick={() => go("paywall")}>
-            {ar ? "رقّي AI Coach" : "Upgrade AI Coach"}
-          </GreenButton>
-        </div>
-      )}
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          padding: "10px 18px 18px",
-          borderTop: `1px solid ${C.border}`,
-        }}
-      >
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder={ar ? "اكتب سؤالك…" : "Type your question…"}
-          disabled={busy || usage.remaining <= 0}
+        <div
           style={{
-            flex: 1,
-            background: C.card2,
-            border: `1px solid ${C.border}`,
-            borderRadius: 12,
-            padding: "12px 14px",
-            color: C.text,
-            fontSize: 14,
-            outline: "none",
-          }}
-        />
-        <button
-          onClick={send}
-          disabled={busy || !input.trim() || usage.remaining <= 0}
-          style={{
-            background: C.green,
-            color: C.onAccent,
-            border: "none",
-            borderRadius: 12,
-            padding: "0 16px",
-            fontWeight: 700,
-            cursor: "pointer",
-            opacity: busy || !input.trim() || usage.remaining <= 0 ? 0.5 : 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "14px 14px 10px",
+            borderBottom: `1px solid ${C.border}`,
           }}
         >
-          {ar ? "إرسال" : "Send"}
-        </button>
+          <Sparkles size={18} color={C.green} />
+          <div style={{ flex: 1 }}>
+            <div style={{ color: C.text, fontWeight: 800, fontSize: 15 }}>
+              {ar ? "مدرب AI" : "AI Coach"}
+            </div>
+            <div style={{ color: C.sub, fontSize: 11 }}>
+              {ar
+                ? usage.remaining === 0
+                  ? "لا رسائل متبقية اليوم"
+                  : usage.remaining === 1
+                    ? "متبقي رسالة واحدة اليوم"
+                    : usage.remaining === 2
+                      ? "متبقي رسالتان اليوم"
+                      : `متبقي ${usage.remaining} رسائل اليوم`
+                : usage.remaining === 1
+                  ? "1 AI message remaining today"
+                  : `${usage.remaining} AI messages remaining today`}
+              {usage.hasPro ? (ar ? " · Pro" : " · Pro") : ar ? " · مجاني" : " · Free"}
+            </div>
+          </div>
+          <IconBtn onClick={onClose}>
+            <X size={16} color={C.sub} />
+          </IconBtn>
+        </div>
+
+        <div
+          ref={listRef}
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {messages.length === 0 && !showUpgrade && (
+            <div style={{ color: C.sub, fontSize: 13, textAlign: "center", marginTop: 24 }}>
+              {ar
+                ? "اسأل عن التمارين، التغذية، أو تقدمك — بالعربية أو الإنجليزية"
+                : "Ask about workouts, nutrition, or progress — Arabic or English"}
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              style={{
+                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                maxWidth: "92%",
+                background: m.role === "user" ? C.green : C.card2,
+                color: m.role === "user" ? "#04140a" : C.text,
+                padding: "10px 12px",
+                borderRadius: 14,
+                fontSize: 13.5,
+                lineHeight: 1.45,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {m.content}
+            </div>
+          ))}
+          {busy && (
+            <div style={{ color: C.sub, fontSize: 12 }}>{ar ? "بيفكر..." : "Thinking..."}</div>
+          )}
+
+          {showUpgrade && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: 14,
+                borderRadius: 14,
+                background: C.card,
+                border: `1px solid ${C.border}`,
+              }}
+            >
+              <div style={{ color: C.text, fontWeight: 800, fontSize: 14, marginBottom: 6 }}>
+                {ar ? "وصلت للحد المجاني اليوم" : "You've hit today's free limit"}
+              </div>
+              <div style={{ color: C.sub, fontSize: 12.5, marginBottom: 12 }}>
+                {ar
+                  ? "اشترك في AI Coach Pro للحصول على حتى 50 رسالة يوميًا."
+                  : "Subscribe to AI Coach Pro for up to 50 messages per day."}
+              </div>
+              {(() => {
+                const region =
+                  (data.settings?.region || data.account?.region || "").toLowerCase() === "eg" ||
+                  lang === "ar"
+                    ? "eg"
+                    : "intl";
+                const prices = AI_COACH_PRICES[region] || AI_COACH_PRICES.intl;
+                const rows = [
+                  { id: "monthly", label: ar ? "شهر" : "1 month", v: prices.monthly },
+                  { id: "quarterly", label: ar ? "3 شهور" : "3 months", v: prices.quarterly },
+                  { id: "halfyearly", label: ar ? "6 شهور" : "6 months", v: prices.halfyearly },
+                  { id: "yearly", label: ar ? "سنة" : "1 year", v: prices.yearly },
+                ];
+                const cur = prices.currencyLabelAr && ar ? prices.currencyLabelAr : prices.currency;
+                return rows.map((r) => (
+                  <div
+                    key={r.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "8px 0",
+                      borderTop: `1px solid ${C.border}`,
+                      fontSize: 13,
+                      color: C.text,
+                    }}
+                  >
+                    <span>{r.label}</span>
+                    <span style={{ fontWeight: 700 }}>
+                      {r.v} {cur}
+                    </span>
+                  </div>
+                ));
+              })()}
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  go("paywall", { focus: "ai" });
+                }}
+                style={{
+                  marginTop: 12,
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: C.green,
+                  color: "#04140a",
+                  fontWeight: 800,
+                  fontSize: 13.5,
+                  cursor: "pointer",
+                }}
+              >
+                {ar ? "ترقية AI Coach Pro" : "Upgrade AI Coach Pro"}
+              </button>
+              <div style={{ color: C.sub2, fontSize: 10.5, marginTop: 8, textAlign: "center" }}>
+                {ar
+                  ? "الشراء يتم عبر Google Play — السعر النهائي من المتجر"
+                  : "Purchases via Google Play — store price is final"}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "10px 12px calc(12px + env(safe-area-inset-bottom))",
+            borderTop: `1px solid ${C.border}`,
+          }}
+        >
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") send();
+            }}
+            placeholder={ar ? "اكتب سؤالك..." : "Ask anything..."}
+            disabled={busy || usage.remaining <= 0}
+            style={{
+              flex: 1,
+              background: C.card2,
+              border: `1px solid ${C.border}`,
+              borderRadius: 12,
+              padding: "10px 12px",
+              color: C.text,
+              fontSize: 14,
+              outline: "none",
+            }}
+          />
+          <button
+            type="button"
+            onClick={send}
+            disabled={busy || !input.trim() || usage.remaining <= 0}
+            style={{
+              background: C.green,
+              color: "#04140a",
+              border: "none",
+              borderRadius: 12,
+              padding: "10px 14px",
+              fontWeight: 800,
+              fontSize: 13,
+              cursor: "pointer",
+              opacity: busy || !input.trim() || usage.remaining <= 0 ? 0.5 : 1,
+            }}
+          >
+            {ar ? "إرسال" : "Send"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
+function AICoachSideTab({ onOpen, ar, C }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={ar ? "مدرب AI" : "AI Coach"}
+      style={{
+        position: "fixed",
+        top: "42%",
+        zIndex: 900,
+        writingMode: "vertical-rl",
+        transform: ar ? "rotate(180deg)" : "none",
+        ...(ar ? { left: 0 } : { right: 0 }),
+        background: C.card2,
+        color: C.green,
+        border: `1px solid ${C.border}`,
+        borderRadius: ar ? "0 12px 12px 0" : "12px 0 0 12px",
+        padding: "12px 7px",
+        fontSize: 11,
+        fontWeight: 800,
+        letterSpacing: 0.4,
+        cursor: "pointer",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+      }}
+    >
+      <Sparkles size={13} />
+      {ar ? "AI" : "AI"}
+    </button>
+  );
+}
+
 /* ============================== PROFILE SCREEN ============================== */
+
 
 function ProfileScreen({ data, go, isAdmin }) {
   const { C, lang } = useUI();
@@ -9576,7 +9755,13 @@ function ProfileScreen({ data, go, isAdmin }) {
           return (
             <Card
               key={m.label}
-              onClick={() => go(m.to)}
+              onClick={() => {
+                if (m.to === "__ai_drawer__") {
+                  window.dispatchEvent(new CustomEvent("fiftyfit-open-ai"));
+                  return;
+                }
+                go(m.to);
+              }}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -11324,12 +11509,20 @@ export default function GymApp() {
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
 
   const showToast = useCallback((msg, duration = 2200) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), duration);
   }, []);
+
+  useEffect(() => {
+    const open = () => setAiDrawerOpen(true);
+    window.addEventListener("fiftyfit-open-ai", open);
+    return () => window.removeEventListener("fiftyfit-open-ai", open);
+  }, []);
+
 
   // User tapped "Retry" on the offline screen — re-check connectivity now.
   const retry = useCallback(async () => {
@@ -11417,6 +11610,10 @@ export default function GymApp() {
   const go = (s, p = {}) => {
     if (s === "logout") {
       setConfirmLogoutOpen(true);
+      return;
+    }
+    if (s === "aiCoach") {
+      setAiDrawerOpen(true);
       return;
     }
     setNavHistory((h) => [...h, { screen, params }]);
@@ -11692,16 +11889,6 @@ export default function GymApp() {
         showToast={showToast}
       />
     );
-  else if (screen === "aiCoach")
-    content = (
-      <AICoachScreen
-        data={data}
-        setData={setData}
-        back={back}
-        showToast={showToast}
-        go={go}
-      />
-    );
   else if (screen === "profile")
     content = <ProfileScreen data={data} go={go} isAdmin={isAdmin} />;
   else if (screen === "personalInfo")
@@ -11822,6 +12009,23 @@ export default function GymApp() {
           </div>
         </div>
         {showNav && <BottomNav active={screen} onChange={onNavChange} />}
+        {firebaseUser && !aiDrawerOpen && (
+          <AICoachSideTab
+            onOpen={() => setAiDrawerOpen(true)}
+            ar={lang === "ar" || localLang === "ar"}
+            C={C}
+          />
+        )}
+        {firebaseUser && (
+          <AICoachDrawer
+            open={aiDrawerOpen}
+            onClose={() => setAiDrawerOpen(false)}
+            data={data}
+            setData={setData}
+            showToast={showToast}
+            go={go}
+          />
+        )}
         {confirmLogoutOpen && (
           <ConfirmDialog
             title={lang === "ar" ? "تسجيل الخروج؟" : "Log out?"}

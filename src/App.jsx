@@ -277,6 +277,7 @@ import {
   reauthenticateWithGoogleFlow,
   signInWithGoogleFlow,
 } from "./googleAuth";
+import { googleSignInErrorMessage } from "./googleSignInMessages";
 
 /* ============================== THEME ============================== */
 const DARK = {
@@ -4254,28 +4255,7 @@ function LoginScreen({ go, showToast }) {
       await signInWithGoogleFlow(ar ? "ar" : "en", freshState);
       showToast(ar ? "أهلاً بيك!" : "Welcome!");
     } catch (err) {
-      const code = err?.code || "";
-      let msg;
-      if (code === "timeout") {
-        msg = ar
-          ? "انتهت مهلة تسجيل Google. تأكد أن شاشة اختيار الحساب ظهرت، أو راجع إعدادات SHA-1 في Firebase."
-          : "Google Sign-In timed out. Confirm the account picker appeared, or check Firebase SHA-1 setup.";
-      } else if (code === "plugin_unavailable") {
-        msg = ar
-          ? "إضافة Google Sign-In غير متاحة على هذا الجهاز."
-          : "Google Sign-In plugin is not available on this device.";
-      } else if (code === "no_id_token") {
-        msg = ar
-          ? "تعذر الحصول على توكن Google. راجع SHA-1 وملف google-services.json."
-          : "Could not get a Google ID token. Check SHA-1 and google-services.json.";
-      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
-        msg = ar ? "تم إلغاء تسجيل الدخول بجوجل." : "Google Sign-In was cancelled.";
-      } else {
-        msg = ar
-          ? "فشل تسجيل الدخول بجوجل — حاول تاني"
-          : "Google Sign-In failed — please try again";
-      }
-      showToast(msg);
+      showToast(googleSignInErrorMessage(err, ar));
     } finally {
       setBusy(false);
     }
@@ -4490,28 +4470,7 @@ function SignUpScreen({ go, showToast, localLang }) {
       await signInWithGoogleFlow(localLang, freshState);
       showToast(ar ? "أهلاً بيك!" : "Welcome!");
     } catch (err) {
-      const code = err?.code || "";
-      let msg;
-      if (code === "timeout") {
-        msg = ar
-          ? "انتهت مهلة تسجيل Google. تأكد أن شاشة اختيار الحساب ظهرت، أو راجع إعدادات SHA-1 في Firebase."
-          : "Google Sign-In timed out. Confirm the account picker appeared, or check Firebase SHA-1 setup.";
-      } else if (code === "plugin_unavailable") {
-        msg = ar
-          ? "إضافة Google Sign-In غير متاحة على هذا الجهاز."
-          : "Google Sign-In plugin is not available on this device.";
-      } else if (code === "no_id_token") {
-        msg = ar
-          ? "تعذر الحصول على توكن Google. راجع SHA-1 وملف google-services.json."
-          : "Could not get a Google ID token. Check SHA-1 and google-services.json.";
-      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
-        msg = ar ? "تم إلغاء تسجيل الدخول بجوجل." : "Google Sign-In was cancelled.";
-      } else {
-        msg = ar
-          ? "فشل تسجيل الدخول بجوجل — حاول تاني"
-          : "Google Sign-In failed — please try again";
-      }
-      showToast(msg);
+      showToast(googleSignInErrorMessage(err, ar));
     } finally {
       setBusy(false);
     }

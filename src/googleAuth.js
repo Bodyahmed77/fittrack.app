@@ -7,6 +7,7 @@ import {
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
+// Must stay under 90s so the UI never sticks on "loading" forever.
 const GOOGLE_SIGNIN_TIMEOUT_MS = 90000;
 
 let nativePluginPromise;
@@ -16,16 +17,17 @@ async function getNativePlugin() {
       /* @vite-ignore */ "@capacitor-firebase/authentication"
     )
       .then((mod) => mod.FirebaseAuthentication)
-      .catch(() => null);
+      .catch((e) => {
+        console.warn("[GoogleSignIn] plugin import failed", e?.message || e);
+        return null;
+      });
   }
   return nativePluginPromise;
 }
 
 async function isNativePlatform() {
   try {
-    const { Capacitor } = await import(
-      /* @vite-ignore */ "@capacitor/core"
-    );
+    const { Capacitor } = await import(/* @vite-ignore */ "@capacitor/core");
     return Capacitor.isNativePlatform();
   } catch (e) {
     return false;
@@ -46,29 +48,79 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function mapNativeError(e) {
+  const raw = String(e?.message || e || "");
+  const code = String(e?.code || "");
+  // Google Sign-In CommonStatusCodes.DEVELOPER_ERROR = 10
+  if (
+    /\b10\b/.test(raw) ||
+    /DEVELOPER_ERROR/i.test(raw) ||
+    /ApiException:\s*10/i.test(raw)
+  ) {
+    const err = new Error(
+      "Google Sign-In configuration error (code 10). Verify package com.fittrack.app, SHA-1 of THIS APK, and that google-services.json contains Android + Web OAuth clients.",
+    );
+    err.code = "developer_error";
+    err.cause = e;
+    return err;
+  }
+  if (/12501|SIGN_IN_CANCELLED|canceled|cancelled/i.test(raw + code)) {
+    const err = new Error("Google Sign-In was cancelled");
+    err.code = "cancelled";
+    return err;
+  }
+  if (/12500|SIGN_IN_FAILED/i.test(raw + code)) {
+    const err = new Error("Google Sign-In failed on device");
+    err.code = "sign_in_failed";
+    return err;
+  }
+  if (e && typeof e === "object") {
+    e.code = e.code || code || "native_error";
+  }
+  return e instanceof Error ? e : new Error(raw || "Google Sign-In failed");
+}
+
 /**
- * Native Android Google Sign-In via @capacitor-firebase/authentication.
- * Must open the system Google account chooser — never silently hang.
+ * Native Android Google Sign-In.
+ * IMPORTANT: skipNativeAuth must be true when using the Firebase JS SDK
+ * (signInWithCredential). Otherwise native Firebase Auth and the JS SDK fight
+ * each other and the account picker can fail with DEVELOPER_ERROR / hang.
  */
 async function nativeGoogleIdToken() {
+  console.info("[GoogleSignIn] start native");
   const FirebaseAuthentication = await getNativePlugin();
   if (!FirebaseAuthentication) {
     const err = new Error("Google Sign-In native plugin is unavailable");
     err.code = "plugin_unavailable";
     throw err;
   }
+  console.info("[GoogleSignIn] plugin loaded, calling signInWithGoogle");
 
-  // Prefer the interactive account picker. Options vary by plugin version;
-  // unknown keys are ignored by Capacitor bridges.
-  const options = {
-    useCredentialManager: false,
-    skipNativeAuth: false,
-  };
+  let result;
+  try {
+    // useCredentialManager:false forces the classic account chooser UI.
+    result = await withTimeout(
+      FirebaseAuthentication.signInWithGoogle({
+        useCredentialManager: false,
+        skipNativeAuth: true,
+      }),
+      GOOGLE_SIGNIN_TIMEOUT_MS,
+      "Google Sign-In",
+    );
+  } catch (e) {
+    console.warn(
+      "[GoogleSignIn] native error",
+      e?.code || "",
+      String(e?.message || e).slice(0, 180),
+    );
+    throw mapNativeError(e);
+  }
 
-  const result = await withTimeout(
-    FirebaseAuthentication.signInWithGoogle(options),
-    GOOGLE_SIGNIN_TIMEOUT_MS,
-    "Google Sign-In",
+  console.info(
+    "[GoogleSignIn] native result keys",
+    result ? Object.keys(result) : null,
+    "credential?",
+    !!(result && result.credential),
   );
 
   const idToken =
@@ -78,17 +130,19 @@ async function nativeGoogleIdToken() {
     null;
 
   if (!idToken) {
+    console.warn("[GoogleSignIn] no idToken in result");
     const err = new Error(
-      "No ID token from Google — register the APK SHA-1 in Firebase and ensure google-services.json matches com.fittrack.app",
+      "No ID token from Google — check SHA-1, package com.fittrack.app, and google-services.json OAuth clients (Android + Web)",
     );
     err.code = "no_id_token";
     throw err;
   }
+  console.info("[GoogleSignIn] idToken received (length only)", idToken.length);
   return idToken;
 }
 
-/** Browser / preview fallback using Firebase JS popup. */
 async function webGoogleSignIn() {
+  console.info("[GoogleSignIn] start web popup");
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   return withTimeout(
@@ -113,16 +167,17 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
 
 export async function signInWithGoogleFlow(localLang = "en", createInitialState) {
   const native = await isNativePlatform();
+  console.info("[GoogleSignIn] platform native?", native);
 
   if (native) {
     const idToken = await nativeGoogleIdToken();
     const credential = GoogleAuthProvider.credential(idToken);
     const userCred = await signInWithCredential(auth, credential);
     await ensureUserDoc(userCred, localLang, createInitialState);
+    console.info("[GoogleSignIn] success uid length", userCred.user.uid.length);
     return userCred;
   }
 
-  // Web / Vite preview — open Google account chooser via popup
   const userCred = await webGoogleSignIn();
   await ensureUserDoc(userCred, localLang, createInitialState);
   return userCred;

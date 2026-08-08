@@ -1,0 +1,198 @@
+name: Apply safe Fifty Fit workout patch
+
+on:
+  push:
+    branches: [fix/workout-final-safe]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch current App.jsx
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p = Path('src/App.jsx')
+          s = p.read_text(encoding='utf-8')
+
+          block = re.compile(r'function dateForDay\(dayName\) \{.*?function activeTrainingDay\(data\) \{.*?\n\}', re.S)
+          new = '''function dateForDay(dayName) {
+  return addDays(mondayOf(dateKey(0)), DAYS.indexOf(dayName));
+}
+function dateToDayName(iso) {
+  const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
+  const js = d.getDay();
+  return js === 0 ? "Sun" : DAYS[js - 1];
+}
+function workoutDateRange(centerDate = dateKey(0), before = 3, after = 3) {
+  const center = new Date(String(centerDate).slice(0, 10) + "T00:00:00");
+  return Array.from({ length: before + after + 1 }, (_, i) => {
+    const d = new Date(center);
+    d.setDate(center.getDate() + i - before);
+    return d.toISOString().slice(0, 10);
+  });
+}
+function isDayCompleted(data, dayName, targetDate = dateForDay(dayName)) {
+  const exercises = getUsableExercises(data, dayName).list;
+  if (exercises.length === 0) return false;
+  const log = data.logs[targetDate] || {};
+  return exercises.every((e) => log[e.id]?.finished || (log[e.id]?.sets || []).some((s) => s.done));
+}
+function isDayRest(data, isoDate) {
+  return getUsableExercises(data, dateToDayName(isoDate)).list.length === 0;
+}
+function dayStatus(data, isoDate) {
+  const date = String(isoDate).slice(0, 10);
+  const today = dateKey(0);
+  const dayName = dateToDayName(date);
+  if (isDayRest(data, date)) return "rest";
+  const start = data.workoutStartDate ? String(data.workoutStartDate).slice(0, 10) : null;
+  if (start && date < start) return "pending";
+  if (date > today) return "pending";
+  if (isDayCompleted(data, dayName, date)) return "done";
+  if (date < today) return "missed";
+  return "pending";
+}
+function activeTrainingDate(data) {
+  const today = dateKey(0);
+  const start = data.workoutStartDate ? String(data.workoutStartDate).slice(0, 10) : today;
+  if (today < start) return start;
+  if (!isDayRest(data, today) && isDayCompleted(data, dateToDayName(today), today)) {
+    for (let i = 1; i <= 14; i += 1) {
+      const candidate = addDays(today, i);
+      if (!isDayRest(data, candidate)) return candidate;
+    }
+  }
+  return today;
+}
+function activeTrainingDay(data) {
+  return dateToDayName(activeTrainingDate(data));
+}'''
+          s, n = block.subn(new, s, count=1)
+          if n != 1: raise SystemExit('calendar helper block not found')
+
+          old = '''  const activePlan =
+    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+  const dayTitle = ar
+    ? activePlan.schedule[selectedDay].titleAr
+    : activePlan.schedule[selectedDay].title;
+  const { list: exercises, lockedCount } = getUsableExercises(
+    data,
+    selectedDay,
+  );
+  const activeDay = activeTrainingDay(data);
+  const today = dateKey(0);
+  const log = data.logs[today] || {};'''
+          new = '''  const activePlan =
+    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+  const selectedDate = selectedDayDate || dateKey(0);
+  const selectedWeekday = dateToDayName(selectedDate);
+  const dayTitle = ar
+    ? activePlan.schedule[selectedWeekday].titleAr
+    : activePlan.schedule[selectedWeekday].title;
+  const { list: exercises, lockedCount } = getUsableExercises(
+    data,
+    selectedWeekday,
+  );
+  const activeDay = activeTrainingDate(data);
+  const today = selectedDate;
+  const log = data.logs[today] || {};'''
+          if old not in s: raise SystemExit('workout header not found')
+          s = s.replace(old, new, 1)
+          s = s.replace('''  selectedDay,
+  setSelectedDay,
+  showToast,''','''  selectedDay,
+  selectedDayDate,
+  setSelectedDay,
+  setSelectedDayDate,
+  showToast,''',1)
+
+          map_re = re.compile(r'\{DAYS\.map\(\(d, i\) => \{.*?\n          \}\)\}', re.S)
+          map_new = '''{workoutDateRange(dateKey(0)).map((date) => {
+            const d = dateToDayName(date);
+            const isSelected = date === selectedDate;
+            const isToday = date === dateKey(0);
+            const isActiveDay = date === activeDay;
+            const status = dayStatus(data, date);
+            const isDone = status === "done";
+            const isMissed = status === "missed";
+            const isRest = status === "rest";
+            const bg = isSelected ? (isDone ? C.green : isMissed ? C.danger : C.green) : isDone ? C.green : isMissed ? C.dangerSoft : C.card2;
+            const fg = isSelected ? (isDone || isMissed ? "#fff" : C.onAccent) : isDone ? C.onAccent : isMissed ? C.danger : (isToday || isActiveDay ? C.green : C.text);
+            const dt = new Date(date + "T00:00:00");
+            return (
+              <button key={date} onClick={() => { setSelectedDay(d); setSelectedDayDate(date); }} style={{ minWidth: 44, padding: "10px 0", borderRadius: 12, cursor: "pointer", border: (isToday || isActiveDay) && !isSelected ? `1px solid ${C.green}` : "1px solid transparent", background: bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, position: "relative" }}>
+                <span style={{ fontSize: 11, color: isSelected && (isDone || isMissed) ? "#fff" : isSelected ? C.onAccent : isDone ? C.green : isMissed ? C.danger : C.sub, fontWeight: 600 }}>{ar ? DAY_LABELS_AR[d] : d}</span>
+                <span style={{ fontSize: 13, color: fg, fontWeight: 700 }}>{dt.getDate()}</span>
+                {isDone && <Check size={12} color={isSelected ? "#fff" : C.onAccent} strokeWidth={3} style={{ position: "absolute", top: 2, right: 5 }} />}
+                {isMissed && <span style={{ fontSize: 9, color: fg }}>!</span>}
+                {isRest && !isDone && !isMissed && <span style={{ fontSize: 8, color: C.sub2 }}>Rest</span>}
+              </button>
+            );
+          })}'''
+          s, n = map_re.subn(map_new, s, count=1)
+          if n != 1: raise SystemExit('day selector block not found')
+
+          s = s.replace('go("exercise", { exerciseId: ex.id, day: selectedDay })','go("exercise", { exerciseId: ex.id, day: selectedWeekday, date: selectedDate })')
+          s = s.replace('''exerciseId: exercises[0].id,
+                  day: selectedDay,''','''exerciseId: (exercises.find((e) => !log[e.id]?.finished && !(log[e.id]?.sets || []).some((s) => s.done)) || exercises[0]).id,
+                  day: selectedWeekday,
+                  date: selectedDate,''')
+
+          s = s.replace('''  day,
+  showToast,''','''  day,
+  date,
+  showToast,''',1)
+          s = s.replace('''  const today = dateKey(0);
+
+  const existingLog = data.logs[today]?.[exerciseId];''','''  const today = date ? String(date).slice(0, 10) : dateKey(0);
+
+  const existingLog = data.logs[today]?.[exerciseId];''',1)
+
+          s = s.replace('''  const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);
+  const [navHistory, setNavHistory]''','''  const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);
+  const [selectedDayDate, setSelectedDayDate] = useState(dateKey(0));
+  const [navHistory, setNavHistory''',1)
+          s = s.replace('''  const activeDay = loaded ? activeTrainingDay(data) : DAYS[todayIdx];
+  useEffect(() => {
+    setSelectedDay(activeDay);
+  }, [activeDay]);''','''  const activeDate = loaded ? activeTrainingDate(data) : dateKey(0);
+  const activeDay = dateToDayName(activeDate);
+  useEffect(() => {
+    setSelectedDay(activeDay);
+    setSelectedDayDate(dateKey(0));
+  }, [activeDay, activeDate]);''',1)
+          s = s.replace('''        selectedDay={selectedDay}
+        setSelectedDay={setSelectedDay}''','''        selectedDay={selectedDay}
+        selectedDayDate={selectedDayDate}
+        setSelectedDay={setSelectedDay}
+        setSelectedDayDate={setSelectedDayDate}''',1)
+          s = s.replace('''        day={params.day}
+        showToast={showToast}''','''        day={params.day}
+        date={params.date}
+        showToast={showToast}''',1)
+
+          s = s.replace('شوف إيميلك هيوصلك رابط لإعادة تعيين كلمة السر.','شوف إيميلك هيوصلك رابط لإعادة تعيين كلمة السر. لو مش لاقيه في الوارد، دور في Spam / الرسائل غير المرغوب فيها في Gmail.',1)
+          s = s.replace('Check your email for a link to reset your password.','Check your email for a password reset link. If you don\'t see it in your inbox, check Gmail Spam / Junk.',1)
+          s = s.replace('{ar ? "إدارة الاشتراك" : "Manage Subscription"}','{ar ? "إلغاء الاشتراك" : "Cancel Subscription"}',1)
+          s = s.replace('fontSize: 12,\n                textDecoration: "underline",','fontSize: 10.5,\n                textDecoration: "underline",',1)
+          p.write_text(s, encoding='utf-8')
+          print('patch complete')
+      - name: Build and commit
+        run: |
+          npm ci
+          npm run build
+          rm -f .github/workflows/apply-workout-final-safe.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/App.jsx .github/workflows/apply-workout-final-safe.yml
+          git commit -m 'fix(workout): dynamic calendar and subscription UI'
+          git push

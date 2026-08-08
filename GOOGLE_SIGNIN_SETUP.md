@@ -83,3 +83,20 @@ Do not commit `google-services.json` or any `.keystore` file (see `.gitignore`).
 3. Separately test the **Play Store** build after publishing (Play signing cert must also be in Firebase).
 
 Email/password login is independent and should keep working either way.
+
+
+## 6. Web OAuth client (required for ID tokens)
+
+Google Sign-In on Android requests an **ID token** using the **Web** OAuth client (`client_type: 3` in `google-services.json`).
+
+1. Firebase Console → Project settings → Your apps → Android app
+2. After SHA-1 is registered, **Download google-services.json** again
+3. Confirm the JSON has at least one `oauth_client` with `"client_type": 3` (Web)
+4. Re-encode and update GitHub secret `GOOGLE_SERVICES_JSON_BASE64`
+5. Rebuild the release APK
+
+Without a Web client, native Google Sign-In often returns **ApiException: 10 (DEVELOPER_ERROR)** and the account picker may never appear.
+
+## 7. Native plugin flag (`rgcfaIncludeGoogle`)
+
+The Android build workflow sets `rgcfaIncludeGoogle = true` in `android/variables.gradle` so `@capacitor-firebase/authentication` includes the Google provider dependency. This is applied automatically on every GitHub Actions build.

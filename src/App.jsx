@@ -282,6 +282,7 @@ const DARK = {
   sub2: "#6b6b6b",
   danger: "#ef4444",
   dangerSoft: "rgba(239,68,68,0.12)",
+  positive: "#22c55e",
   overlay: "rgba(0,0,0,0.7)",
   gold: "#eab308",
   goldSoft: "rgba(234,179,8,0.14)",
@@ -300,6 +301,7 @@ const LIGHT = {
   sub2: "#9a9a9a",
   danger: "#dc2626",
   dangerSoft: "rgba(220,38,38,0.10)",
+  positive: "#16a34a",
   overlay: "rgba(0,0,0,0.4)",
   gold: "#b45309",
   goldSoft: "rgba(180,83,9,0.12)",
@@ -586,6 +588,23 @@ function activeTrainingDay(data) {
     return day;
   }
   return DAYS[todayIdx];
+}
+
+// C.green is the app's monochrome accent (white in dark mode, black in light
+// mode), so progress deltas use dedicated semantic colours instead.
+// More of a metric is an improvement: strength, completed sets, streaks.
+function trendColor(C, delta) {
+  if (delta > 0) return C.positive;
+  if (delta < 0) return C.danger;
+  return C.sub;
+}
+// Body weight is goal-aware: losing is progress when cutting, gaining is
+// progress when building muscle, and any drift is neutral when maintaining.
+function weightTrendColor(C, goal, delta) {
+  if (!delta) return C.sub;
+  const desired = goal === "lose" ? -1 : goal === "muscle" ? 1 : 0;
+  if (desired === 0) return C.sub;
+  return Math.sign(delta) === desired ? C.positive : C.danger;
 }
 
 /* ============================== EXERCISE LIBRARY ============================== */
@@ -1359,6 +1378,7 @@ const FOOD_DB = [
     id: "chicken_breast",
     name: "Chicken Breast (grilled)",
     nameAr: "صدر فراخ (مشوي)",
+    aliases: ["بانية", "صدور فراخ", "فراخ", "chicken", "panne"],
     kcal: 165,
     protein: 31.0,
     carbs: 0.0,
@@ -1368,6 +1388,7 @@ const FOOD_DB = [
     id: "chicken_thigh",
     name: "Chicken Thigh (grilled)",
     nameAr: "فخذ فراخ (مشوي)",
+    aliases: ["ورك فراخ", "فراخ", "chicken"],
     kcal: 209,
     protein: 25.9,
     carbs: 0.0,
@@ -1431,6 +1452,7 @@ const FOOD_DB = [
     id: "tuna",
     name: "Tuna (canned in water)",
     nameAr: "تونة (معلبة بالماء)",
+    aliases: ["سمك", "fish", "seafood", "مأكولات بحرية"],
     kcal: 116,
     protein: 25.5,
     carbs: 0.0,
@@ -1440,6 +1462,7 @@ const FOOD_DB = [
     id: "salmon",
     name: "Salmon (grilled)",
     nameAr: "سالمون (مشوي)",
+    aliases: ["سمك", "سلمون", "fish", "seafood", "مأكولات بحرية"],
     kcal: 208,
     protein: 20.4,
     carbs: 0.0,
@@ -1449,6 +1472,7 @@ const FOOD_DB = [
     id: "shrimp",
     name: "Shrimp (boiled)",
     nameAr: "جمبري (مسلوق)",
+    aliases: ["prawns", "seafood", "مأكولات بحرية", "سمك"],
     kcal: 99,
     protein: 23.7,
     carbs: 0.2,
@@ -1799,6 +1823,7 @@ const FOOD_DB = [
     id: "chicken_whole_roasted",
     name: "Roast Chicken (meat only)",
     nameAr: "فراخ مشوية (لحم فقط)",
+    aliases: ["فراخ", "chicken"],
     kcal: 190,
     protein: 28.9,
     carbs: 0.0,
@@ -1808,6 +1833,7 @@ const FOOD_DB = [
     id: "chicken_drumstick",
     name: "Chicken Drumstick (roasted, meat only)",
     nameAr: "دبوس فراخ (مشوي)",
+    aliases: ["فراخ", "chicken"],
     kcal: 172,
     protein: 28.3,
     carbs: 0.0,
@@ -1844,6 +1870,7 @@ const FOOD_DB = [
     id: "sardines_canned",
     name: "Sardines (canned in oil, drained)",
     nameAr: "سردين (معلب بالزيت)",
+    aliases: ["سمك", "fish", "seafood", "مأكولات بحرية"],
     kcal: 208,
     protein: 24.6,
     carbs: 0.0,
@@ -1853,6 +1880,7 @@ const FOOD_DB = [
     id: "mackerel",
     name: "Mackerel (cooked)",
     nameAr: "ماكريل (مطبوخ)",
+    aliases: ["سمك", "fish", "seafood", "مأكولات بحرية"],
     kcal: 262,
     protein: 23.8,
     carbs: 0.0,
@@ -1862,6 +1890,7 @@ const FOOD_DB = [
     id: "tilapia",
     name: "Tilapia (cooked)",
     nameAr: "بلطي (مطبوخ)",
+    aliases: ["سمك", "fish", "seafood", "مأكولات بحرية"],
     kcal: 129,
     protein: 26.2,
     carbs: 0.0,
@@ -1871,6 +1900,7 @@ const FOOD_DB = [
     id: "cod",
     name: "Cod (cooked)",
     nameAr: "سمك قد (مطبوخ)",
+    aliases: ["white fish", "سمك أبيض", "fish", "seafood"],
     kcal: 105,
     protein: 22.8,
     carbs: 0.0,
@@ -2260,7 +2290,160 @@ const FOOD_DB = [
     carbs: 0.0,
     fat: 99.5,
   },
+  // قسم: أكلات مصرية شائعة — القيم لكل 100 جرام (USDA FoodData Central)
+  {
+    id: "chicken_breast_raw",
+    name: "Chicken Breast (raw, skinless)",
+    nameAr: "صدر فراخ (ني)",
+    aliases: ["بانية", "صدور فراخ", "فراخ", "chicken"],
+    kcal: 120,
+    protein: 22.5,
+    carbs: 0.0,
+    fat: 2.6,
+  },
+  {
+    id: "chicken_panne",
+    name: "Breaded Fried Chicken Breast (Panne)",
+    nameAr: "بانية مقلية (صدر فراخ مغطى بالبقسماط)",
+    aliases: ["بانية", "بانيه", "panne", "breaded chicken", "فراخ بانية"],
+    kcal: 260,
+    protein: 22.0,
+    carbs: 9.0,
+    fat: 13.7,
+  },
+  {
+    id: "chicken_wings",
+    name: "Chicken Wings (roasted, with skin)",
+    nameAr: "أجنحة فراخ (مشوية بالجلد)",
+    aliases: ["وينجز", "فراخ", "chicken", "wings"],
+    kcal: 254,
+    protein: 30.4,
+    carbs: 0.0,
+    fat: 16.8,
+  },
+  {
+    id: "beef_steak",
+    name: "Beef Sirloin Steak (grilled, lean)",
+    nameAr: "ستيك بقري (مشوي)",
+    aliases: ["ستيك", "steak", "لحمة مشوية"],
+    kcal: 212,
+    protein: 30.0,
+    carbs: 0.0,
+    fat: 9.4,
+  },
+  {
+    id: "calamari_fried",
+    name: "Calamari / Squid (fried)",
+    nameAr: "كاليماري (مقلي)",
+    aliases: ["كاليماري", "حبار", "سبيط", "seafood", "مأكولات بحرية", "سمك"],
+    kcal: 175,
+    protein: 17.9,
+    carbs: 7.8,
+    fat: 7.5,
+  },
+  {
+    id: "egg_fried",
+    name: "Egg (fried in oil)",
+    nameAr: "بيض مقلي",
+    aliases: ["بيض", "egg"],
+    kcal: 196,
+    protein: 13.6,
+    carbs: 0.8,
+    fat: 14.8,
+  },
+  {
+    id: "bulgur_cooked",
+    name: "Bulgur (cooked)",
+    nameAr: "برغل (مطبوخ)",
+    aliases: ["برغل", "bulgur"],
+    kcal: 83,
+    protein: 3.1,
+    carbs: 18.6,
+    fat: 0.2,
+  },
+  {
+    id: "toast_white",
+    name: "Toast Bread (white)",
+    nameAr: "توست أبيض",
+    aliases: ["توست", "خبز توست", "toast"],
+    kcal: 293,
+    protein: 9.0,
+    carbs: 54.7,
+    fat: 4.0,
+  },
+  {
+    id: "romaine_lettuce",
+    name: "Romaine Lettuce",
+    nameAr: "خس",
+    aliases: ["خص", "lettuce", "سلطة خضراء"],
+    kcal: 17,
+    protein: 1.2,
+    carbs: 3.3,
+    fat: 0.3,
+  },
+  {
+    id: "arugula",
+    name: "Arugula (rocket)",
+    nameAr: "جرجير",
+    aliases: ["rocket", "جرجير بلدي"],
+    kcal: 25,
+    protein: 2.6,
+    carbs: 3.7,
+    fat: 0.7,
+  },
+  {
+    id: "romano_cheese",
+    name: "Romano Cheese (Roumy)",
+    nameAr: "جبنة رومي",
+    aliases: ["رومي", "جبنه رومي", "roumy"],
+    kcal: 387,
+    protein: 31.8,
+    carbs: 3.6,
+    fat: 26.9,
+  },
+  {
+    id: "cantaloupe",
+    name: "Cantaloupe",
+    nameAr: "كنتالوب",
+    aliases: ["شمام", "melon"],
+    kcal: 34,
+    protein: 0.8,
+    carbs: 8.2,
+    fat: 0.2,
+  },
+  {
+    id: "molasses",
+    name: "Molasses (black honey)",
+    nameAr: "عسل أسود",
+    aliases: ["عسل اسود", "molasses"],
+    kcal: 290,
+    protein: 0.0,
+    carbs: 74.7,
+    fat: 0.1,
+  },
 ];
+
+// Arabic is typed inconsistently (hamza forms, ة/ه, ى/ي, diacritics), so both
+// the query and the food names are folded to one form before matching.
+function normalizeSearch(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0670\u0640]/g, "")
+    .replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627")
+    .replace(/\u0629/g, "\u0647")
+    .replace(/\u0649/g, "\u064A")
+    .replace(/\u0624/g, "\u0648")
+    .replace(/\u0626/g, "\u064A")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function foodMatches(food, query) {
+  const q = normalizeSearch(query);
+  if (!q) return true;
+  return [food.name, food.nameAr, ...(food.aliases || [])].some(
+    (n) => n && normalizeSearch(n).includes(q),
+  );
+}
 
 const GOALS = [
   {
@@ -4951,9 +5134,15 @@ function HomeScreen({ data, go }) {
   const ar = lang === "ar";
   const today = dateKey(0);
   const bw = normalizeBodyWeightEntries(data.bodyWeight);
-  const weightSeries = bw
+  const weightPoints = bw
     .slice(-6)
     .map((w) => ({ date: shortDate(w.date), kg: w.weight }));
+  // Match the detailed chart: a single entry reads as a flat line at that real
+  // weight rather than one isolated dot (repeated for rendering only).
+  const singleWeightEntry = weightPoints.length === 1;
+  const weightSeries = singleWeightEntry
+    ? [weightPoints[0], { ...weightPoints[0], date: "" }]
+    : weightPoints;
   const currentWeight = bw[bw.length - 1]?.weight ?? 0;
   const monthAgo = [...bw].reverse().find((w) => w.date <= dateKey(-28));
   const weightDelta = monthAgo
@@ -5048,12 +5237,11 @@ function HomeScreen({ data, go }) {
               <div
                 style={{
                   fontSize: 11.5,
-                  color:
-                    weightDelta > 0
-                      ? C.danger
-                      : weightDelta < 0
-                      ? C.green
-                      : C.sub,
+                  color: weightTrendColor(
+                    C,
+                    data.account.goal,
+                    weightDelta,
+                  ),
                   marginTop: 4,
                 }}
               >
@@ -5113,12 +5301,16 @@ function HomeScreen({ data, go }) {
                       dataKey="kg"
                       stroke={C.green}
                       strokeWidth={2.8}
-                      dot={{
-                        r: 3.5,
-                        fill: C.green,
-                        stroke: C.card,
-                        strokeWidth: 2,
-                      }}
+                      dot={
+                        singleWeightEntry
+                          ? false
+                          : {
+                              r: 3.5,
+                              fill: C.green,
+                              stroke: C.card,
+                              strokeWidth: 2,
+                            }
+                      }
                       activeDot={{
                         r: 5.5,
                         fill: C.green,
@@ -5473,6 +5665,7 @@ function HomeScreen({ data, go }) {
           label={ar ? "وزن الجسم" : "Body Weight"}
           value={`${currentWeight} ${ar ? "كجم" : "kg"}`}
           delta={weightDelta}
+          color={weightTrendColor(C, data.account.goal, weightDelta)}
         />
       </div>
       <div style={{ height: 10 }} />
@@ -5490,7 +5683,7 @@ function greeting(ar) {
   if (h < 18) return "Afternoon";
   return "Evening";
 }
-function MiniProgressRow({ label, value, delta }) {
+function MiniProgressRow({ label, value, delta, color }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   return (
@@ -5512,7 +5705,7 @@ function MiniProgressRow({ label, value, delta }) {
         <div
           dir="ltr"
           style={{
-            color: delta > 0 ? C.green : delta < 0 ? C.danger : C.sub2,
+            color: color || trendColor(C, delta),
             fontSize: 12.5,
             fontWeight: 800,
           }}
@@ -6117,7 +6310,13 @@ function WorkoutScreen({
             <GreenButton
               onClick={() =>
                 go("exercise", {
-                  exerciseId: exercises[0].id,
+                  exerciseId: (
+                    exercises.find(
+                      (e) =>
+                        !log[e.id]?.finished &&
+                        !(log[e.id]?.sets || []).some((s) => s.done),
+                    ) || exercises[0]
+                  ).id,
                   day: selectedDay,
                 })
               }
@@ -6717,7 +6916,7 @@ function ProgressScreen({ data, go }) {
               </div>
               <div
                 style={{
-                  color: thisWeekCount >= lastWeekCount ? C.green : C.danger,
+                  color: trendColor(C, thisWeekCount - lastWeekCount),
                   fontWeight: 700,
                   fontSize: 13,
                 }}
@@ -6758,7 +6957,7 @@ function ProgressScreen({ data, go }) {
                   </div>
                   <div
                     style={{
-                      color: yestCount >= dayBeforeCount ? C.green : C.danger,
+                      color: trendColor(C, yestCount - dayBeforeCount),
                       fontWeight: 700,
                       fontSize: 13,
                     }}
@@ -6798,8 +6997,7 @@ function ProgressScreen({ data, go }) {
                   </div>
                   <div
                     style={{
-                      color:
-                        thisMonthCount >= lastMonthCount ? C.green : C.danger,
+                      color: trendColor(C, thisMonthCount - lastMonthCount),
                       fontWeight: 700,
                       fontSize: 13,
                     }}
@@ -6868,8 +7066,7 @@ function ProgressScreen({ data, go }) {
                   <span
                     dir="ltr"
                     style={{
-                      color:
-                        delta > 0 ? C.green : delta < 0 ? C.danger : C.text,
+                      color: trendColor(C, delta),
                       fontWeight: 700,
                       fontSize: 12.5,
                     }}
@@ -6896,8 +7093,7 @@ function ProgressScreen({ data, go }) {
                   <span>→</span>
                   <span
                     style={{
-                      color:
-                        delta > 0 ? C.green : delta < 0 ? C.danger : C.text,
+                      color: trendColor(C, delta),
                       fontWeight: 700,
                     }}
                   >
@@ -6916,7 +7112,7 @@ function ProgressScreen({ data, go }) {
                     style={{
                       height: "100%",
                       width: `${pct}%`,
-                      background: delta >= 0 ? C.green : C.danger,
+                      background: delta > 0 ? C.positive : delta < 0 ? C.danger : C.sub2,
                       borderRadius: 4,
                     }}
                   />
@@ -6964,12 +7160,16 @@ function ProgressScreen({ data, go }) {
           <Card>
             {(() => {
               const chartBw = normalizeBodyWeightEntries(data.bodyWeight);
-              const chartData = chartBw.map((w) => ({
+              const chartPoints = chartBw.map((w) => ({
                 date: shortDate(w.date),
                 label: `${fmtDate(w.date)} • ${w.time}`,
                 kg: w.weight,
                 time: w.time,
               }));
+              const singleEntry = chartPoints.length === 1;
+              const chartData = singleEntry
+                ? [chartPoints[0], { ...chartPoints[0] }]
+                : chartPoints;
               const minWeight = chartData.length
                 ? Math.min(...chartData.map((d) => d.kg))
                 : 0;
@@ -7028,12 +7228,16 @@ function ProgressScreen({ data, go }) {
                         dataKey="kg"
                         stroke={C.green}
                         strokeWidth={2.8}
-                        dot={{
-                          r: 4,
-                          fill: C.green,
-                          stroke: C.card,
-                          strokeWidth: 2,
-                        }}
+                        dot={
+                          singleEntry
+                            ? false
+                            : {
+                                r: 4,
+                                fill: C.green,
+                                stroke: C.card,
+                                strokeWidth: 2,
+                              }
+                        }
                         activeDot={{
                           r: 6,
                           fill: C.green,
@@ -7128,12 +7332,16 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
     setData(next);
   };
 
-  const chartData = allSorted.map((w) => ({
+  const points = allSorted.map((w) => ({
     date: shortDate(w.date),
     label: `${fmtDate(w.date)} • ${w.time}`,
     kg: w.weight,
     time: w.time,
   }));
+  // A single entry is drawn as a flat line at that real weight instead of one
+  // lonely dot: the value is repeated for rendering only, never stored.
+  const singleEntry = points.length === 1;
+  const chartData = singleEntry ? [points[0], { ...points[0] }] : points;
   const minWeight = chartData.length
     ? Math.min(...chartData.map((d) => d.kg))
     : 0;
@@ -7191,7 +7399,7 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
             <div style={{ textAlign: ar ? "left" : "right" }}>
               <div
                 style={{
-                  color: delta === 0 ? C.sub : delta < 0 ? C.green : C.danger,
+                  color: weightTrendColor(C, data.account.goal, delta),
                   fontSize: 18,
                   fontWeight: 800,
                 }}
@@ -7277,12 +7485,16 @@ function BodyWeightScreen({ data, setData, back, showToast, go }) {
                     dataKey="kg"
                     stroke={C.green}
                     strokeWidth={2.8}
-                    dot={{
-                      r: 4,
-                      fill: C.green,
-                      stroke: C.card,
-                      strokeWidth: 2,
-                    }}
+                    dot={
+                      singleEntry
+                        ? false
+                        : {
+                            r: 4,
+                            fill: C.green,
+                            stroke: C.card,
+                            strokeWidth: 2,
+                          }
+                    }
                     activeDot={{
                       r: 6,
                       fill: C.green,
@@ -7882,11 +8094,7 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
   const [grams, setGrams] = useState(100);
   const today = dateKey(0);
 
-  const results = FOOD_DB.filter(
-    (f) =>
-      f.name.toLowerCase().includes(query.toLowerCase()) ||
-      (f.nameAr && f.nameAr.includes(query)),
-  );
+  const results = FOOD_DB.filter((f) => foodMatches(f, query));
   const mealDef = MEAL_ITEMS.find((m) => m.id === mealId);
   const mealName = ar ? mealDef?.nameAr || "وجبة" : mealDef?.name || "Meal";
   const scale = selected ? Number(grams || 0) / 100 : 0;

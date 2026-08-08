@@ -120,7 +120,7 @@ export const BILLING_PRODUCTS = {
 // AI COACH LIMITS (single source of truth — do not scatter)
 // ------------------------------------------------------------
 export const FREE_AI_MESSAGES_PER_DAY = 3;
-export const PRO_AI_MESSAGES_PER_DAY = 100;
+export const PRO_AI_MESSAGES_PER_DAY = 50;
 
 // Display prices only. Google Play regional pricing is the purchase source
 // of truth — the app must not invent a country via GPS/IP.

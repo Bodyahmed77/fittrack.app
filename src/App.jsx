@@ -190,7 +190,6 @@ import {
 } from "./review";
 import {
   aiUsageToday,
-  bumpAiUsage,
   generateCoachReply,
 } from "./aiCoach";
 import { APP_INFO, PRIVACY_POLICY_SECTIONS, TERMS_SECTIONS } from "./privacy";
@@ -9192,21 +9191,71 @@ function AICoachScreen({ data, setData, back, showToast, go }) {
     setMessages(nextMsgs);
     setBusy(true);
     try {
-      const reply = await generateCoachReply({
+      const result = await generateCoachReply({
         messages: nextMsgs,
         lang,
+        localDate: today,
         userContext: {
-          weight: data.bodyWeight?.slice(-1)?.[0]?.weight || data.account?.weight,
+          age: data.account?.age,
+          gender: data.account?.gender,
+          height: data.account?.height,
+          weight:
+            data.bodyWeight?.slice(-1)?.[0]?.weight || data.account?.weight,
           goal: data.account?.goal,
-          name: data.account?.name,
+          plan: data.activePlanId,
         },
       });
+      const reply = typeof result === "string" ? result : result?.reply || "";
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
-      const next = clone(data);
-      next.aiUsage = bumpAiUsage(next, today);
-      setData(next);
+      if (result?.usage) {
+        const next = clone(data);
+        next.aiUsage = {
+          date: result.usage.date || today,
+          count: result.usage.count ?? result.usage.used ?? 0,
+        };
+        setData(next);
+      }
     } catch (e) {
-      showToast(ar ? "حصل خطأ — حاول تاني" : "Something went wrong — try again");
+      if (e?.code === "daily_limit") {
+        if (e.usage) {
+          const next = clone(data);
+          next.aiUsage = {
+            date: e.usage.date || today,
+            count: e.usage.count ?? e.usage.used ?? 0,
+          };
+          setData(next);
+        }
+        showToast(
+          e.usage?.hasPro || data.entitlements?.aiCoachPro
+            ? ar
+              ? "وصلت للحد اليومي (50 رسالة). حاول تاني بكرة."
+              : "Daily limit reached (50 messages). Try again tomorrow."
+            : ar
+            ? "لقد استخدمت رسائلك المجانية الثلاث لهذا اليوم. يمكنك العودة غدًا أو الترقية إلى AI Coach Pro."
+            : "You've used your 3 free AI messages for today. Come back tomorrow or upgrade to AI Coach Pro.",
+        );
+      } else if (e?.code === "no_endpoint") {
+        showToast(
+          ar
+            ? "خدمة الذكاء الاصطناعي مش مفعّلة لسه"
+            : "AI service is not configured yet",
+        );
+        setMessages((m) => m.slice(0, -1));
+      } else if (e?.code === "unauthenticated") {
+        showToast(ar ? "سجّل دخولك عشان تستخدم مدرب AI" : "Sign in to use AI Coach");
+        setMessages((m) => m.slice(0, -1));
+      } else if (e?.code === "network") {
+        showToast(ar ? "مفيش إنترنت — راجع الاتصال" : "No internet — check your connection");
+        setMessages((m) => m.slice(0, -1));
+      } else if (e?.code === "rate_limit") {
+        showToast(
+          ar ? "الخدمة مشغولة دلوقتي — حاول بعد دقيقة" : "AI is busy — try again in a minute",
+        );
+        setMessages((m) => m.slice(0, -1));
+      } else {
+        showToast(ar ? "AI مش متاح مؤقتًا — حاول تاني" : "AI temporarily unavailable — try again");
+        setMessages((m) => m.slice(0, -1));
+      }
     } finally {
       setBusy(false);
     }

@@ -122,6 +122,21 @@ export const BILLING_PRODUCTS = {
 export const FREE_AI_MESSAGES_PER_DAY = 3;
 export const PRO_AI_MESSAGES_PER_DAY = 50;
 
+// Public backend URL only — never put GEMINI_API_KEY here.
+// Override at build time with VITE_AI_ENDPOINT if needed.
+export const AI_COACH_ENDPOINT =
+  "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/ai-coach";
+
+// Optional public Supabase anon/publishable key (safe in client).
+// Required by Supabase gateway on some projects alongside Authorization.
+// Set via VITE_SUPABASE_ANON_KEY at build time, or leave empty if the
+// Edge Function has verify_jwt disabled and accepts Firebase tokens alone.
+export const SUPABASE_ANON_KEY =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_SUPABASE_ANON_KEY) ||
+  "";
+
 // Display prices only. Google Play regional pricing is the purchase source
 // of truth — the app must not invent a country via GPS/IP.
 export const AI_COACH_PRICES = {

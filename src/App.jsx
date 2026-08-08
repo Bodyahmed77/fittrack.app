@@ -9195,6 +9195,7 @@ function AICoachScreen({ data, setData, back, showToast, go }) {
         messages: nextMsgs,
         lang,
         localDate: today,
+        hasAiPro: !!data.entitlements?.aiCoachPro,
         userContext: {
           age: data.account?.age,
           gender: data.account?.gender,
@@ -9253,7 +9254,11 @@ function AICoachScreen({ data, setData, back, showToast, go }) {
         );
         setMessages((m) => m.slice(0, -1));
       } else {
-        showToast(ar ? "AI مش متاح مؤقتًا — حاول تاني" : "AI temporarily unavailable — try again");
+        showToast(
+          ar
+            ? "حصلت مشكلة في الاتصال بالمدرب الذكي. حاول مرة تانية."
+            : "Something went wrong connecting to your AI Coach. Please try again.",
+        );
         setMessages((m) => m.slice(0, -1));
       }
     } finally {

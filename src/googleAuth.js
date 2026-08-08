@@ -74,6 +74,15 @@ function mapNativeError(e) {
     err.code = "sign_in_failed";
     return err;
   }
+  // Error 2 often accompanies DEVELOPER_ERROR when OAuth clients are wrong.
+  if (/\b2\b/.test(raw) && /ApiException|GoogleSignIn|rtvip/i.test(raw)) {
+    const err = new Error(
+      "Google Sign-In configuration error (code 2/10). Verify package com.fittrack.app, release SHA-1, Play App Signing SHA-1, and that google-services.json includes Android + Web (client_type 3) OAuth clients.",
+    );
+    err.code = "developer_error";
+    err.cause = e;
+    return err;
+  }
   if (e && typeof e === "object") {
     e.code = e.code || code || "native_error";
   }

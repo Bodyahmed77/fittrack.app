@@ -3994,11 +3994,13 @@ function useNetworkStatus() {
   return [online, setOnline];
 }
 
-function GoogleButton({ onClick }) {
+function GoogleButton({ onClick, busy = false, ar = false }) {
   const { C } = useUI();
   return (
     <button
+      type="button"
       onClick={onClick}
+      disabled={busy}
       style={{
         width: "100%",
         padding: "13px 0",
@@ -4008,7 +4010,8 @@ function GoogleButton({ onClick }) {
         color: C.text,
         fontSize: 14.5,
         fontWeight: 700,
-        cursor: "pointer",
+        cursor: busy ? "wait" : "pointer",
+        opacity: busy ? 0.7 : 1,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -4033,7 +4036,13 @@ function GoogleButton({ onClick }) {
           d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.97l2.99 2.33C4.66 5.17 6.65 3.58 9 3.58z"
         />
       </svg>
-      Continue with Google
+      {busy
+        ? ar
+          ? "جاري فتح حساب Google…"
+          : "Opening Google…"
+        : ar
+          ? "تسجيل الدخول باستخدام Google"
+          : "Continue with Google"}
     </button>
   );
 }
@@ -4245,11 +4254,28 @@ function LoginScreen({ go, showToast }) {
       await signInWithGoogleFlow(ar ? "ar" : "en", freshState);
       showToast(ar ? "أهلاً بيك!" : "Welcome!");
     } catch (err) {
-      showToast(
-        ar
+      const code = err?.code || "";
+      let msg;
+      if (code === "timeout") {
+        msg = ar
+          ? "انتهت مهلة تسجيل Google. تأكد أن شاشة اختيار الحساب ظهرت، أو راجع إعدادات SHA-1 في Firebase."
+          : "Google Sign-In timed out. Confirm the account picker appeared, or check Firebase SHA-1 setup.";
+      } else if (code === "plugin_unavailable") {
+        msg = ar
+          ? "إضافة Google Sign-In غير متاحة على هذا الجهاز."
+          : "Google Sign-In plugin is not available on this device.";
+      } else if (code === "no_id_token") {
+        msg = ar
+          ? "تعذر الحصول على توكن Google. راجع SHA-1 وملف google-services.json."
+          : "Could not get a Google ID token. Check SHA-1 and google-services.json.";
+      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        msg = ar ? "تم إلغاء تسجيل الدخول بجوجل." : "Google Sign-In was cancelled.";
+      } else {
+        msg = ar
           ? "فشل تسجيل الدخول بجوجل — حاول تاني"
-          : "Google Sign-In failed — please try again",
-      );
+          : "Google Sign-In failed — please try again";
+      }
+      showToast(msg);
     } finally {
       setBusy(false);
     }
@@ -4376,7 +4402,7 @@ function LoginScreen({ go, showToast }) {
         </span>
         <div style={{ flex: 1, height: 1, background: C.border }} />
       </div>
-      <GoogleButton onClick={googleSignIn} />
+      <GoogleButton onClick={googleSignIn} busy={busy} ar={ar} />
 
       <div style={{ flex: 1 }} />
       <div
@@ -4464,11 +4490,28 @@ function SignUpScreen({ go, showToast, localLang }) {
       await signInWithGoogleFlow(localLang, freshState);
       showToast(ar ? "أهلاً بيك!" : "Welcome!");
     } catch (err) {
-      showToast(
-        ar
+      const code = err?.code || "";
+      let msg;
+      if (code === "timeout") {
+        msg = ar
+          ? "انتهت مهلة تسجيل Google. تأكد أن شاشة اختيار الحساب ظهرت، أو راجع إعدادات SHA-1 في Firebase."
+          : "Google Sign-In timed out. Confirm the account picker appeared, or check Firebase SHA-1 setup.";
+      } else if (code === "plugin_unavailable") {
+        msg = ar
+          ? "إضافة Google Sign-In غير متاحة على هذا الجهاز."
+          : "Google Sign-In plugin is not available on this device.";
+      } else if (code === "no_id_token") {
+        msg = ar
+          ? "تعذر الحصول على توكن Google. راجع SHA-1 وملف google-services.json."
+          : "Could not get a Google ID token. Check SHA-1 and google-services.json.";
+      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        msg = ar ? "تم إلغاء تسجيل الدخول بجوجل." : "Google Sign-In was cancelled.";
+      } else {
+        msg = ar
           ? "فشل تسجيل الدخول بجوجل — حاول تاني"
-          : "Google Sign-In failed — please try again",
-      );
+          : "Google Sign-In failed — please try again";
+      }
+      showToast(msg);
     } finally {
       setBusy(false);
     }
@@ -4590,7 +4633,7 @@ function SignUpScreen({ go, showToast, localLang }) {
         </span>
         <div style={{ flex: 1, height: 1, background: C.border }} />
       </div>
-      <GoogleButton onClick={googleSignIn} />
+      <GoogleButton onClick={googleSignIn} busy={busy} ar={ar} />
 
       <div style={{ flex: 1 }} />
       <div
@@ -5863,6 +5906,15 @@ function WorkoutScreen({
   );
   const activeDay = activeTrainingDay(data);
   const today = dateKey(0);
+  // Align selection to the device local calendar day when this screen mounts.
+  useEffect(() => {
+    const iso = dateKey(0);
+    if (selectedIso !== iso) {
+      setSelectedIso(iso);
+      setSelectedDay(weekdayOf(iso));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Logs are keyed by the actual calendar date of the selected strip day.
   // selectedIso is authoritative so week-boundary taps still land on the
   // correct date (not the same weekday in the current Monday week).
@@ -11586,15 +11638,13 @@ export default function GymApp() {
     setData(next);
   }, [firebaseUser, loaded, data, localLang, setData]);
 
-  // Follow the program: once the current day's workout is finished (or today
-  // is a rest day) the selector moves on to the next scheduled training day.
-  const activeDay = loaded ? activeTrainingDay(data) : DAYS[todayIdx];
-  useEffect(() => {
-    setSelectedDay(activeDay);
-    // Map the active weekday onto the current calendar week so logs land on
-    // the real date (and the strip selection stays in sync with today).
-    setSelectedIso(dateForDay(activeDay));
-  }, [activeDay]);
+  // Keep selection on the device's REAL local calendar day when appropriate.
+  // Opening the Workout tab always re-selects today (see onNavChange / go).
+  const selectLocalToday = () => {
+    const todayIso = dateKey(0);
+    setSelectedIso(todayIso);
+    setSelectedDay(weekdayOf(todayIso));
+  };
 
   const pickLanguage = (lang) => {
     persistLanguage(lang);
@@ -11615,6 +11665,11 @@ export default function GymApp() {
     if (s === "aiCoach") {
       setAiDrawerOpen(true);
       return;
+    }
+    if (s === "workout") {
+      const todayIso = dateKey(0);
+      setSelectedIso(todayIso);
+      setSelectedDay(weekdayOf(todayIso));
     }
     setNavHistory((h) => [...h, { screen, params }]);
     setScreen(s);
@@ -11637,6 +11692,12 @@ export default function GymApp() {
     setNavHistory([]);
     setScreen(id);
     setParams({});
+    if (id === "workout") {
+      // Always open Workout on today's REAL local calendar date.
+      const todayIso = dateKey(0);
+      setSelectedIso(todayIso);
+      setSelectedDay(weekdayOf(todayIso));
+    }
   };
 
   const exitWarnedRef = useRef(false);

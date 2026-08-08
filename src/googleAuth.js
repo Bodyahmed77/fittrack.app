@@ -2,12 +2,13 @@ import {
   GoogleAuthProvider,
   reauthenticateWithCredential,
   signInWithCredential,
+  signInWithPopup,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
-// Native-only Capacitor plugin: resolve it lazily so the web/initial bundle
-// never has to parse the native implementation.
+const GOOGLE_SIGNIN_TIMEOUT_MS = 90000;
+
 let nativePluginPromise;
 async function getNativePlugin() {
   if (!nativePluginPromise) {
@@ -20,28 +21,86 @@ async function getNativePlugin() {
   return nativePluginPromise;
 }
 
-export async function signInWithGoogleFlow(localLang = "en", createInitialState) {
+async function isNativePlatform() {
+  try {
+    const { Capacitor } = await import(
+      /* @vite-ignore */ "@capacitor/core"
+    );
+    return Capacitor.isNativePlatform();
+  } catch (e) {
+    return false;
+  }
+}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(
+        `${label} timed out — Google account picker did not complete`,
+      );
+      err.code = "timeout";
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Native Android Google Sign-In via @capacitor-firebase/authentication.
+ * Must open the system Google account chooser — never silently hang.
+ */
+async function nativeGoogleIdToken() {
   const FirebaseAuthentication = await getNativePlugin();
   if (!FirebaseAuthentication) {
-    throw new Error("Google Sign-In native plugin is unavailable");
+    const err = new Error("Google Sign-In native plugin is unavailable");
+    err.code = "plugin_unavailable";
+    throw err;
   }
 
-  // Native Google Sign-In (Android). Requires google-services.json + SHA-1
-  // of the signing cert registered on the Firebase Android app.
-  const result = await FirebaseAuthentication.signInWithGoogle();
-  const idToken = result?.credential?.idToken;
+  // Prefer the interactive account picker. Options vary by plugin version;
+  // unknown keys are ignored by Capacitor bridges.
+  const options = {
+    useCredentialManager: false,
+    skipNativeAuth: false,
+  };
+
+  const result = await withTimeout(
+    FirebaseAuthentication.signInWithGoogle(options),
+    GOOGLE_SIGNIN_TIMEOUT_MS,
+    "Google Sign-In",
+  );
+
+  const idToken =
+    result?.credential?.idToken ||
+    result?.credential?.id_token ||
+    result?.idToken ||
+    null;
+
   if (!idToken) {
-    throw new Error(
-      "No ID token from Google — check SHA-1 fingerprints in Firebase and google-services.json",
+    const err = new Error(
+      "No ID token from Google — register the APK SHA-1 in Firebase and ensure google-services.json matches com.fittrack.app",
     );
+    err.code = "no_id_token";
+    throw err;
   }
+  return idToken;
+}
 
-  const credential = GoogleAuthProvider.credential(idToken);
-  const userCred = await signInWithCredential(auth, credential);
+/** Browser / preview fallback using Firebase JS popup. */
+async function webGoogleSignIn() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  return withTimeout(
+    signInWithPopup(auth, provider),
+    GOOGLE_SIGNIN_TIMEOUT_MS,
+    "Google Sign-In (web)",
+  );
+}
 
+async function ensureUserDoc(userCred, localLang, createInitialState) {
   const ref = doc(db, "users", userCred.user.uid);
   const snap = await getDoc(ref);
-
   if (!snap.exists() && typeof createInitialState === "function") {
     const initial = createInitialState();
     initial.account.name = userCred.user.displayName || "";
@@ -50,20 +109,46 @@ export async function signInWithGoogleFlow(localLang = "en", createInitialState)
     initial.createdAt = new Date().toISOString();
     await setDoc(ref, initial);
   }
+}
 
+export async function signInWithGoogleFlow(localLang = "en", createInitialState) {
+  const native = await isNativePlatform();
+
+  if (native) {
+    const idToken = await nativeGoogleIdToken();
+    const credential = GoogleAuthProvider.credential(idToken);
+    const userCred = await signInWithCredential(auth, credential);
+    await ensureUserDoc(userCred, localLang, createInitialState);
+    return userCred;
+  }
+
+  // Web / Vite preview — open Google account chooser via popup
+  const userCred = await webGoogleSignIn();
+  await ensureUserDoc(userCred, localLang, createInitialState);
   return userCred;
 }
 
 export async function reauthenticateWithGoogleFlow(user) {
-  const FirebaseAuthentication = await getNativePlugin();
-  if (!FirebaseAuthentication) {
-    throw new Error("Google Sign-In native plugin is unavailable");
+  const native = await isNativePlatform();
+  if (native) {
+    const idToken = await nativeGoogleIdToken();
+    return reauthenticateWithCredential(
+      user,
+      GoogleAuthProvider.credential(idToken),
+    );
   }
-  const result = await FirebaseAuthentication.signInWithGoogle();
-  const idToken = result?.credential?.idToken;
-  if (!idToken) throw new Error("No ID token from Google");
-  return reauthenticateWithCredential(
-    user,
-    GoogleAuthProvider.credential(idToken),
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+  const result = await withTimeout(
+    signInWithPopup(auth, provider),
+    GOOGLE_SIGNIN_TIMEOUT_MS,
+    "Google reauth",
   );
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  if (!credential) {
+    const err = new Error("Could not get Google credential for reauth");
+    err.code = "no_id_token";
+    throw err;
+  }
+  return reauthenticateWithCredential(user, credential);
 }

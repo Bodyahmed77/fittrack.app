@@ -91,12 +91,17 @@ export async function generateCoachReply({
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
       },
-      body: JSON.stringify({
-        messages: recent,
-        lang,
-        localDate,
-        context: userContext || {},
-      }),
+body: JSON.stringify({
+  messages: recent,
+  lang,
+  localDate,
+  timeZone:
+    typeof Intl !== "undefined" &&
+    Intl.DateTimeFormat
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+      : "",
+  context: userContext || {},
+}),
     });
   } catch (e) {
     const err = new Error("Network error");

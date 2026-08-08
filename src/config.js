@@ -112,6 +112,39 @@ export const BILLING_PRODUCTS = {
   training: "training_pro",
   nutrition: "nutrition_pro",
   both: "both_pro",
+  // Separate AI Coach subscription (ongoing token cost — not bundled with Pro).
+  ai: "ai_coach_pro",
+};
+
+// ------------------------------------------------------------
+// AI COACH LIMITS (single source of truth — do not scatter)
+// ------------------------------------------------------------
+export const FREE_AI_MESSAGES_PER_DAY = 5;
+export const PRO_AI_MESSAGES_PER_DAY = 100;
+
+// Display prices only. Google Play regional pricing is the purchase source
+// of truth — the app must not invent a country via GPS/IP.
+export const AI_COACH_PRICES = {
+  // Egypt Play store users see EGP (configured in Play Console too)
+  eg: {
+    currency: "EGP",
+    currencyLabelAr: "جنيه",
+    currencyLabelEn: "EGP",
+    monthly: 50,
+    quarterly: 129,
+    halfyearly: 229,
+    yearly: 399,
+  },
+  // International / default USD display
+  intl: {
+    currency: "USD",
+    currencyLabelAr: "دولار",
+    currencyLabelEn: "USD",
+    monthly: 4.99,
+    quarterly: 12.99,
+    halfyearly: 24.99,
+    yearly: 39.99,
+  },
 };
 
 // ------------------------------------------------------------
@@ -125,10 +158,32 @@ export const DURATIONS = [
   { id: "yearly", label: "سنوي", labelEn: "Yearly", months: 12 },
 ];
 
+// Display prices by region. Real charged price comes from Google Play
+// (Play Console regional pricing). Do NOT detect country via GPS/IP.
+export const PAYWALL_PRICES = {
+  eg: {
+    currency: "EGP",
+    currencyLabelAr: "جنيه",
+    currencyLabelEn: "EGP",
+    training: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
+    nutrition: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
+    both: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
+  },
+  intl: {
+    currency: "USD",
+    currencyLabelAr: "دولار",
+    currencyLabelEn: "USD",
+    training: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
+    nutrition: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
+    both: { monthly: 7.99, quarterly: 19.99, halfyearly: 34.99, yearly: 59.99 },
+  },
+};
+
 export const PAYWALL_PLANS = {
   training: {
     title: "Training Pro",
     titleAr: "تدريب برو",
+    // Legacy single-region fallback (Egypt). Prefer PAYWALL_PRICES + Play.
     prices: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
     featuresAr: [
       "تمارين غير محدودة كل يوم",

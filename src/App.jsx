@@ -175,12 +175,20 @@ import {
   EXERCISE_VIDEOS,
   DURATIONS,
   PAYWALL_PLANS,
+  FREE_AI_MESSAGES_PER_DAY,
+  PRO_AI_MESSAGES_PER_DAY,
+  AI_COACH_PRICES,
 } from "./config";
 import {
   purchase as billingPurchase,
   restorePurchases as billingRestore,
 } from "./billing";
 import { requestReview as requestInAppReview } from "./review";
+import {
+  aiUsageToday,
+  bumpAiUsage,
+  generateCoachReply,
+} from "./aiCoach";
 import { APP_INFO, PRIVACY_POLICY_SECTIONS, TERMS_SECTIONS } from "./privacy";
 
 // Fixed notification IDs so we can reliably cancel/replace them later.
@@ -2526,6 +2534,7 @@ function freshState() {
     entitlements: {
       nutritionPro: false,
       trainingPro: false,
+      aiCoachPro: false,
       proExpiresAt: null,
     },
     nutritionPlan: null,
@@ -2597,6 +2606,7 @@ function useAppData(uid) {
     verifiedEntitlementsRef.current = {
       nutritionPro: !!entitlements?.nutritionPro,
       trainingPro: !!entitlements?.trainingPro,
+      aiCoachPro: !!entitlements?.aiCoachPro,
       proExpiresAt: entitlements?.proExpiresAt || null,
     };
     setDataRaw((current) => ({
@@ -2639,11 +2649,23 @@ function getMergedExercises(data, day) {
   return [...base.filter((e) => !removed.has(e.id)), ...(custom.added || [])];
 }
 function getUsableExercises(data, day) {
-  const merged = getMergedExercises(data, day);
+  // Free plan caps the *default* plan exercises only. Custom exercises the
+  // user adds themselves stay available without a Pro paywall.
+  const activePlan =
+    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+  const base = activePlan.schedule[day]?.exercises || [];
+  const custom = data.customPlan[day] || { added: [], removedIds: [] };
+  const removed = new Set(custom.removedIds || []);
+  const baseVisible = base.filter((e) => !removed.has(e.id));
+  const customAdded = custom.added || [];
   const pro = data.entitlements.trainingPro;
+  const freeBase = pro ? baseVisible : baseVisible.slice(0, FREE_EXERCISE_CAP);
+  const lockedCount = pro
+    ? 0
+    : Math.max(0, baseVisible.length - FREE_EXERCISE_CAP);
   return {
-    list: pro ? merged : merged.slice(0, FREE_EXERCISE_CAP),
-    lockedCount: pro ? 0 : Math.max(0, merged.length - FREE_EXERCISE_CAP),
+    list: [...freeBase, ...customAdded],
+    lockedCount,
   };
 }
 
@@ -4186,6 +4208,7 @@ function LoginScreen({ go, showToast }) {
 
   const forgotPassword = async () => {
     setError("");
+    setResetSent(false);
     if (!email || !isValidEmail(email)) {
       setError(
         ar
@@ -4195,9 +4218,20 @@ function LoginScreen({ go, showToast }) {
       return;
     }
     try {
+      // Firebase returns auth/user-not-found only when Email Enumeration
+      // Protection is OFF in the Firebase Console. When it is ON, Firebase
+      // intentionally returns success for unknown emails (security).
       await sendPasswordResetEmail(auth, email.trim());
       setResetSent(true);
     } catch (err) {
+      if (err?.code === "auth/user-not-found") {
+        setError(
+          ar
+            ? "لا يوجد حساب مسجل بهذا البريد الإلكتروني."
+            : "No account was found with this email address.",
+        );
+        return;
+      }
       setError(authErrorMessage(err, ar));
     }
   };
@@ -4308,8 +4342,8 @@ function LoginScreen({ go, showToast }) {
           }}
         >
           {ar
-            ? "تم إرسال رسالة إعادة تعيين كلمة المرور. تحقق من صندوق الوارد في Gmail، وإذا لم تجد الرسالة فتأكد من مجلد الرسائل غير المرغوب فيها (Spam/Junk) وكذلك تبويبات العروض والتحديثات."
-            : "Password reset email sent. Check your Gmail inbox. If you don't see it, please check your Spam/Junk folder and Promotions/Updates tabs."}
+            ? "تم إرسال تعليمات إعادة تعيين كلمة المرور إلى بريدك الإلكتروني. إذا لم تجد الرسالة، تحقق من مجلد الرسائل غير المرغوب فيها (Spam/Junk) والعروض الترويجية والتحديثات."
+            : "Password reset instructions were sent to your email. If you don't see the message, check Spam/Junk and Promotions/Updates."}
         </div>
       )}
 
@@ -5643,6 +5677,26 @@ function HomeScreen({ data, go }) {
         <span style={{ color: C.text, fontWeight: 700, fontSize: 14.5 }}>
           {ar ? "تقدّمك" : "Your Progress"}
         </span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          onClick={() => go("aiCoach")}
+          style={{
+            background: C.card2,
+            border: `1px solid ${C.border}`,
+            color: C.green,
+            fontSize: 12,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            cursor: "pointer",
+            padding: "6px 10px",
+            borderRadius: 999,
+          }}
+        >
+          <Sparkles size={13} />
+          {ar ? "مدرب AI" : "AI Coach"}
+        </button>
         <button
           onClick={() => go("progress")}
           style={{
@@ -5661,6 +5715,7 @@ function HomeScreen({ data, go }) {
             style={{ transform: ar ? "scaleX(-1)" : "none" }}
           />
         </button>
+        </div>
       </div>
       <div
         style={{
@@ -9011,36 +9066,6 @@ function PaywallScreen({ data, setData, back, showToast }) {
               ? `اشترك الآن — ${price} ${currency}`
               : `Subscribe now — ${price} ${currency}`}
           </GreenButton>
-
-          <button
-            onClick={restore}
-            disabled={restoring}
-            style={{
-              width: "100%",
-              marginTop: 10,
-              padding: "12px 0",
-              borderRadius: 12,
-              border: `1px solid ${C.border}`,
-              background: "transparent",
-              color: C.green,
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: restoring ? "wait" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-            }}
-          >
-            <Crown size={15} />
-            {restoring
-              ? ar
-                ? "جاري الاسترجاع…"
-                : "Restoring…"
-              : ar
-              ? "استرجاع المشتريات"
-              : "Restore Purchases"}
-          </button>
           </Card>
         </div>
 
@@ -9057,7 +9082,9 @@ function PaywallScreen({ data, setData, back, showToast }) {
             ? "الدفع يتم بشكل آمن عبر Google Play Billing. الاشتراك بيتجدد تلقائيًا وبتقدر تلغيه في أي وقت."
             : "Payments are processed securely via Google Play Billing. Subscriptions auto-renew and can be cancelled anytime."}
         </div>
-        {(data.entitlements.trainingPro || data.entitlements.nutritionPro) && (
+        {(data.entitlements.trainingPro ||
+          data.entitlements.nutritionPro ||
+          data.entitlements.aiCoachPro) && (
           <div style={{ textAlign: "center", margin: "28px 0 4px" }}>
             <button
               onClick={() =>
@@ -9079,7 +9106,36 @@ function PaywallScreen({ data, setData, back, showToast }) {
                 opacity: 0.85,
               }}
             >
-              {ar ? "إلغاء الاشتراك" : "Cancel Subscription"}
+              {ar ? "إلغاء الاشتراك" : "Cancel subscription"}
+            </button>
+          </div>
+        )}
+        {(data.entitlements.trainingPro ||
+          data.entitlements.nutritionPro ||
+          data.entitlements.aiCoachPro) && (
+          <div style={{ textAlign: "center", margin: "10px 0 24px" }}>
+            <button
+              onClick={restore}
+              disabled={restoring}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: C.sub2,
+                fontSize: 11,
+                fontWeight: 500,
+                textDecoration: "none",
+                cursor: restoring ? "wait" : "pointer",
+                padding: 0,
+                opacity: 0.85,
+              }}
+            >
+              {restoring
+                ? ar
+                  ? "جاري الاسترجاع…"
+                  : "Restoring…"
+                : ar
+                ? "استرجاع الاشتراك"
+                : "Restore purchases"}
             </button>
           </div>
         )}
@@ -9088,7 +9144,170 @@ function PaywallScreen({ data, setData, back, showToast }) {
   );
 }
 
+
+/* ============================== AI COACH ============================== */
+// Messages stay in component state only (cleared when the screen unmounts
+// or the app session ends). Only a daily {date,count} counter is persisted.
+function AICoachScreen({ data, setData, back, showToast, go }) {
+  const { C, lang } = useUI();
+  const ar = lang === "ar";
+  const today = dateKey(0);
+  const usage = aiUsageToday(data, today);
+  const [messages, setMessages] = useState([]); // session-only
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (listRef.current)
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages, busy]);
+
+  const send = async () => {
+    const textMsg = input.trim();
+    if (!textMsg || busy) return;
+    if (usage.remaining <= 0) {
+      showToast(
+        ar
+          ? "خلصت رسائل اليوم — رقّي AI Coach للمزيد"
+          : "Daily AI limit reached — upgrade AI Coach for more",
+      );
+      return;
+    }
+    setInput("");
+    const nextMsgs = [...messages, { role: "user", content: textMsg }];
+    setMessages(nextMsgs);
+    setBusy(true);
+    try {
+      const reply = await generateCoachReply({
+        messages: nextMsgs,
+        lang,
+        userContext: {
+          weight: data.bodyWeight?.slice(-1)?.[0]?.weight || data.account?.weight,
+          goal: data.account?.goal,
+          name: data.account?.name,
+        },
+      });
+      setMessages((m) => [...m, { role: "assistant", content: reply }]);
+      const next = clone(data);
+      next.aiUsage = bumpAiUsage(next, today);
+      setData(next);
+    } catch (e) {
+      showToast(ar ? "حصل خطأ — حاول تاني" : "Something went wrong — try again");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remainingAfter =
+    usage.remaining - (messages.filter((m) => m.role === "user").length > 0 ? 0 : 0);
+
+  return (
+    <div dir={ar ? "rtl" : "ltr"} style={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
+      <TopBar title={ar ? "مدرب AI" : "AI Coach"} onBack={back} />
+      <div style={{ padding: "0 18px 8px", color: C.sub, fontSize: 12 }}>
+        {ar
+          ? `متبقي ${usage.remaining} رسائل AI اليوم`
+          : `${usage.remaining} AI messages remaining today`}
+        {usage.hasPro ? "" : ar ? " · المجاني" : " · Free"}
+      </div>
+      <div
+        ref={listRef}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "8px 18px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          minHeight: 280,
+          maxHeight: "55vh",
+        }}
+      >
+        {messages.length === 0 && (
+          <div style={{ color: C.sub, fontSize: 13.5, lineHeight: 1.55, marginTop: 12 }}>
+            {ar
+              ? "اسأل عن التمارين، التغذية، السعرات، أو التحفيز — بالعربي أو الإنجليزي. المحادثة تُمسح عند إغلاق التطبيق."
+              : "Ask about workouts, nutrition, calories, or motivation — in Arabic or English. Chat is cleared when you close the app."}
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            style={{
+              alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+              maxWidth: "88%",
+              background: m.role === "user" ? C.green : C.card2,
+              color: m.role === "user" ? C.onAccent : C.text,
+              padding: "10px 12px",
+              borderRadius: 14,
+              fontSize: 13.5,
+              lineHeight: 1.5,
+              border: m.role === "user" ? "none" : `1px solid ${C.border}`,
+            }}
+          >
+            {m.content}
+          </div>
+        ))}
+        {busy && (
+          <div style={{ color: C.sub, fontSize: 12 }}>{ar ? "بيفكر…" : "Thinking…"}</div>
+        )}
+      </div>
+      {usage.remaining <= 0 && (
+        <div style={{ padding: "8px 18px" }}>
+          <GreenButton onClick={() => go("paywall")}>
+            {ar ? "رقّي AI Coach" : "Upgrade AI Coach"}
+          </GreenButton>
+        </div>
+      )}
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          padding: "10px 18px 18px",
+          borderTop: `1px solid ${C.border}`,
+        }}
+      >
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && send()}
+          placeholder={ar ? "اكتب سؤالك…" : "Type your question…"}
+          disabled={busy || usage.remaining <= 0}
+          style={{
+            flex: 1,
+            background: C.card2,
+            border: `1px solid ${C.border}`,
+            borderRadius: 12,
+            padding: "12px 14px",
+            color: C.text,
+            fontSize: 14,
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={send}
+          disabled={busy || !input.trim() || usage.remaining <= 0}
+          style={{
+            background: C.green,
+            color: C.onAccent,
+            border: "none",
+            borderRadius: 12,
+            padding: "0 16px",
+            fontWeight: 700,
+            cursor: "pointer",
+            opacity: busy || !input.trim() || usage.remaining <= 0 ? 0.5 : 1,
+          }}
+        >
+          {ar ? "إرسال" : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ============================== PROFILE SCREEN ============================== */
+
 function ProfileScreen({ data, go, isAdmin }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
@@ -9112,6 +9331,11 @@ function ProfileScreen({ data, go, isAdmin }) {
       icon: SettingsIcon,
       label: ar ? "الإعدادات" : "Settings",
       to: "settings",
+    },
+    {
+      icon: Sparkles,
+      label: ar ? "مدرب AI" : "AI Coach",
+      to: "aiCoach",
     },
     {
       icon: HelpCircle,
@@ -11385,6 +11609,16 @@ export default function GymApp() {
         setData={setData}
         back={back}
         showToast={showToast}
+      />
+    );
+  else if (screen === "aiCoach")
+    content = (
+      <AICoachScreen
+        data={data}
+        setData={setData}
+        back={back}
+        showToast={showToast}
+        go={go}
       />
     );
   else if (screen === "profile")

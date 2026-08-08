@@ -29,89 +29,112 @@ jobs:
           path = Path('src/App.jsx')
           text = path.read_text(encoding='utf-8')
 
-          marker = '/* ============================== WORKOUT SCREEN ============================== */'
-          if 'function dateToDayName(iso)' not in text:
-              helpers = r'''
-          function dateToDayName(iso) {
-            const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
-            const js = d.getDay();
-            return DAYS[js === 0 ? 6 : js - 1];
-          }
+          # Replace the existing weekday-only status logic with real-date logic.
+          old_day_status = '''function dayStatus(data, dayName) {
+  const exercises = getUsableExercises(data, dayName).list;
+  if (exercises.length === 0) return "rest";
+  const targetDate = dateForDay(dayName);
+  if (isDayCompleted(data, dayName, targetDate)) return "done";
+  // Days before the user started the program were never theirs to miss, and a
+  // user without a stored start date is never blamed for the past either.
+  if (!data.workoutStartDate || targetDate < data.workoutStartDate)
+    return "pending";
+  if (targetDate < dateKey(0)) return "missed";
+  return "pending";
+}'''
+          new_day_status = '''function dateToDayName(iso) {
+  const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
+  const js = d.getDay();
+  return js === 0 ? "Sun" : DAYS[js - 1];
+}
 
-          function workoutDateRange(centerDate = dateKey(0), before = 2, after = 4) {
-            const center = new Date(String(centerDate).slice(0, 10) + "T00:00:00");
-            const dates = [];
-            for (let i = -before; i <= after; i += 1) {
-              const d = new Date(center);
-              d.setDate(center.getDate() + i);
-              dates.push(d.toISOString().slice(0, 10));
-            }
-            return dates;
-          }
+function workoutDateRange(centerDate = dateKey(0), before = 2, after = 4) {
+  const center = new Date(String(centerDate).slice(0, 10) + "T00:00:00");
+  const dates = [];
+  for (let i = -before; i <= after; i += 1) {
+    const d = new Date(center);
+    d.setDate(center.getDate() + i);
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
 
-          function isWorkoutDateComplete(data, isoDate) {
-            const dayName = dateToDayName(isoDate);
-            const activePlan =
-              PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-            const exercises = activePlan.schedule[dayName]?.exercises || [];
-            if (exercises.length === 0) return false;
-            const log = data.logs[isoDate] || {};
-            return exercises.every(
-              (e) =>
-                log[e.id]?.finished ||
-                (log[e.id]?.sets || []).some((s) => s.done),
-            );
-          }
+function isWorkoutDateComplete(data, isoDate) {
+  const dayName = dateToDayName(isoDate);
+  const exercises = getUsableExercises(data, dayName).list;
+  if (exercises.length === 0) return false;
+  const log = data.logs[isoDate] || {};
+  return exercises.every(
+    (e) => log[e.id]?.finished || (log[e.id]?.sets || []).some((s) => s.done),
+  );
+}
 
-          function isWorkoutDateRest(data, isoDate) {
-            const dayName = dateToDayName(isoDate);
-            const activePlan =
-              PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-            return (activePlan.schedule[dayName]?.exercises || []).length === 0;
-          }
+function isWorkoutDateRest(data, isoDate) {
+  return getUsableExercises(data, dateToDayName(isoDate)).list.length === 0;
+}
 
-          function activeTrainingDate(data) {
-            const today = dateKey(0);
-            const start = data.workoutStartDate
-              ? String(data.workoutStartDate).slice(0, 10)
-              : today;
+function dayStatus(data, isoDate) {
+  const date = String(isoDate).slice(0, 10);
+  const today = dateKey(0);
+  const startDate = data.workoutStartDate
+    ? String(data.workoutStartDate).slice(0, 10)
+    : null;
 
-            if (today < start) return start;
+  // Rest days are never missed.
+  if (isWorkoutDateRest(data, date)) return "rest";
+  // The user cannot miss a date from before the program existed.
+  if (startDate && date < startDate) return "pending";
+  // Future dates are never red.
+  if (date > today) return "pending";
+  if (isWorkoutDateComplete(data, date)) return "done";
+  // Only a started, past, incomplete training date is missed.
+  if (date < today) return "missed";
+  return "pending";
+}'''
+          if old_day_status not in text:
+              raise SystemExit('Existing dayStatus block not found')
+          text = text.replace(old_day_status, new_day_status, 1)
 
-            if (!isWorkoutDateRest(data, today) && isWorkoutDateComplete(data, today)) {
-              for (let i = 1; i <= 14; i += 1) {
-                const candidate = addDays(today, i);
-                if (candidate < start) continue;
-                if (!isWorkoutDateRest(data, candidate)) return candidate;
-              }
-            }
-            return today;
-          }
+          old_active = '''function activeTrainingDay(data) {
+  for (let offset = 0; offset < DAYS.length; offset += 1) {
+    const day = DAYS[(todayIdx + offset) % DAYS.length];
+    if (getUsableExercises(data, day).list.length === 0) continue;
+    if (offset === 0 && isDayCompleted(data, day)) continue;
+    return day;
+  }
+  return DAYS[todayIdx];
+}'''
+          new_active = '''function activeTrainingDate(data) {
+  const today = dateKey(0);
+  const start = data.workoutStartDate
+    ? String(data.workoutStartDate).slice(0, 10)
+    : today;
 
-          function dayStatus(data, isoDate) {
-            const date = String(isoDate).slice(0, 10);
-            const today = dateKey(0);
-            const startDate = data.workoutStartDate
-              ? String(data.workoutStartDate).slice(0, 10)
-              : null;
-            const dayName = dateToDayName(date);
-            const activePlan =
-              PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-            const exercises = activePlan.schedule[dayName]?.exercises || [];
+  if (today < start) return start;
 
-            if (exercises.length === 0) return "rest";
-            if (startDate && date < startDate) return "pending";
-            if (date > today) return "pending";
-            if (isWorkoutDateComplete(data, date)) return "done";
-            if (date < today) return "missed";
-            return "pending";
-          }
+  // Stay on today's date until today's workout is completed. After completion,
+  // advance to the next scheduled training date, skipping Rest days.
+  if (!isWorkoutDateRest(data, today) && isWorkoutDateComplete(data, today)) {
+    for (let i = 1; i <= 14; i += 1) {
+      const candidate = addDays(today, i);
+      if (candidate >= start && !isWorkoutDateRest(data, candidate)) return candidate;
+    }
+  }
+  return today;
+}'''
+          if old_active not in text:
+              raise SystemExit('Existing activeTrainingDay block not found')
+          text = text.replace(old_active, new_active, 1)
 
-          '''
-              text = text.replace(marker, helpers + marker, 1)
-
-          old = '''  const activeDay = activeTrainingDay(data);\n  const today = dateKey(0);\n  const log = data.logs[today] || {};'''
-          new = '''  const selectedDate = String(selectedDay).slice(0, 10);\n  const selectedWeekday = dateToDayName(selectedDate);\n  const activeDay = activeTrainingDate(data);\n  const today = dateKey(0);\n  const log = data.logs[selectedDate] || {};'''
+          # WorkoutScreen works with an ISO selected date and derives its weekday.
+          old = '''  const activeDay = activeTrainingDay(data);
+  const today = dateKey(0);
+  const log = data.logs[today] || {};'''
+          new = '''  const selectedDate = String(selectedDay).slice(0, 10);
+  const selectedWeekday = dateToDayName(selectedDate);
+  const activeDay = activeTrainingDate(data);
+  const today = dateKey(0);
+  const log = data.logs[selectedDate] || {};'''
           if old not in text:
               raise SystemExit('WorkoutScreen date/log block not found')
           text = text.replace(old, new, 1)
@@ -119,6 +142,7 @@ jobs:
           text = text.replace('activePlan.schedule[selectedDay].title', 'activePlan.schedule[selectedWeekday].title')
           text = text.replace('    selectedDay,\n  );', '    selectedWeekday,\n  );', 1)
 
+          # Replace only the WorkoutScreen's fixed DAYS.map selector.
           pattern = re.compile(r'\{DAYS\.map\(\(d, i\) => \{.*?\n          \}\)\}', re.S)
           replacement = r'''{workoutDateRange(selectedDate).map((date) => {
             const d = dateToDayName(date);
@@ -214,34 +238,52 @@ jobs:
           if count != 1:
               raise SystemExit('Workout day selector block was not found exactly once')
 
+          # Root stores an ISO date instead of only a weekday.
           old = '  const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);'
           new = '  const [selectedDay, setSelectedDay] = useState(dateKey(0));'
           if old not in text:
               raise SystemExit('Root selectedDay state not found')
           text = text.replace(old, new, 1)
 
-          old = '''  const activeDay = loaded ? activeTrainingDay(data) : DAYS[todayIdx];\n  useEffect(() => {\n    setSelectedDay(activeDay);\n  }, [activeDay]);'''
-          new = '''  const activeDay = loaded ? activeTrainingDate(data) : dateKey(0);\n  useEffect(() => {\n    setSelectedDay(activeDay);\n  }, [activeDay]);'''
+          old = '''  const activeDay = loaded ? activeTrainingDay(data) : DAYS[todayIdx];
+  useEffect(() => {
+    setSelectedDay(activeDay);
+  }, [activeDay]);'''
+          new = '''  const activeDay = loaded ? activeTrainingDate(data) : dateKey(0);
+  useEffect(() => {
+    setSelectedDay(activeDay);
+  }, [activeDay]);'''
           if old not in text:
               raise SystemExit('Root active-day effect not found')
           text = text.replace(old, new, 1)
 
+          # Carry the selected calendar date into ExerciseScreen.
           text = text.replace('day: selectedDay,', 'day: selectedWeekday,\n                  date: selectedDate,')
 
-          old = '''  day,\n  showToast,'''
-          new = '''  day,\n  date,\n  showToast,'''
+          old = '''  day,
+  showToast,'''
+          new = '''  day,
+  date,
+  showToast,'''
           if old not in text:
               raise SystemExit('ExerciseScreen props block not found')
           text = text.replace(old, new, 1)
 
-          old = '''  const today = dateKey(0);\n\n  const existingLog = data.logs[today]?.[exerciseId];'''
-          new = '''  const today = date ? String(date).slice(0, 10) : dateKey(0);\n\n  const existingLog = data.logs[today]?.[exerciseId];'''
+          old = '''  const today = dateKey(0);
+
+  const existingLog = data.logs[today]?.[exerciseId];'''
+          new = '''  const today = date ? String(date).slice(0, 10) : dateKey(0);
+
+  const existingLog = data.logs[today]?.[exerciseId];'''
           if old not in text:
               raise SystemExit('ExerciseScreen date block not found')
           text = text.replace(old, new, 1)
 
-          old = '''        awardXp={doAwardXp}\n      />'''
-          new = '''        awardXp={doAwardXp}\n        date={params.date}\n      />'''
+          old = '''        awardXp={doAwardXp}
+      />'''
+          new = '''        awardXp={doAwardXp}
+        date={params.date}
+      />'''
           if old not in text:
               raise SystemExit('ExerciseScreen invocation not found')
           text = text.replace(old, new, 1)
@@ -253,6 +295,7 @@ jobs:
           grep -n "function activeTrainingDate" src/App.jsx
           grep -n "function dayStatus" src/App.jsx
           grep -n "workoutDateRange(selectedDate)" src/App.jsx
+          if grep -n "function activeTrainingDay" src/App.jsx; then exit 1; fi
           npm ci
           npm run build
 

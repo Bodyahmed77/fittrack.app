@@ -38,24 +38,75 @@ jobs:
       - name: Add the Android platform
         run: npx cap add android || true
 
+      # google-services.json must exist BEFORE Gradle runs. Never commit it;
+      # inject from the encrypted GitHub secret on every build.
       - name: Inject google-services.json (required for Firebase + Google Sign-In)
-        run: echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
-
-      - name: Configure Google Services and Google Sign-In
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          # Capacitor's generated project already declares this plugin classpath.
-          # Keep the fallback for generated projects that do not.
+          set -euo pipefail
+          if [ -z "${GS_B64:-}" ]; then
+            echo "::error::Secret GOOGLE_SERVICES_JSON_BASE64 is empty or missing."
+            exit 1
+          fi
+          mkdir -p android/app
+          echo "$GS_B64" | base64 -d > android/app/google-services.json
+          if [ ! -s android/app/google-services.json ]; then
+            echo "::error::Decoded google-services.json is empty."
+            exit 1
+          fi
+          # Validate without printing the full file (may contain client IDs).
+          python3 - <<'PY'
+          import json, sys
+          path = "android/app/google-services.json"
+          try:
+              data = json.load(open(path, encoding="utf-8"))
+          except Exception as e:
+              print(f"::error::google-services.json is not valid JSON: {e}")
+              sys.exit(1)
+          project_id = data.get("project_info", {}).get("project_id", "")
+          if project_id != "fittrack-698fa":
+              print(f"::error::project_id is '{project_id}', expected 'fittrack-698fa'")
+              sys.exit(1)
+          clients = data.get("client") or []
+          packages = []
+          has_oauth = False
+          for c in clients:
+              pkg = (c.get("client_info") or {}).get("android_client_info", {}).get("package_name")
+              if pkg:
+                  packages.append(pkg)
+              for oa in c.get("oauth_client") or []:
+                  if oa.get("client_id"):
+                      has_oauth = True
+          if "com.fittrack.app" not in packages:
+              print(f"::error::No Android client for com.fittrack.app. Found packages: {packages}")
+              sys.exit(1)
+          if not has_oauth:
+              print("::warning::No oauth_client entries found. Google Sign-In usually needs an OAuth client after SHA-1 is registered in Firebase.")
+          print("google-services.json OK: project_id=fittrack-698fa package=com.fittrack.app")
+          print(f"android_clients={len(packages)} oauth_clients_present={has_oauth}")
+          PY
+
+      - name: Configure Google Services and Google Sign-In (idempotent)
+        run: |
+          set -euo pipefail
           if ! grep -q "com.google.gms:google-services" android/build.gradle; then
             sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.0'" android/build.gradle
+            echo "Added google-services classpath"
+          else
+            echo "google-services classpath already present"
           fi
-          # @capacitor-firebase/authentication declares this optional dependency
-          # compileOnly, so add it to the application that ships the release APK/AAB.
-          sed -i "/dependencies {/a\\    implementation 'com.google.android.gms:play-services-auth:21.0.0'" android/app/build.gradle
-          # Keep the plugin applied for generated projects that do not already
-          # include Capacitor's conditional google-services setup.
-          if ! grep -q "apply plugin: 'com.google.gms.google-services'" android/app/build.gradle; then
-            echo "" >> android/app/build.gradle
-            echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
+          if ! grep -q "com.google.android.gms:play-services-auth" android/app/build.gradle; then
+            sed -i "/dependencies {/a\\    implementation 'com.google.android.gms:play-services-auth:21.0.0'" android/app/build.gradle
+            echo "Added play-services-auth implementation"
+          else
+            echo "play-services-auth already present"
+          fi
+          if ! grep -q "com.google.gms.google-services" android/app/build.gradle; then
+            printf '\napply plugin: '\''com.google.gms.google-services'\''\n' >> android/app/build.gradle
+            echo "Applied com.google.gms.google-services plugin"
+          else
+            echo "google-services plugin already applied"
           fi
 
       - name: Generate real app icon and splash screen
@@ -64,12 +115,53 @@ jobs:
       - name: Sync web assets into the Android project
         run: npx cap sync android
 
-      # --- Signing -------------------------------------------------------
-      # These four values come from GitHub repo Settings → Secrets and
-      # variables → Actions → New repository secret. See SIGNING_SETUP.md
-      # in this project for exactly what to generate and paste in.
+      - name: Verify google-services.json still present after sync
+        run: |
+          set -euo pipefail
+          test -s android/app/google-services.json
+          echo "google-services.json present before Gradle ($(wc -c < android/app/google-services.json) bytes)"
+
       - name: Decode the signing keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KS_B64:-}" ]; then
+            echo "::error::Secret ANDROID_KEYSTORE_BASE64 is empty or missing."
+            exit 1
+          fi
+          echo "$KS_B64" | base64 -d > android/app/release.keystore
+          test -s android/app/release.keystore
+
+      - name: Print release keystore SHA-1 and SHA-256 (for Firebase)
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
+            echo "::error::Missing ANDROID_KEYSTORE_PASSWORD or ANDROID_KEY_ALIAS secret."
+            exit 1
+          fi
+          OUT=$(keytool -list -v \
+            -keystore android/app/release.keystore \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>/dev/null)
+          echo "$OUT" | grep -E 'SHA1:|SHA256:|Owner:|Valid from' || true
+          SHA1=$(echo "$OUT" | awk -F'SHA1: ' '/SHA1:/{print $2; exit}' | tr -d '[:space:]')
+          SHA256=$(echo "$OUT" | awk -F'SHA256: ' '/SHA256:/{print $2; exit}' | tr -d '[:space:]')
+          echo ""
+          echo "=============================================="
+          echo "RELEASE KEYSTORE FINGERPRINTS (add to Firebase)"
+          echo "Package: com.fittrack.app"
+          echo "SHA-1:   $SHA1"
+          echo "SHA-256: $SHA256"
+          echo "=============================================="
+          echo "Firebase Console → Project settings → Your apps →"
+          echo "Android (com.fittrack.app) → Add fingerprint"
+          echo "Then re-download google-services.json and update"
+          echo "the GOOGLE_SERVICES_JSON_BASE64 secret if OAuth clients changed."
+          echo "=============================================="
 
       - name: Build the signed release App Bundle (for Google Play)
         working-directory: android

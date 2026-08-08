@@ -119,7 +119,7 @@ export const BILLING_PRODUCTS = {
 // ------------------------------------------------------------
 // AI COACH LIMITS (single source of truth — do not scatter)
 // ------------------------------------------------------------
-export const FREE_AI_MESSAGES_PER_DAY = 5;
+export const FREE_AI_MESSAGES_PER_DAY = 3;
 export const PRO_AI_MESSAGES_PER_DAY = 100;
 
 // Display prices only. Google Play regional pricing is the purchase source
@@ -132,7 +132,7 @@ export const AI_COACH_PRICES = {
     currencyLabelEn: "EGP",
     monthly: 50,
     quarterly: 129,
-    halfyearly: 229,
+    halfyearly: 249,
     yearly: 399,
   },
   // International / default USD display

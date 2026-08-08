@@ -183,7 +183,11 @@ import {
   purchase as billingPurchase,
   restorePurchases as billingRestore,
 } from "./billing";
-import { requestReview as requestInAppReview } from "./review";
+import {
+  requestReview as requestInAppReview,
+  maybeRequestReview,
+  recordMeaningfulWorkout,
+} from "./review";
 import {
   aiUsageToday,
   bumpAiUsage,
@@ -6380,6 +6384,11 @@ function WorkoutScreen({
                     ? "مبروك! خلصت تمرين اليوم 🎉"
                     : "Great job! Today's workout is complete 🎉",
                 );
+                // Meaningful engagement → optional Play review (cooldown-gated).
+                try {
+                  recordMeaningfulWorkout();
+                  maybeRequestReview("workout_complete").catch(() => {});
+                } catch (e) {}
               }}
               style={{
                 background: C.green,
@@ -8793,7 +8802,7 @@ function PaywallScreen({ data, setData, back, showToast }) {
       }
 
       // 4) Trigger in-app review after a successful unlock.
-      requestInAppReview().catch(() => {});
+      maybeRequestReview("purchase").catch(() => {});
 
       back();
     } catch (e) {
@@ -9168,9 +9177,13 @@ function AICoachScreen({ data, setData, back, showToast, go }) {
     if (!textMsg || busy) return;
     if (usage.remaining <= 0) {
       showToast(
-        ar
-          ? "خلصت رسائل اليوم — رقّي AI Coach للمزيد"
-          : "Daily AI limit reached — upgrade AI Coach for more",
+        usage.hasPro
+          ? ar
+            ? "وصلت للحد اليومي لرسائل AI Coach Pro. حاول تاني بكرة."
+            : "You've reached today's AI Coach Pro message limit. Try again tomorrow."
+          : ar
+          ? "لقد استخدمت رسائلك المجانية الثلاث لهذا اليوم. يمكنك العودة غدًا أو الترقية إلى AI Coach Pro."
+          : "You've used your 3 free AI messages for today. Come back tomorrow or upgrade to AI Coach Pro.",
       );
       return;
     }
@@ -9207,9 +9220,23 @@ function AICoachScreen({ data, setData, back, showToast, go }) {
       <TopBar title={ar ? "مدرب AI" : "AI Coach"} onBack={back} />
       <div style={{ padding: "0 18px 8px", color: C.sub, fontSize: 12 }}>
         {ar
-          ? `متبقي ${usage.remaining} رسائل AI اليوم`
+          ? usage.remaining === 0
+            ? "لا رسائل متبقية اليوم"
+            : usage.remaining === 1
+            ? "متبقي رسالة واحدة للذكاء الاصطناعي اليوم"
+            : usage.remaining === 2
+            ? "متبقي رسالتان للذكاء الاصطناعي اليوم"
+            : `متبقي ${usage.remaining} رسائل للذكاء الاصطناعي اليوم`
+          : usage.remaining === 1
+          ? "1 AI message remaining today"
           : `${usage.remaining} AI messages remaining today`}
-        {usage.hasPro ? "" : ar ? " · المجاني" : " · Free"}
+        {usage.hasPro
+          ? ar
+            ? " · AI Pro"
+            : " · AI Pro"
+          : ar
+          ? " · مجاني"
+          : " · Free"}
       </div>
       <div
         ref={listRef}

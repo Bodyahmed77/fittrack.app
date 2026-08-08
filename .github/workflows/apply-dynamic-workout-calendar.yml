@@ -1,0 +1,263 @@
+name: Apply dynamic workout calendar fix
+
+on:
+  push:
+    branches:
+      - fix/dynamic-workout-calendar-logic
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix(workout): dynamic calendar start date and day strip'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch workout calendar logic
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('src/App.jsx')
+          text = path.read_text(encoding='utf-8')
+
+          marker = '/* ============================== WORKOUT SCREEN ============================== */'
+          if 'function dateToDayName(iso)' not in text:
+              helpers = r'''
+          function dateToDayName(iso) {
+            const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
+            const js = d.getDay();
+            return DAYS[js === 0 ? 6 : js - 1];
+          }
+
+          function workoutDateRange(centerDate = dateKey(0), before = 2, after = 4) {
+            const center = new Date(String(centerDate).slice(0, 10) + "T00:00:00");
+            const dates = [];
+            for (let i = -before; i <= after; i += 1) {
+              const d = new Date(center);
+              d.setDate(center.getDate() + i);
+              dates.push(d.toISOString().slice(0, 10));
+            }
+            return dates;
+          }
+
+          function isWorkoutDateComplete(data, isoDate) {
+            const dayName = dateToDayName(isoDate);
+            const activePlan =
+              PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+            const exercises = activePlan.schedule[dayName]?.exercises || [];
+            if (exercises.length === 0) return false;
+            const log = data.logs[isoDate] || {};
+            return exercises.every(
+              (e) =>
+                log[e.id]?.finished ||
+                (log[e.id]?.sets || []).some((s) => s.done),
+            );
+          }
+
+          function isWorkoutDateRest(data, isoDate) {
+            const dayName = dateToDayName(isoDate);
+            const activePlan =
+              PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+            return (activePlan.schedule[dayName]?.exercises || []).length === 0;
+          }
+
+          function activeTrainingDate(data) {
+            const today = dateKey(0);
+            const start = data.workoutStartDate
+              ? String(data.workoutStartDate).slice(0, 10)
+              : today;
+
+            if (today < start) return start;
+
+            if (!isWorkoutDateRest(data, today) && isWorkoutDateComplete(data, today)) {
+              for (let i = 1; i <= 14; i += 1) {
+                const candidate = addDays(today, i);
+                if (candidate < start) continue;
+                if (!isWorkoutDateRest(data, candidate)) return candidate;
+              }
+            }
+            return today;
+          }
+
+          function dayStatus(data, isoDate) {
+            const date = String(isoDate).slice(0, 10);
+            const today = dateKey(0);
+            const startDate = data.workoutStartDate
+              ? String(data.workoutStartDate).slice(0, 10)
+              : null;
+            const dayName = dateToDayName(date);
+            const activePlan =
+              PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+            const exercises = activePlan.schedule[dayName]?.exercises || [];
+
+            if (exercises.length === 0) return "rest";
+            if (startDate && date < startDate) return "pending";
+            if (date > today) return "pending";
+            if (isWorkoutDateComplete(data, date)) return "done";
+            if (date < today) return "missed";
+            return "pending";
+          }
+
+          '''
+              text = text.replace(marker, helpers + marker, 1)
+
+          old = '''  const activeDay = activeTrainingDay(data);\n  const today = dateKey(0);\n  const log = data.logs[today] || {};'''
+          new = '''  const selectedDate = String(selectedDay).slice(0, 10);\n  const selectedWeekday = dateToDayName(selectedDate);\n  const activeDay = activeTrainingDate(data);\n  const today = dateKey(0);\n  const log = data.logs[selectedDate] || {};'''
+          if old not in text:
+              raise SystemExit('WorkoutScreen date/log block not found')
+          text = text.replace(old, new, 1)
+          text = text.replace('activePlan.schedule[selectedDay].titleAr', 'activePlan.schedule[selectedWeekday].titleAr')
+          text = text.replace('activePlan.schedule[selectedDay].title', 'activePlan.schedule[selectedWeekday].title')
+          text = text.replace('    selectedDay,\n  );', '    selectedWeekday,\n  );', 1)
+
+          pattern = re.compile(r'\{DAYS\.map\(\(d, i\) => \{.*?\n          \}\)\}', re.S)
+          replacement = r'''{workoutDateRange(selectedDate).map((date) => {
+            const d = dateToDayName(date);
+            const isSelected = date === selectedDate;
+            const isToday = date === dateKey(0);
+            const isActiveDay = date === activeDay;
+            const status = dayStatus(data, date);
+            const isDone = status === "done";
+            const isMissed = status === "missed";
+            const isRest = status === "rest";
+            const bg = isSelected
+              ? isDone
+                ? C.green
+                : isMissed
+                ? C.danger
+                : C.green
+              : isDone
+              ? C.green
+              : isMissed
+              ? C.dangerSoft
+              : C.card2;
+            const fg = isSelected
+              ? isDone || isMissed
+                ? "#fff"
+                : C.onAccent
+              : isDone
+              ? C.onAccent
+              : isMissed
+              ? C.danger
+              : isToday || isActiveDay
+              ? C.green
+              : C.text;
+            const dt = new Date(date + "T00:00:00");
+            return (
+              <button
+                key={date}
+                onClick={() => setSelectedDay(date)}
+                style={{
+                  minWidth: 44,
+                  padding: "10px 0",
+                  borderRadius: 12,
+                  cursor: "pointer",
+                  border:
+                    (isToday || isActiveDay) && !isSelected
+                      ? `1px solid ${C.green}`
+                      : "1px solid transparent",
+                  background: bg,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                  position: "relative",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 11,
+                    color:
+                      isSelected && (isDone || isMissed)
+                        ? "#fff"
+                        : isSelected
+                        ? C.onAccent
+                        : isDone
+                        ? C.green
+                        : isMissed
+                        ? C.danger
+                        : C.sub,
+                    fontWeight: 600,
+                  }}
+                >
+                  {ar ? DAY_LABELS_AR[d] : d}
+                </span>
+                <span style={{ fontSize: 13, color: fg, fontWeight: 700 }}>
+                  {dt.getDate()}
+                </span>
+                {isDone && (
+                  <Check
+                    size={12}
+                    color={isSelected ? "#fff" : C.onAccent}
+                    strokeWidth={3}
+                    style={{ position: "absolute", top: 2, right: 5 }}
+                  />
+                )}
+                {isMissed && <span style={{ fontSize: 9, color: fg }}>!</span>}
+                {isRest && !isDone && !isMissed && (
+                  <span style={{ fontSize: 8, color: C.sub2 }}>Rest</span>
+                )}
+              </button>
+            );
+          })}'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('Workout day selector block was not found exactly once')
+
+          old = '  const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);'
+          new = '  const [selectedDay, setSelectedDay] = useState(dateKey(0));'
+          if old not in text:
+              raise SystemExit('Root selectedDay state not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  const activeDay = loaded ? activeTrainingDay(data) : DAYS[todayIdx];\n  useEffect(() => {\n    setSelectedDay(activeDay);\n  }, [activeDay]);'''
+          new = '''  const activeDay = loaded ? activeTrainingDate(data) : dateKey(0);\n  useEffect(() => {\n    setSelectedDay(activeDay);\n  }, [activeDay]);'''
+          if old not in text:
+              raise SystemExit('Root active-day effect not found')
+          text = text.replace(old, new, 1)
+
+          text = text.replace('day: selectedDay,', 'day: selectedWeekday,\n                  date: selectedDate,')
+
+          old = '''  day,\n  showToast,'''
+          new = '''  day,\n  date,\n  showToast,'''
+          if old not in text:
+              raise SystemExit('ExerciseScreen props block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''  const today = dateKey(0);\n\n  const existingLog = data.logs[today]?.[exerciseId];'''
+          new = '''  const today = date ? String(date).slice(0, 10) : dateKey(0);\n\n  const existingLog = data.logs[today]?.[exerciseId];'''
+          if old not in text:
+              raise SystemExit('ExerciseScreen date block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        awardXp={doAwardXp}\n      />'''
+          new = '''        awardXp={doAwardXp}\n        date={params.date}\n      />'''
+          if old not in text:
+              raise SystemExit('ExerciseScreen invocation not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+      - name: Verify source and production build
+        run: |
+          grep -n "function activeTrainingDate" src/App.jsx
+          grep -n "function dayStatus" src/App.jsx
+          grep -n "workoutDateRange(selectedDate)" src/App.jsx
+          npm ci
+          npm run build
+
+      - name: Commit patch and remove temporary workflow
+        run: |
+          rm -f .github/workflows/apply-dynamic-workout-calendar.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx .github/workflows/apply-dynamic-workout-calendar.yml
+          git commit -m "fix(workout): dynamic calendar start date and day strip"
+          git push

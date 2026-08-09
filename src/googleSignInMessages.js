@@ -23,6 +23,16 @@ export function googleSignInErrorMessage(err, ar) {
       ? "خطأ إعداد Google Sign-In (كود 10). راجع SHA-1 للإصدار الحالي وملف google-services.json (Android + Web)."
       : "Google Sign-In configuration error (code 10). Check this APK's SHA-1 and google-services.json (Android + Web clients).";
   }
+  if (code === "network") {
+    return ar
+      ? "مفيش اتصال أثناء تسجيل Google — راجع الشبكة وحاول تاني."
+      : "Network error during Google Sign-In — check your connection and try again.";
+  }
+  if (code === "sign_in_failed" || code === "native_error") {
+    return ar
+      ? "فشل تسجيل الدخول بجوجل على الجهاز. حاول تاني."
+      : "Google Sign-In failed on this device. Please try again.";
+  }
   if (
     code === "cancelled" ||
     code === "auth/popup-closed-by-user" ||

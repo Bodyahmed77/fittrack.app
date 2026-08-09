@@ -107,21 +107,28 @@ function extractReply(data) {
 
 function classifyHttpError(status, data) {
   const msg = String(data?.message || data?.error || "");
-  if (status === 401) return "unauthenticated";
-  if (status === 403) return "forbidden";
+  const errName = String(data?.error || data?.code || "");
+  if (status === 401 || errName === "unauthenticated") return "unauthenticated";
+  if (status === 403 || errName === "forbidden") return "forbidden";
   if (status === 429) {
     if (
-      data?.error === "daily_limit" ||
+      errName === "daily_limit" ||
+      errName === "usage_limit" ||
       data?.code === "daily_limit" ||
-      /daily.?limit|limit reached|رسائل/i.test(msg)
+      /daily.?limit|limit reached|رسائل|usage_limit/i.test(msg + errName)
     ) {
       return "daily_limit";
     }
-    if (/quota|resource.?exhausted|rate.?limit/i.test(msg)) {
+    if (
+      errName === "quota" ||
+      errName === "gemini_error" ||
+      /quota|resource.?exhausted/i.test(msg)
+    ) {
       return "quota";
     }
     return "rate_limit";
   }
+  if (errName === "gemini_error") return "backend_error";
   if (status >= 500) return "backend_error";
   if (status >= 400) return "bad_request";
   return "backend_error";

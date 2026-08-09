@@ -56,7 +56,7 @@ jobs:
             exit 1
           fi
           # Validate without printing the full file (may contain client IDs).
-          python3 - <<'PY'
+          python3 - <<'ENDVALIDATE'
           import json, sys
           path = "android/app/google-services.json"
           try:
@@ -85,44 +85,96 @@ jobs:
               print("::warning::No oauth_client entries found. Google Sign-In usually needs an OAuth client after SHA-1 is registered in Firebase.")
           print("google-services.json OK: project_id=fittrack-698fa package=com.fittrack.app")
           print(f"android_clients={len(packages)} oauth_clients_present={has_oauth}")
-          PY
+          ENDVALIDATE
 
       - name: Configure Google Services and Google Sign-In (idempotent)
         run: |
           set -euo pipefail
-          if ! grep -q "com.google.gms:google-services" android/build.gradle; then
-            sed -i "/dependencies {/a\\        classpath 'com.google.gms:google-services:4.4.0'" android/build.gradle
-            echo "Added google-services classpath"
-          else
-            echo "google-services classpath already present"
-          fi
-          if ! grep -q "com.google.android.gms:play-services-auth" android/app/build.gradle; then
-            sed -i "/dependencies {/a\\    implementation 'com.google.android.gms:play-services-auth:21.0.0'" android/app/build.gradle
-            echo "Added play-services-auth implementation"
-          else
-            echo "play-services-auth already present"
-          fi
-          if ! grep -q "com.google.gms.google-services" android/app/build.gradle; then
-            printf '\napply plugin: '\''com.google.gms.google-services'\''\n' >> android/app/build.gradle
-            echo "Applied com.google.gms.google-services plugin"
-          else
-            echo "google-services plugin already applied"
-          fi
-          # Required by @capacitor-firebase/authentication Google provider on Android.
-          # Without rgcfaIncludeGoogle=true the native Google Sign-In dependency may be
-          # omitted and signInWithGoogle fails with DEVELOPER_ERROR (10) / silent hang.
-          if [ -f android/variables.gradle ]; then
-            if ! grep -q "rgcfaIncludeGoogle" android/variables.gradle; then
-              printf '\next {\n    rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = \'1.3.0\'\n}\n' >> android/variables.gradle
-              echo "Added rgcfaIncludeGoogle=true to variables.gradle"
-            else
-              echo "rgcfaIncludeGoogle already present in variables.gradle"
-            fi
-          else
-            mkdir -p android
-            printf 'ext {\n    rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = \'1.3.0\'\n}\n' > android/variables.gradle
-            echo "Created android/variables.gradle with rgcfaIncludeGoogle=true"
-          fi
+          python3 - <<'ENDCFG'
+          from pathlib import Path
+
+          root = Path("android")
+          root_build = root / "build.gradle"
+          app_build = root / "app" / "build.gradle"
+          variables = root / "variables.gradle"
+
+          def ensure_line_after(path, needle, insert_line, after_marker):
+              text = path.read_text(encoding="utf-8") if path.exists() else ""
+              if needle in text:
+                  return "already present"
+              lines = text.splitlines(keepends=True)
+              out = []
+              inserted = False
+              for line in lines:
+                  out.append(line)
+                  if not inserted and after_marker in line:
+                      out.append(insert_line if insert_line.endswith("\n") else insert_line + "\n")
+                      inserted = True
+              if not inserted:
+                  out.append("\n" + (insert_line if insert_line.endswith("\n") else insert_line + "\n"))
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text("".join(out), encoding="utf-8")
+              return "added"
+
+          def ensure_plugin_apply(path, plugin):
+              text = path.read_text(encoding="utf-8") if path.exists() else ""
+              marker_sq = "apply plugin: '%s'" % plugin
+              marker_dq = 'apply plugin: "%s"' % plugin
+              if marker_sq in text or marker_dq in text or ("id '%s'" % plugin) in text or ('id "%s"' % plugin) in text:
+                  return "already present"
+              if text and not text.endswith("\n"):
+                  text += "\n"
+              text += "\n" + marker_sq + "\n"
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text, encoding="utf-8")
+              return "added"
+
+          def ensure_variables_gradle(path):
+              block = (
+                  "ext {\n"
+                  "    rgcfaIncludeGoogle = true\n"
+                  "    androidxCredentialsVersion = '1.3.0'\n"
+                  "}\n"
+              )
+              if path.exists():
+                  text = path.read_text(encoding="utf-8")
+                  if "rgcfaIncludeGoogle" in text:
+                      return "already present"
+                  if text and not text.endswith("\n"):
+                      text += "\n"
+                  path.write_text(text + "\n" + block, encoding="utf-8")
+                  return "added"
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(block, encoding="utf-8")
+              return "created"
+
+          if not root_build.exists():
+              raise SystemExit("android/build.gradle missing — cap add android may have failed")
+          if not app_build.exists():
+              raise SystemExit("android/app/build.gradle missing — cap add android may have failed")
+
+          status = ensure_line_after(
+              root_build,
+              "com.google.gms:google-services",
+              "        classpath 'com.google.gms:google-services:4.4.0'",
+              "dependencies {",
+          )
+          print("google-services classpath: %s" % status)
+
+          status = ensure_line_after(
+              app_build,
+              "com.google.android.gms:play-services-auth",
+              "    implementation 'com.google.android.gms:play-services-auth:21.0.0'",
+              "dependencies {",
+          )
+          print("play-services-auth: %s" % status)
+
+          status = ensure_plugin_apply(app_build, "com.google.gms.google-services")
+          print("google-services plugin: %s" % status)
+
+          status = ensure_variables_gradle(variables)
+          print("rgcfaIncludeGoogle variables.gradle: %s" % status)
+          ENDCFG
 
       - name: Generate real app icon and splash screen
         run: npx capacitor-assets generate --android
@@ -158,9 +210,9 @@ jobs:
             echo "::error::Missing ANDROID_KEYSTORE_PASSWORD or ANDROID_KEY_ALIAS secret."
             exit 1
           fi
-          OUT=$(keytool -list -v \\
-            -keystore android/app/release.keystore \\
-            -alias "$ANDROID_KEY_ALIAS" \\
+          OUT=$(keytool -list -v \
+            -keystore android/app/release.keystore \
+            -alias "$ANDROID_KEY_ALIAS" \
             -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>/dev/null)
           echo "$OUT" | grep -E 'SHA1:|SHA256:|Owner:|Valid from' || true
           SHA1=$(echo "$OUT" | awk -F'SHA1: ' '/SHA1:/{print $2; exit}' | tr -d '[:space:]')
@@ -185,10 +237,10 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          ./gradlew bundleRelease \\
-            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \\
-            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \\
-            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \\
+          ./gradlew bundleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
 
       - name: Build a signed release APK (for testing directly on your phone)
@@ -198,10 +250,10 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          ./gradlew assembleRelease \\
-            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \\
-            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \\
-            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \\
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
 
       - name: Upload the App Bundle (upload this one to Google Play)

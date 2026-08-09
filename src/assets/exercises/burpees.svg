@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e53e3e" />
+      <stop offset="100%" stop-color="#c53030" />
+    </linearGradient>
+    <linearGradient id="shorts" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3748" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+  </defs>
+  <!-- body in squat thrust position -->
+  <path
+    d="M70 96 L100 78 L130 96 L130 104 L100 88 L70 104 Z"
+    fill="url(#shirt)"
+  />
+  <!-- head -->
+  <circle cx="100" cy="64" r="15" fill="url(#skin)" />
+  <!-- arms on ground -->
+  <path
+    d="M84 96 L70 118 L60 130"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M116 96 L130 118 L140 130"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="60" cy="130" r="7" fill="url(#skin)" />
+  <circle cx="140" cy="130" r="7" fill="url(#skin)" />
+  <!-- legs extended back -->
+  <path
+    d="M82 104 L70 140 L66 158"
+    fill="none"
+    stroke="url(#shorts)"
+    stroke-width="13"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M118 104 L130 140 L134 158"
+    fill="none"
+    stroke="url(#shorts)"
+    stroke-width="13"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- feet -->
+  <rect x="58" y="156" width="22" height="9" rx="4" fill="#2d3748" />
+  <rect x="120" y="156" width="22" height="9" rx="4" fill="#2d3748" />
+</svg>

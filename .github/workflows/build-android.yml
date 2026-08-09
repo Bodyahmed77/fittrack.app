@@ -1,0 +1,269 @@
+name: Build Android App Bundle
+
+# Runs on GitHub's own cloud computers — nothing installs on your machine.
+# Trigger it manually from the "Actions" tab in your GitHub repo, or every
+# time you push to the "main" branch.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Java (needed by Gradle/Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build the web app
+        run: npm run build
+
+      - name: Add the Android platform
+        run: npx cap add android || true
+
+      # google-services.json must exist BEFORE Gradle runs. Never commit it;
+      # inject from the encrypted GitHub secret on every build.
+      - name: Inject google-services.json (required for Firebase + Google Sign-In)
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GS_B64:-}" ]; then
+            echo "::error::Secret GOOGLE_SERVICES_JSON_BASE64 is empty or missing."
+            exit 1
+          fi
+          mkdir -p android/app
+          echo "$GS_B64" | base64 -d > android/app/google-services.json
+          if [ ! -s android/app/google-services.json ]; then
+            echo "::error::Decoded google-services.json is empty."
+            exit 1
+          fi
+          # Validate without printing the full file (may contain client IDs).
+          python3 - <<'ENDVALIDATE'
+          import json, sys
+          path = "android/app/google-services.json"
+          try:
+              data = json.load(open(path, encoding="utf-8"))
+          except Exception as e:
+              print(f"::error::google-services.json is not valid JSON: {e}")
+              sys.exit(1)
+          project_id = data.get("project_info", {}).get("project_id", "")
+          if project_id != "fittrack-698fa":
+              print(f"::error::project_id is '{project_id}', expected 'fittrack-698fa'")
+              sys.exit(1)
+          clients = data.get("client") or []
+          packages = []
+          has_oauth = False
+          for c in clients:
+              pkg = (c.get("client_info") or {}).get("android_client_info", {}).get("package_name")
+              if pkg:
+                  packages.append(pkg)
+              for oa in c.get("oauth_client") or []:
+                  if oa.get("client_id"):
+                      has_oauth = True
+          if "com.fittrack.app" not in packages:
+              print(f"::error::No Android client for com.fittrack.app. Found packages: {packages}")
+              sys.exit(1)
+          if not has_oauth:
+              print("::warning::No oauth_client entries found. Google Sign-In usually needs an OAuth client after SHA-1 is registered in Firebase.")
+          print("google-services.json OK: project_id=fittrack-698fa package=com.fittrack.app")
+          print(f"android_clients={len(packages)} oauth_clients_present={has_oauth}")
+          ENDVALIDATE
+
+      - name: Configure Google Services and Google Sign-In (idempotent)
+        run: |
+          set -euo pipefail
+          python3 - <<'ENDCFG'
+          from pathlib import Path
+
+          root = Path("android")
+          root_build = root / "build.gradle"
+          app_build = root / "app" / "build.gradle"
+          variables = root / "variables.gradle"
+
+          def ensure_line_after(path, needle, insert_line, after_marker):
+              text = path.read_text(encoding="utf-8") if path.exists() else ""
+              if needle in text:
+                  return "already present"
+              lines = text.splitlines(keepends=True)
+              out = []
+              inserted = False
+              for line in lines:
+                  out.append(line)
+                  if not inserted and after_marker in line:
+                      out.append(insert_line if insert_line.endswith("\n") else insert_line + "\n")
+                      inserted = True
+              if not inserted:
+                  out.append("\n" + (insert_line if insert_line.endswith("\n") else insert_line + "\n"))
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text("".join(out), encoding="utf-8")
+              return "added"
+
+          def ensure_plugin_apply(path, plugin):
+              text = path.read_text(encoding="utf-8") if path.exists() else ""
+              marker_sq = "apply plugin: '%s'" % plugin
+              marker_dq = 'apply plugin: "%s"' % plugin
+              if marker_sq in text or marker_dq in text or ("id '%s'" % plugin) in text or ('id "%s"' % plugin) in text:
+                  return "already present"
+              if text and not text.endswith("\n"):
+                  text += "\n"
+              text += "\n" + marker_sq + "\n"
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text, encoding="utf-8")
+              return "added"
+
+          def ensure_variables_gradle(path):
+              block = (
+                  "ext {\n"
+                  "    rgcfaIncludeGoogle = true\n"
+                  "    androidxCredentialsVersion = '1.3.0'\n"
+                  "}\n"
+              )
+              if path.exists():
+                  text = path.read_text(encoding="utf-8")
+                  if "rgcfaIncludeGoogle" in text:
+                      return "already present"
+                  if text and not text.endswith("\n"):
+                      text += "\n"
+                  path.write_text(text + "\n" + block, encoding="utf-8")
+                  return "added"
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(block, encoding="utf-8")
+              return "created"
+
+          if not root_build.exists():
+              raise SystemExit("android/build.gradle missing — cap add android may have failed")
+          if not app_build.exists():
+              raise SystemExit("android/app/build.gradle missing — cap add android may have failed")
+
+          status = ensure_line_after(
+              root_build,
+              "com.google.gms:google-services",
+              "        classpath 'com.google.gms:google-services:4.4.0'",
+              "dependencies {",
+          )
+          print("google-services classpath: %s" % status)
+
+          status = ensure_line_after(
+              app_build,
+              "com.google.android.gms:play-services-auth",
+              "    implementation 'com.google.android.gms:play-services-auth:21.0.0'",
+              "dependencies {",
+          )
+          print("play-services-auth: %s" % status)
+
+          status = ensure_plugin_apply(app_build, "com.google.gms.google-services")
+          print("google-services plugin: %s" % status)
+
+          status = ensure_variables_gradle(variables)
+          print("rgcfaIncludeGoogle variables.gradle: %s" % status)
+          ENDCFG
+
+      - name: Generate real app icon and splash screen
+        run: npx capacitor-assets generate --android
+
+      - name: Sync web assets into the Android project
+        run: npx cap sync android
+
+      - name: Verify google-services.json still present after sync
+        run: |
+          set -euo pipefail
+          test -s android/app/google-services.json
+          echo "google-services.json present before Gradle ($(wc -c < android/app/google-services.json) bytes)"
+
+      - name: Decode the signing keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KS_B64:-}" ]; then
+            echo "::error::Secret ANDROID_KEYSTORE_BASE64 is empty or missing."
+            exit 1
+          fi
+          echo "$KS_B64" | base64 -d > android/app/release.keystore
+          test -s android/app/release.keystore
+
+      - name: Print release keystore SHA-1 and SHA-256 (for Firebase)
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
+            echo "::error::Missing ANDROID_KEYSTORE_PASSWORD or ANDROID_KEY_ALIAS secret."
+            exit 1
+          fi
+          OUT=$(keytool -list -v \
+            -keystore android/app/release.keystore \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>/dev/null)
+          echo "$OUT" | grep -E 'SHA1:|SHA256:|Owner:|Valid from' || true
+          SHA1=$(echo "$OUT" | awk -F'SHA1: ' '/SHA1:/{print $2; exit}' | tr -d '[:space:]')
+          SHA256=$(echo "$OUT" | awk -F'SHA256: ' '/SHA256:/{print $2; exit}' | tr -d '[:space:]')
+          echo ""
+          echo "=============================================="
+          echo "RELEASE KEYSTORE FINGERPRINTS (add to Firebase)"
+          echo "Package: com.fittrack.app"
+          echo "SHA-1:   $SHA1"
+          echo "SHA-256: $SHA256"
+          echo "=============================================="
+          echo "Firebase Console → Project settings → Your apps →"
+          echo "Android (com.fittrack.app) → Add fingerprint"
+          echo "Then re-download google-services.json and update"
+          echo "the GOOGLE_SERVICES_JSON_BASE64 secret if OAuth clients changed."
+          echo "=============================================="
+
+      - name: Build the signed release App Bundle (for Google Play)
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew bundleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+
+      - name: Build a signed release APK (for testing directly on your phone)
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+
+      - name: Upload the App Bundle (upload this one to Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fittrack-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Upload the APK (install this one directly on your phone to test)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fittrack-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk

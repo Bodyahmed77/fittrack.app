@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#dd6b20" />
+      <stop offset="100%" stop-color="#c05621" />
+    </linearGradient>
+    <linearGradient id="shorts" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3748" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+    <linearGradient id="machine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a0aec0" />
+      <stop offset="100%" stop-color="#4a5568" />
+    </linearGradient>
+  </defs>
+  <!-- leg curl bench -->
+  <rect x="30" y="40" width="10" height="130" rx="5" fill="#718096" />
+  <rect x="160" y="40" width="10" height="130" rx="5" fill="#718096" />
+  <rect x="38" y="34" width="124" height="10" rx="5" fill="url(#machine)" />
+  <rect x="40" y="44" width="120" height="30" rx="6" fill="#e2e8f0" />
+  <!-- body lying face down -->
+  <rect x="70" y="64" width="52" height="34" rx="10" fill="url(#shirt)" />
+  <!-- head -->
+  <circle cx="72" cy="74" r="15" fill="url(#skin)" />
+  <!-- thighs -->
+  <rect x="122" y="64" width="16" height="26" rx="5" fill="url(#shorts)" />
+  <!-- shins curled up -->
+  <path
+    d="M138 70 L150 60 L158 40"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- ankle pad -->
+  <rect x="150" y="34" width="20" height="10" rx="4" fill="url(#machine)" />
+  <!-- feet -->
+  <rect x="146" y="22" width="20" height="10" rx="4" fill="#2d3748" />
+</svg>

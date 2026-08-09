@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#38a169" />
+      <stop offset="100%" stop-color="#2f855a" />
+    </linearGradient>
+    <linearGradient id="shorts" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d3748" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+    <linearGradient id="machine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a0aec0" />
+      <stop offset="100%" stop-color="#4a5568" />
+    </linearGradient>
+  </defs>
+  <!-- treadmill base -->
+  <rect x="30" y="150" width="140" height="12" rx="6" fill="url(#machine)" />
+  <rect x="30" y="140" width="140" height="10" rx="5" fill="#2d3748" />
+  <!-- treadmill console -->
+  <path d="M50 40 L52 140 L72 140 L72 40 Z" fill="url(#machine)" />
+  <rect x="44" y="34" width="34" height="12" rx="4" fill="#4a5568" />
+  <!-- body running -->
+  <rect x="96" y="78" width="38" height="52" rx="12" fill="url(#shirt)" />
+  <!-- head -->
+  <circle cx="110" cy="60" r="15" fill="url(#skin)" />
+  <!-- arms swinging -->
+  <path
+    d="M100 86 L84 76 L76 66"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M128 86 L142 98 L148 108"
+    fill="none"
+    stroke="url(#shirt)"
+    stroke-width="11"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- legs running -->
+  <path
+    d="M100 130 L92 142 L84 150"
+    fill="none"
+    stroke="url(#shorts)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M130 130 L142 142 L150 150"
+    fill="none"
+    stroke="url(#shorts)"
+    stroke-width="14"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- feet -->
+  <rect x="76" y="148" width="22" height="8" rx="4" fill="#2d3748" />
+  <rect x="142" y="148" width="22" height="8" rx="4" fill="#2d3748" />
+</svg>

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd9b0" />
+      <stop offset="100%" stop-color="#f0b27a" />
+    </linearGradient>
+    <linearGradient id="shirt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2b6cb0" />
+      <stop offset="100%" stop-color="#1a4a7a" />
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#cbd5e0" />
+      <stop offset="100%" stop-color="#718096" />
+    </linearGradient>
+    <linearGradient id="plates" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4a5568" />
+      <stop offset="100%" stop-color="#1a202c" />
+    </linearGradient>
+  </defs>
+  <!-- barbell on floor with plates -->
+  <rect x="24" y="150" width="152" height="7" rx="3.5" fill="url(#bar)" />
+  <rect x="28" y="138" width="11" height="24" rx="2" fill="url(#plates)" />
+  <rect x="42" y="138" width="11" height="24" rx="2" fill="url(#plates)" />
+  <rect x="147" y="138" width="11" height="24" rx="2" fill="url(#plates)" />
+  <rect x="161" y="138" width="11" height="24" rx="2" fill="url(#plates)" />
+  <!-- body bent over rowing -->
+  <path
+    d="M90 60 L120 82 L120 110 L78 150 L64 150 L88 96 Z"
+    fill="url(#shirt)"
+  />
+  <!-- head -->
+  <circle cx="70" cy="58" r="14" fill="url(#skin)" />
+  <!-- arms pulling bar -->
+  <path
+    d="M92 90 L72 120 L60 150"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M112 100 L128 130 L140 150"
+    fill="none"
+    stroke="url(#skin)"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <!-- hands -->
+  <circle cx="60" cy="150" r="8" fill="url(#skin)" />
+  <circle cx="140" cy="150" r="8" fill="url(#skin)" />
+  <!-- legs -->
+  <rect x="82" y="150" width="16" height="30" rx="5" fill="#2d3748" />
+  <rect x="112" y="150" width="16" height="30" rx="5" fill="#2d3748" />
+  <!-- feet -->
+  <rect x="72" y="184" width="28" height="8" rx="4" fill="#2d3748" />
+  <rect x="104" y="184" width="28" height="8" rx="4" fill="#2d3748" />
+</svg>

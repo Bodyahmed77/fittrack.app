@@ -1,0 +1,14 @@
+node_modules/
+dist/
+android/
+ios/
+*.keystore
+*.jks
+keystore_base64.txt
+.DS_Store
+
+# Local / secrets
+.env
+.env.*
+functions/.env
+*.local

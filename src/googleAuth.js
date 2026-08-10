@@ -6,28 +6,25 @@ import {
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
+// These are already statically imported elsewhere in the dependency graph
+// (e.g. by @capacitor/app, @capacitor/network, @capacitor-firebase/authentication's
+// own web.js). Vite's build previously warned that dynamically importing them
+// here conflicted with those static imports and would not move them into a
+// separate chunk — that mismatch is what made isNativePlatform() and the
+// native plugin resolve incorrectly on-device. Both packages have web-safe
+// fallbacks, so a static import here is safe for the browser build too.
+import { Capacitor } from "@capacitor/core";
+import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 
 // Must stay under 90s so the UI never sticks on "loading" forever.
 const GOOGLE_SIGNIN_TIMEOUT_MS = 90000;
 
-let nativePluginPromise;
 async function getNativePlugin() {
-  if (!nativePluginPromise) {
-    nativePluginPromise = import(
-      /* @vite-ignore */ "@capacitor-firebase/authentication"
-    )
-      .then((mod) => mod.FirebaseAuthentication)
-      .catch((e) => {
-        console.warn("[GoogleSignIn] plugin import failed", e?.message || e);
-        return null;
-      });
-  }
-  return nativePluginPromise;
+  return FirebaseAuthentication;
 }
 
 async function isNativePlatform() {
   try {
-    const { Capacitor } = await import(/* @vite-ignore */ "@capacitor/core");
     return Capacitor.isNativePlatform();
   } catch (e) {
     return false;

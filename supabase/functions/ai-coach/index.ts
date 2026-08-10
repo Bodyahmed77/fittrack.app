@@ -10,6 +10,7 @@
 //   GEMINI_API_KEY
 // Optional:
 //   FIREBASE_PROJECT_ID (default: fittrack-698fa)
+//   GEMINI_MODEL (default: gemini-2.5-flash)
 //
 // IMPORTANT: Do NOT use oauth2.googleapis.com/tokeninfo for Firebase ID
 // tokens — that endpoint is for Google OAuth ID tokens and rejects
@@ -21,7 +22,8 @@ import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
 const FREE_LIMIT = 3;
 const PRO_LIMIT = 50;
-const GEMINI_MODEL = "gemini-2.0-flash";
+// gemini-2.0-flash was shut down by Google (2026). Override via secret GEMINI_MODEL if needed.
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -137,7 +139,7 @@ Deno.serve(async (req) => {
     if (readErr) {
       console.error("ai_usage read", readErr);
       return json(500, {
-        error: "backend_error",
+        error: "usage_read_failed",
         message: "Usage read failed",
       });
     }
@@ -160,7 +162,7 @@ Deno.serve(async (req) => {
     const geminiKey = Deno.env.get("GEMINI_API_KEY");
     if (!geminiKey) {
       return json(500, {
-        error: "backend_error",
+        error: "gemini_not_configured",
         message: "GEMINI_API_KEY not configured",
       });
     }
@@ -204,8 +206,9 @@ Deno.serve(async (req) => {
         });
       }
       return json(500, {
-        error: "backend_error",
+        error: "gemini_failed",
         message: "AI generation failed",
+        geminiStatus: geminiRes.status,
       });
     }
 

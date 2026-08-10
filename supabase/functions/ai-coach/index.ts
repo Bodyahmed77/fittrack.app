@@ -11,16 +11,12 @@
 // Optional:
 //   FIREBASE_PROJECT_ID (default: fittrack-698fa)
 //
-// SQL (run once in Supabase SQL editor):
-//   create table if not exists public.ai_usage (
-//     uid text not null,
-//     usage_date date not null,
-//     count int not null default 0,
-//     primary key (uid, usage_date)
-//   );
-//   alter table public.ai_usage enable row level security;
+// IMPORTANT: Do NOT use oauth2.googleapis.com/tokeninfo for Firebase ID
+// tokens — that endpoint is for Google OAuth ID tokens and rejects
+// securetoken.google.com Firebase JWTs (→ 401 unauthenticated).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
 const FREE_LIMIT = 3;
@@ -41,35 +37,23 @@ function json(status: number, body: Record<string, unknown>) {
   });
 }
 
-/** Verify Firebase ID token via Google tokeninfo endpoint. */
+/** Verify Firebase Auth ID token using Google securetoken JWKS. */
 async function verifyFirebaseIdToken(idToken: string) {
-  const infoRes = await fetch(
-    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`,
+  const JWKS = jose.createRemoteJWKSet(
+    new URL(
+      "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
+    ),
   );
-  if (!infoRes.ok) {
-    const t = await infoRes.text();
-    throw new Error(`tokeninfo failed: ${t.slice(0, 120)}`);
-  }
-  const info = await infoRes.json();
-
-  const iss = String(info.iss || info.issuer || "");
-  const expectedIss = `https://securetoken.google.com/${PROJECT_ID}`;
-  if (iss !== expectedIss) {
-    throw new Error(`Bad issuer: ${iss}`);
-  }
-
-  const aud = String(info.aud || info.audience || "");
-  // Firebase ID tokens use project ID as audience
-  if (aud !== PROJECT_ID) {
-    throw new Error(`Bad audience: ${aud}`);
-  }
-
-  const uid = info.user_id || info.sub;
+  const { payload } = await jose.jwtVerify(idToken, JWKS, {
+    issuer: `https://securetoken.google.com/${PROJECT_ID}`,
+    audience: PROJECT_ID,
+  });
+  const uid = payload.sub || payload.user_id;
   if (!uid) throw new Error("No uid in token");
-  if (info.exp && Number(info.exp) * 1000 < Date.now()) {
-    throw new Error("Token expired");
-  }
-  return { uid: String(uid), email: info.email || null };
+  return {
+    uid: String(uid),
+    email: typeof payload.email === "string" ? payload.email : null,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -189,19 +173,14 @@ Deno.serve(async (req) => {
     const historyText = messages
       .map(
         (m) =>
-          `${m.role === "user" ? "User" : "Coach"}: ${String(m.content || "").slice(0, 800)}`,
+          `${m.role === "assistant" ? "Coach" : "User"}: ${String(m.content || "").slice(0, 800)}`,
       )
       .join("\n");
 
-    const userCtx =
-      body.context && typeof body.context === "object"
-        ? JSON.stringify(body.context).slice(0, 1200)
-        : "";
-
-    const prompt = `${systemPrompt}\n\nUser context: ${userCtx}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 1500)}\nCoach:`;
+    const prompt = `${systemPrompt}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 2000)}\nCoach:`;
 
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiKey)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -209,7 +188,7 @@ Deno.serve(async (req) => {
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 512,
+            maxOutputTokens: 1024,
           },
         }),
       },

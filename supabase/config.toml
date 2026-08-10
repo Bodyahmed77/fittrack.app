@@ -1,0 +1,4 @@
+# Minimal function config — full project config may live on the linked remote.
+# Critical: Firebase ID tokens are NOT Supabase JWTs.
+[functions.ai-coach]
+verify_jwt = false

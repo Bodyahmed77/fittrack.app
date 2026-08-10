@@ -9295,7 +9295,9 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   const [messages, setMessages] = useState([]); // session-only — cleared when drawer closes
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const listRef = useRef(null);
+  const inputBarRef = useRef(null);
 
   // Fresh conversation every time the drawer opens.
   useEffect(() => {
@@ -9303,13 +9305,47 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
       setMessages([]);
       setInput("");
       setBusy(false);
+      setKeyboardInset(0);
     }
+  }, [open]);
+
+  // Keep the composer above the Android/iOS keyboard without fixed px hacks.
+  // visualViewport reports the visible area; the covered bottom is the keyboard.
+  useEffect(() => {
+    if (!open) {
+      setKeyboardInset(0);
+      return;
+    }
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!vv) return;
+
+    const update = () => {
+      try {
+        const covered = Math.max(
+          0,
+          Math.round(window.innerHeight - vv.height - vv.offsetTop),
+        );
+        setKeyboardInset(covered);
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
   }, [open]);
 
   useEffect(() => {
     if (listRef.current)
       listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages, busy]);
+  }, [messages, busy, keyboardInset]);
 
   if (!open) return null;
 
@@ -9612,11 +9648,15 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         </div>
 
         <div
+          ref={inputBarRef}
           style={{
             display: "flex",
             gap: 8,
             padding: "10px 12px calc(12px + env(safe-area-inset-bottom))",
+            paddingBottom: `calc(12px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
             borderTop: `1px solid ${C.border}`,
+            transition: "padding-bottom 0.12s ease-out",
+            background: C.bg,
           }}
         >
           <input
@@ -11641,6 +11681,7 @@ export default function GymApp() {
   const toastTimer = useRef(null);
   const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
+  const mainScrollRef = useRef(null);
 
   const showToast = useCallback((msg, duration = 2200) => {
     setToast(msg);
@@ -11791,6 +11832,19 @@ export default function GymApp() {
       setSelectedDay(weekdayOf(todayIso));
     }
   };
+
+  // New screens always start at the top (don't inherit scroll from previous page).
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+    // Also reset window scroll in case any parent scrolled.
+    try {
+      window.scrollTo(0, 0);
+    } catch (_) {
+      /* ignore */
+    }
+  }, [screen, params]);
 
   const exitWarnedRef = useRef(false);
   useEffect(() => {
@@ -12157,6 +12211,7 @@ export default function GymApp() {
         }}
       >
         <div
+          ref={mainScrollRef}
           style={{
             flex: 1,
             overflowY: "auto",

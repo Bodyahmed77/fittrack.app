@@ -7,6 +7,9 @@
     "androidScheme": "https",
     "hostname": "localhost"
   },
+  "android": {
+    "adjustMarginsForEdgeToEdge": "force"
+  },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 800,
@@ -16,7 +19,8 @@
     },
     "StatusBar": {
       "style": "LIGHT",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#000000",
+      "overlaysWebView": false
     },
     "FirebaseAuthentication": {
       "skipNativeAuth": true,

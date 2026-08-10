@@ -100,3 +100,35 @@ Without a Web client, native Google Sign-In often returns **ApiException: 10 (DE
 ## 7. Native plugin flag (`rgcfaIncludeGoogle`)
 
 The Android build workflow sets `rgcfaIncludeGoogle = true` in `android/variables.gradle` so `@capacitor-firebase/authentication` includes the Google provider dependency. This is applied automatically on every GitHub Actions build.
+
+
+---
+
+## Android: external Chrome OAuth (current flow)
+
+Android Google Sign-In opens **Chrome / Custom Tabs** (not the Capacitor WebView) so the user can pick a Google account already saved on the device.
+
+1. App builds an OAuth URL with the **Web client ID** (type 3 from `google-services.json`) and `redirect_uri=com.fittrack.app://google-auth`.
+2. `@capacitor/browser` opens that URL in the system browser.
+3. After the user selects an account, Google redirects to `com.fittrack.app://google-auth#id_token=...`.
+4. The app receives the deep link via `App.addListener('appUrlOpen')`, builds a Firebase credential from the `id_token`, and signs in.
+5. The user is **not** left on `https://localhost`.
+
+### Google Cloud Console — authorized redirect URI
+
+In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → your **Web client** (OAuth 2.0 Client ID):
+
+- Add authorized redirect URI: `com.fittrack.app://google-auth`
+
+Without this, Google may reject the redirect after account selection.
+
+### CI helpers
+
+- `scripts/extract-google-web-client-id.py` — writes `src/googleWebClientId.js` before `npm run build` (uses `GOOGLE_SERVICES_JSON_BASE64`).
+- `scripts/inject-google-auth-deeplink.py` — adds the `com.fittrack.app` / `google-auth` intent-filter to `AndroidManifest.xml` after `cap sync`.
+
+Web / desktop continues to use Firebase `signInWithPopup`.
+
+### New Google users — phone required
+
+If the signed-in Google user has no `account.phone` in Firestore, the app shows a **Complete your profile** step (phone only) before the normal onboarding questionnaire. Existing Google users who already have a phone skip this step.

@@ -5,13 +5,13 @@ export function googleSignInErrorMessage(err, ar) {
   const code = err?.code || "";
   if (code === "timeout") {
     return ar
-      ? "انتهت مهلة تسجيل Google. تأكد أن شاشة اختيار الحساب ظهرت، أو حاول تاني."
-      : "Google Sign-In timed out. Confirm the account chooser appeared, or try again.";
+      ? "انتهت مهلة تسجيل Google. لو شاشة الحساب ظهرت، ارجع للتطبيق بعد الاختيار أو حاول تاني."
+      : "Google Sign-In timed out. If the account chooser appeared, return to the app after choosing, or try again.";
   }
   if (code === "redirect_failed") {
     return ar
-      ? "تعذر فتح تسجيل Google. تأكد من الاتصال بالإنترنت وحاول تاني."
-      : "Could not start Google Sign-In. Check your connection and try again.";
+      ? "تعذر إكمال تسجيل Google داخل التطبيق. حاول تاني."
+      : "Could not complete Google Sign-In inside the app. Please try again.";
   }
   if (code === "popup_blocked") {
     return ar

@@ -1,22 +1,5 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  consumeGoogleRedirectResult,
-  installGoogleAuthAppStateHook,
-  installGoogleAuthDeepLinkHook,
-} from "./googleAuth";
-
-// Legacy redirect consumer is a no-op (external browser uses deep links).
-consumeGoogleRedirectResult().catch(() => {});
-
-// Foreground resume + global deep-link handlers so loading never sticks and
-// cold-start com.fittrack.app://google-auth can complete sign-in.
-installGoogleAuthAppStateHook().catch((e) => {
-  console.warn("[GoogleSignIn] app state hook install failed", e);
-});
-installGoogleAuthDeepLinkHook().catch((e) => {
-  console.warn("[GoogleSignIn] deep-link hook install failed", e);
-});
 
 const App = React.lazy(() => import("./App.jsx"));
 

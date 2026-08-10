@@ -8,7 +8,7 @@
 //   GEMINI_API_KEY (required)
 // Optional:
 //   FIREBASE_PROJECT_ID (default: fittrack-698fa)
-//   GEMINI_MODEL (default: gemini-2.5-flash)
+//   GEMINI_MODEL (default: gemini-3.5-flash-lite)
 //
 // Schema: public.ai_usage (uid text, usage_date date, count int) PK (uid, usage_date)
 // Atomic limit: public.reserve_ai_usage(uid, usage_date, limit) → jsonb
@@ -19,8 +19,9 @@ import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
 const FREE_LIMIT = 3;
 const PRO_LIMIT = 50;
-// gemini-2.0-flash was shut down by Google (2026).
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+// gemini-2.0-flash shut down; gemini-2.5-flash blocked for new API keys/projects.
+// Use current GA Flash-Lite (cost-efficient for high-volume coach chat).
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.5-flash-lite";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -236,7 +237,6 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.7,
             maxOutputTokens: 1024,
           },
         }),

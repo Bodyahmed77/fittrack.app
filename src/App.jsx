@@ -3053,99 +3053,135 @@ function Toast({ message }) {
 // Supports both TikTok Shorts (numeric video ID → TikTok embed) and
 // YouTube Shorts (alphanumeric ID → no-cookie YouTube embed). Runs
 // reliably inside a Capacitor WebView without triggering sign-in prompts.
-function VideoPlayer({ videoId, ar }) {
-  const { C } = useUI();
-  const [show, setShow] = useState(false);
-  const isTikTok = !!videoId && /^\d+$/.test(videoId);
-  const gestureRef = useRef({ y: 0, moved: false });
-  const overlayRef = useRef(null);
-  const peelTimerRef = useRef(null);
+// Module-level close hook so Android Back can dismiss the full-screen viewer
+// without lifting video state into GymApp or fighting the AI drawer handler.
+let __closeFullScreenVideo = null;
+function registerFullScreenVideoClose(fn) {
+  __closeFullScreenVideo = fn;
+}
 
-  // TikTok iframe is cross-origin: its document steals vertical pans and they
-  // never bubble to the FitTrack page. A sibling overlay above the iframe
-  // (forced onto its own compositor layer — Android WebView often paints
-  // iframes above normal z-index siblings) forwards vertical drags to the
-  // exercise scroller. Short taps peel the overlay so Play/Pause reaches the
-  // iframe. No user-facing modes/toggles.
-  useEffect(() => {
-    if (!show || !isTikTok) return undefined;
-    const el = overlayRef.current;
-    if (!el) return undefined;
-
-    const getScroller = () => {
-      if (typeof document === "undefined") return null;
-      return (
-        document.querySelector("[data-fittrack-scroll]") ||
-        document.querySelector("[data-main-scroll]")
-      );
-    };
-
-    const onStart = (e) => {
-      const t = e.touches && e.touches[0];
-      if (!t) return;
-      gestureRef.current = { y: t.clientY, moved: false };
-    };
-
-    const onMove = (e) => {
-      const t = e.touches && e.touches[0];
-      if (!t) return;
-      const y = t.clientY;
-      const dy = y - gestureRef.current.y;
-      if (Math.abs(dy) < 4 && !gestureRef.current.moved) return;
-      gestureRef.current.moved = true;
-      gestureRef.current.y = y;
-      const scroller = getScroller();
-      if (scroller) scroller.scrollTop -= dy;
-      // Non-passive listener: stop the browser treating this as a page pan
-      // that goes nowhere (iframe already cannot receive it under the overlay).
-      if (e.cancelable) e.preventDefault();
-    };
-
-    const onEnd = () => {
-      if (gestureRef.current.moved) {
-        gestureRef.current.moved = false;
-        return;
-      }
-      // Short tap: peel overlay so the following interaction can hit TikTok
-      // controls (Play/Pause). Overlay returns shortly after — not a mode UI.
-      el.style.pointerEvents = "none";
-      if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
-      peelTimerRef.current = setTimeout(() => {
-        if (overlayRef.current) overlayRef.current.style.pointerEvents = "auto";
-      }, 1800);
-    };
-
-    el.addEventListener("touchstart", onStart, { passive: true });
-    el.addEventListener("touchmove", onMove, { passive: false });
-    el.addEventListener("touchend", onEnd, { passive: true });
-    el.addEventListener("touchcancel", onEnd, { passive: true });
-
-    return () => {
-      el.removeEventListener("touchstart", onStart);
-      el.removeEventListener("touchmove", onMove);
-      el.removeEventListener("touchend", onEnd);
-      el.removeEventListener("touchcancel", onEnd);
-      if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
-    };
-  }, [show, isTikTok]);
-
-  if (!videoId) return null;
+/* Full-screen TikTok/YouTube viewer — mounted only while open.
+   No gesture overlays, no pointer-events hacks, no preventDefault.
+   Exercise Screen only shows a "Watch Short" button; the iframe lives here. */
+function FullScreenVideoViewer({ videoId, ar, onClose }) {
+  const isTikTok = /^\d+$/.test(videoId);
   const embedSrc = isTikTok
     ? `https://www.tiktok.com/embed/v2/${videoId}`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
+  useEffect(() => {
+    registerFullScreenVideoClose(() => {
+      onClose();
+      return true;
+    });
+    return () => registerFullScreenVideoClose(null);
+  }, [onClose]);
+
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={ar ? "مشغل الفيديو" : "Video player"}
       style={{
-        marginBottom: 14,
-        width: "100%",
+        position: "fixed",
+        inset: 0,
+        zIndex: 4000,
+        background: "#000",
         display: "flex",
-        justifyContent: "center",
+        flexDirection: "column",
+        // Stay above app chrome; respect existing Cap 7 system-bar margins.
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
       }}
     >
-      {!show ? (
+      <div
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 12px",
+          gap: 8,
+        }}
+      >
+        <div style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>
+          {ar ? "فيديو التمرين" : "Exercise video"}
+        </div>
         <button
-          onClick={() => setShow(true)}
+          type="button"
+          onClick={onClose}
+          aria-label={ar ? "إغلاق" : "Close"}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            border: "none",
+            background: "rgba(255,255,255,0.15)",
+            color: "#fff",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <X size={18} color="#fff" />
+        </button>
+      </div>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: "relative",
+          width: "100%",
+          background: "#000",
+        }}
+      >
+        <iframe
+          src={embedSrc}
+          title={ar ? "فيديو التمرين" : "Exercise video"}
+          sandbox="allow-scripts allow-same-origin allow-presentation"
+          referrerPolicy="no-referrer"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            border: "none",
+          }}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+    </div>
+  );
+}
+
+// In-app exercise video entry — button only on the Exercise Screen.
+// Supports TikTok (numeric ID) and YouTube Shorts (alphanumeric ID).
+// The embed is never mounted inside the scrollable exercise page.
+function VideoPlayer({ videoId, ar }) {
+  const { C } = useUI();
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+
+  if (!videoId) return null;
+
+  const isTikTok = /^\d+$/.test(videoId);
+
+  return (
+    <>
+      <div
+        style={{
+          marginBottom: 14,
+          width: "100%",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
           style={{
             width: "100%",
             maxWidth: 360,
@@ -3166,7 +3202,7 @@ function VideoPlayer({ videoId, ar }) {
           {!isTikTok && (
             <img
               src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}
-              alt="video thumbnail"
+              alt=""
               style={{
                 position: "absolute",
                 inset: 0,
@@ -3209,86 +3245,14 @@ function VideoPlayer({ videoId, ar }) {
               textShadow: "0 1px 4px rgba(0,0,0,0.8)",
             }}
           >
-            {ar ? "شوف الشورت" : "Watch Short Demo"}
+            {ar ? "دوس على الشورت لمشاهدة الفيديو" : "Watch Short Demo"}
           </span>
         </button>
-      ) : (
-        <div
-          style={{
-            position: "relative",
-            width: "100%",
-            maxWidth: 360,
-            aspectRatio: "9/16",
-            borderRadius: 14,
-            overflow: "hidden",
-            background: "#000",
-            border: `1px solid ${C.border}`,
-            boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
-            // Avoid isolation:isolate — it can let the iframe paint above siblings
-            // in Android WebView and swallow touches meant for the gesture layer.
-          }}
-        >
-          <iframe
-            src={embedSrc}
-            title={ar ? "فيديو التمرين" : "Exercise video"}
-            sandbox="allow-scripts allow-same-origin allow-presentation"
-            referrerPolicy="no-referrer"
-            scrolling="no"
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              border: "none",
-              overflow: "hidden",
-              overscrollBehavior: "none",
-              // Keep iframe interactive for Play/Pause when overlay is peeled.
-              zIndex: 1,
-            }}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-          {isTikTok && (
-            <div
-              ref={overlayRef}
-              aria-hidden
-              style={{
-                position: "absolute",
-                inset: 0,
-                zIndex: 5,
-                // Force a compositor layer above the iframe (Android WebView).
-                transform: "translateZ(0)",
-                WebkitTransform: "translateZ(0)",
-                // Non-zero alpha so the layer reliably receives hit-tests.
-                background: "rgba(0,0,0,0.02)",
-                touchAction: "none",
-              }}
-            />
-          )}
-          <button
-            onClick={() => setShow(false)}
-            aria-label={ar ? "إغلاق الفيديو" : "Close video"}
-            style={{
-              position: "absolute",
-              top: 8,
-              right: 8,
-              zIndex: 6,
-              width: 30,
-              height: 30,
-              borderRadius: "50%",
-              background: "rgba(0,0,0,0.7)",
-              border: "none",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <X size={14} color="#fff" />
-          </button>
-        </div>
+      </div>
+      {open && (
+        <FullScreenVideoViewer videoId={videoId} ar={ar} onClose={close} />
       )}
-    </div>
+    </>
   );
 }
 
@@ -11995,6 +11959,11 @@ export default function GymApp() {
   useEffect(() => {
     let listenerHandle;
     CapApp.addListener("backButton", () => {
+      // Priority 0: close full-screen exercise video viewer only.
+      if (typeof __closeFullScreenVideo === "function") {
+        const handled = __closeFullScreenVideo();
+        if (handled) return;
+      }
       // Priority 1: close AI Coach drawer (same as X button) — never exit.
       if (aiDrawerOpen) {
         setAiDrawerOpen(false);

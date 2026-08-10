@@ -1,23 +1,21 @@
 import {
   GoogleAuthProvider,
-  browserLocalPersistence,
-  getRedirectResult,
   reauthenticateWithCredential,
-  setPersistence,
+  signInWithCredential,
   signInWithPopup,
-  signInWithRedirect,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
+import { GOOGLE_WEB_CLIENT_ID } from "./googleWebClientId";
 
-// Must stay under 90s so the UI never sticks on "loading" forever.
 const GOOGLE_SIGNIN_TIMEOUT_MS = 90000;
+const DEEP_LINK_SCHEME = "com.fittrack.app";
+const DEEP_LINK_HOST = "google-auth";
+const REDIRECT_URI = `${DEEP_LINK_SCHEME}://${DEEP_LINK_HOST}`;
 
-// Prefer localStorage so pending flags survive in-WebView OAuth navigations.
 const PENDING_LANG_KEY = "ft_google_pending_lang";
 const PENDING_FLAG_KEY = "ft_google_pending";
-const PENDING_AT_KEY = "ft_google_pending_at";
 const SETTLED_EVENT = "ft-google-auth-settled";
 
 function storageGet(key) {
@@ -38,35 +36,27 @@ function storageSet(key, value) {
   } catch (_) {
     try {
       sessionStorage.setItem(key, value);
-    } catch (__) {
-      /* ignore */
-    }
+    } catch (__) {}
   }
 }
 
 function storageRemove(key) {
   try {
     localStorage.removeItem(key);
-  } catch (_) {
-    /* ignore */
-  }
+  } catch (_) {}
   try {
     sessionStorage.removeItem(key);
-  } catch (_) {
-    /* ignore */
-  }
+  } catch (_) {}
 }
 
 function clearPendingFlags() {
   storageRemove(PENDING_FLAG_KEY);
   storageRemove(PENDING_LANG_KEY);
-  storageRemove(PENDING_AT_KEY);
 }
 
 function setPendingFlags(localLang) {
   storageSet(PENDING_FLAG_KEY, "1");
   storageSet(PENDING_LANG_KEY, localLang || "en");
-  storageSet(PENDING_AT_KEY, String(Date.now()));
 }
 
 function isPending() {
@@ -75,18 +65,10 @@ function isPending() {
 
 function emitAuthSettled(detail = {}) {
   try {
-    window.dispatchEvent(
-      new CustomEvent(SETTLED_EVENT, { detail: { ...detail } }),
-    );
-  } catch (_) {
-    /* ignore */
-  }
+    window.dispatchEvent(new CustomEvent(SETTLED_EVENT, { detail }));
+  } catch (_) {}
 }
 
-/**
- * Login/SignUp screens subscribe so busy/loading always clears on
- * success, cancel, timeout, redirect failure, or resume-without-result.
- */
 export function subscribeGoogleAuthSettled(handler) {
   if (typeof window === "undefined" || typeof handler !== "function") {
     return () => {};
@@ -94,9 +76,7 @@ export function subscribeGoogleAuthSettled(handler) {
   const listener = (event) => {
     try {
       handler(event?.detail || {});
-    } catch (_) {
-      /* ignore */
-    }
+    } catch (_) {}
   };
   window.addEventListener(SETTLED_EVENT, listener);
   return () => window.removeEventListener(SETTLED_EVENT, listener);
@@ -152,11 +132,6 @@ function mapAuthError(e) {
   return e instanceof Error ? e : new Error(raw || "Google Sign-In failed");
 }
 
-/**
- * Minimal user document for first-time Google users when App.jsx
- * createInitialState is not available (e.g. startup redirect path).
- * useAppData already merges missing docs with a full freshState().
- */
 function minimalInitialState(lang, user) {
   return {
     onboarded: false,
@@ -202,7 +177,24 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
   if (!userCred?.user?.uid) return;
   const ref = doc(db, "users", userCred.user.uid);
   const snap = await getDoc(ref);
-  if (snap.exists()) return;
+  if (snap.exists()) {
+    // Backfill name/email from Google if profile fields are empty
+    const data = snap.data() || {};
+    const account = { ...(data.account || {}) };
+    let changed = false;
+    if (!account.name && userCred.user.displayName) {
+      account.name = userCred.user.displayName;
+      changed = true;
+    }
+    if (!account.email && userCred.user.email) {
+      account.email = userCred.user.email;
+      changed = true;
+    }
+    if (changed) {
+      await setDoc(ref, { account }, { merge: true });
+    }
+    return;
+  }
 
   let initial;
   if (typeof createInitialState === "function") {
@@ -222,6 +214,27 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
   await setDoc(ref, initial);
 }
 
+function parseDeepLinkParams(url) {
+  // Supports com.fittrack.app://google-auth#id_token=...&state=...
+  // and com.fittrack.app://google-auth?id_token=...
+  const normalized = String(url || "").replace(
+    `${DEEP_LINK_SCHEME}://`,
+    "https://callback/",
+  );
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch (_) {
+    return new URLSearchParams();
+  }
+  const fromQuery = new URLSearchParams(parsed.search || "");
+  const hash = (parsed.hash || "").replace(/^#/, "");
+  const fromHash = new URLSearchParams(hash);
+  // Prefer hash (implicit id_token flow), fall back to query
+  if ([...fromHash.keys()].length) return fromHash;
+  return fromQuery;
+}
+
 async function webGoogleSignIn() {
   console.info("[GoogleSignIn] start web popup");
   const provider = new GoogleAuthProvider();
@@ -234,148 +247,169 @@ async function webGoogleSignIn() {
 }
 
 /**
- * Android / Capacitor: Firebase JS redirect kept INSIDE the WebView via
- * capacitor.config.json server.allowNavigation (Google + Firebase hosts).
- * That prevents the system browser from opening https://localhost after
- * OAuth ("This site can't be reached").
+ * Android: open Google OAuth in the *system browser* (Chrome Custom Tabs)
+ * so the user can pick accounts already saved in Chrome — not an in-app WebView.
+ * Return path: com.fittrack.app://google-auth with id_token → Firebase credential.
  */
-async function nativeGoogleRedirectSignIn(localLang) {
-  console.info("[GoogleSignIn] start native Firebase JS redirect (in-WebView)");
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-  } catch (e) {
-    console.warn("[GoogleSignIn] setPersistence failed", e);
+async function nativeGoogleExternalBrowserSignIn(localLang, createInitialState) {
+  console.info("[GoogleSignIn] start external browser OAuth");
+  const clientId = (GOOGLE_WEB_CLIENT_ID || "").trim();
+  if (!clientId) {
+    const err = new Error(
+      "Google Web Client ID missing — rebuild after CI extracts it from google-services.json",
+    );
+    err.code = "developer_error";
+    throw err;
   }
+
+  const { Browser } = await import("@capacitor/browser");
+  const { App } = await import("@capacitor/app");
 
   setPendingFlags(localLang);
 
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: "select_account" });
+  return new Promise(async (resolve, reject) => {
+    let settled = false;
+    let urlHandle;
+    let browserHandle;
 
-  try {
-    // Navigates the Capacitor WebView to Google / Firebase auth handler.
-    // With allowNavigation, the return to https://localhost stays in-app.
-    await withTimeout(
-      signInWithRedirect(auth, provider),
-      GOOGLE_SIGNIN_TIMEOUT_MS,
-      "Google Sign-In (redirect)",
-    );
-  } catch (e) {
-    clearPendingFlags();
-    emitAuthSettled({ ok: false, reason: "redirect_error" });
-    throw mapAuthError(e);
-  }
-
-  // If the WebView never left this page, treat as failure.
-  clearPendingFlags();
-  emitAuthSettled({ ok: false, reason: "redirect_failed" });
-  const err = new Error(
-    "Google Sign-In redirect did not navigate — check allowNavigation and Firebase authorized domains",
-  );
-  err.code = "redirect_failed";
-  throw err;
-}
-
-/**
- * Completes a pending Firebase redirect result.
- * Safe without createInitialState (uses minimalInitialState for new users).
- * Always emits ft-google-auth-settled so UI loading clears.
- */
-export async function consumeGoogleRedirectResult(createInitialState) {
-  const pending = isPending();
-  const lang = storageGet(PENDING_LANG_KEY) || "en";
-
-  let result;
-  try {
-    result = await getRedirectResult(auth);
-  } catch (e) {
-    console.warn(
-      "[GoogleSignIn] getRedirectResult error",
-      e?.code || "",
-      String(e?.message || e).slice(0, 180),
-    );
-    clearPendingFlags();
-    emitAuthSettled({ ok: false, reason: "redirect_result_error" });
-    if (pending) throw mapAuthError(e);
-    return null;
-  }
-
-  if (!result?.user) {
-    if (pending) {
-      console.info("[GoogleSignIn] pending redirect but no result user");
-      // User may have cancelled in the Google UI and returned to the app.
+    const cleanup = async () => {
       clearPendingFlags();
-      emitAuthSettled({ ok: false, reason: "cancelled_or_empty" });
-      const err = new Error("Google Sign-In was cancelled");
-      err.code = "cancelled";
-      // Do not throw on cold start with stale pending — only when actively pending.
-      // Returning null + settled event is enough for UI; callers can toast.
-      return null;
-    }
-    return null;
-  }
+      try {
+        await urlHandle?.remove?.();
+      } catch (_) {}
+      try {
+        await browserHandle?.remove?.();
+      } catch (_) {}
+      try {
+        await Browser.close();
+      } catch (_) {}
+    };
 
-  clearPendingFlags();
-  console.info(
-    "[GoogleSignIn] redirect result uid length",
-    result.user.uid.length,
-  );
-  try {
-    await ensureUserDoc(result, lang, createInitialState);
-  } catch (e) {
-    console.warn("[GoogleSignIn] ensureUserDoc failed", e);
-    // Auth session still valid; App useAppData can create/merge the doc.
-  }
-  emitAuthSettled({ ok: true, reason: "redirect_success" });
-  return result;
+    const finish = async (err, userCred) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      await cleanup();
+      if (err) {
+        emitAuthSettled({ ok: false, reason: err?.code || "error" });
+        reject(mapAuthError(err));
+      } else {
+        emitAuthSettled({ ok: true, reason: "browser_success" });
+        resolve(userCred);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      const err = new Error("Google Sign-In timed out");
+      err.code = "timeout";
+      finish(err);
+    }, GOOGLE_SIGNIN_TIMEOUT_MS);
+
+    try {
+      urlHandle = await App.addListener("appUrlOpen", async ({ url }) => {
+        try {
+          if (!url || !String(url).startsWith(`${DEEP_LINK_SCHEME}://`)) return;
+          if (!String(url).includes(DEEP_LINK_HOST)) return;
+
+          const params = parseDeepLinkParams(url);
+          const oauthError = params.get("error");
+          if (oauthError) {
+            const err = new Error(oauthError);
+            err.code =
+              oauthError === "access_denied" ? "cancelled" : "auth_error";
+            await finish(err);
+            return;
+          }
+
+          const idToken = params.get("id_token");
+          if (!idToken) {
+            const err = new Error("No ID token in Google OAuth callback");
+            err.code = "no_id_token";
+            await finish(err);
+            return;
+          }
+
+          const credential = GoogleAuthProvider.credential(idToken);
+          const userCred = await signInWithCredential(auth, credential);
+          await ensureUserDoc(
+            userCred,
+            storageGet(PENDING_LANG_KEY) || localLang,
+            createInitialState,
+          );
+          console.info(
+            "[GoogleSignIn] browser success uid length",
+            userCred.user.uid.length,
+          );
+          await finish(null, userCred);
+        } catch (e) {
+          await finish(e);
+        }
+      });
+
+      // User closed Chrome without completing OAuth
+      browserHandle = await Browser.addListener("browserFinished", () => {
+        setTimeout(() => {
+          if (!settled && isPending()) {
+            const err = new Error("Google Sign-In was cancelled");
+            err.code = "cancelled";
+            finish(err);
+          }
+        }, 400);
+      });
+
+      const nonce =
+        Math.random().toString(36).slice(2) +
+        Date.now().toString(36) +
+        Math.random().toString(36).slice(2);
+
+      const oauthUrl =
+        "https://accounts.google.com/o/oauth2/v2/auth" +
+        `?client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+        "&response_type=id_token" +
+        `&scope=${encodeURIComponent("openid email profile")}` +
+        `&nonce=${encodeURIComponent(nonce)}` +
+        "&prompt=select_account";
+
+      console.info("[GoogleSignIn] opening system browser for Google OAuth");
+      await Browser.open({ url: oauthUrl });
+    } catch (e) {
+      await finish(e);
+    }
+  });
 }
 
-let appStateHookInstalled = false;
+/** @deprecated retained no-op for older main.jsx callers */
+export async function consumeGoogleRedirectResult() {
+  return null;
+}
 
-/**
- * When the app returns to foreground during a pending Google redirect,
- * try getRedirectResult again and always settle the loading UI.
- */
+/** @deprecated retained no-op for older main.jsx callers */
 export async function installGoogleAuthAppStateHook() {
-  if (appStateHookInstalled) return;
+  // External-browser flow uses appUrlOpen inside signInWithGoogleFlow.
+  // Still emit settle on resume if a stale pending flag exists.
   if (!(await isNativePlatform())) return;
-  appStateHookInstalled = true;
-
   try {
     const { App } = await import("@capacitor/app");
-    App.addListener("appStateChange", async ({ isActive }) => {
-      if (!isActive) return;
-      if (!isPending()) {
-        emitAuthSettled({ ok: false, reason: "resume_idle" });
-        return;
-      }
-      console.info("[GoogleSignIn] app active with pending redirect — consume");
-      try {
-        await consumeGoogleRedirectResult();
-      } catch (e) {
-        console.warn("[GoogleSignIn] resume consume failed", e);
-        clearPendingFlags();
-        emitAuthSettled({ ok: false, reason: "resume_error" });
+    App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive && isPending()) {
+        // Pending is cleared by deep-link success or browserFinished cancel.
+        // If user left Chrome without closing it, do not force-cancel here.
       }
     });
-  } catch (e) {
-    console.warn("[GoogleSignIn] app state hook unavailable", e);
-  }
+  } catch (_) {}
 }
 
-/**
- * Login + SignUp entry point.
- * - Web: popup
- * - Android/iOS Capacitor: Firebase JS redirect inside WebView
- */
 export async function signInWithGoogleFlow(localLang = "en", createInitialState) {
   const native = await isNativePlatform();
   console.info("[GoogleSignIn] platform native?", native);
 
   try {
     if (native) {
-      await nativeGoogleRedirectSignIn(localLang);
-      return null;
+      return await nativeGoogleExternalBrowserSignIn(
+        localLang,
+        createInitialState,
+      );
     }
 
     const userCred = await webGoogleSignIn();
@@ -394,6 +428,16 @@ export async function signInWithGoogleFlow(localLang = "en", createInitialState)
 }
 
 export async function reauthenticateWithGoogleFlow(user) {
+  if (await isNativePlatform()) {
+    // Re-run external browser flow and ensure same uid
+    const result = await nativeGoogleExternalBrowserSignIn("en");
+    if (result?.user?.uid && result.user.uid !== user.uid) {
+      const err = new Error("Reauth used a different Google account");
+      err.code = "auth_error";
+      throw err;
+    }
+    return result;
+  }
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   try {

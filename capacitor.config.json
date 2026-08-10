@@ -27,6 +27,10 @@
       "providers": [
         "google.com"
       ]
+    },
+    "Keyboard": {
+      "resize": "none",
+      "resizeOnFullScreen": false
     }
   }
 }

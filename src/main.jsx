@@ -1,5 +1,16 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
+import { consumeGoogleRedirectResult } from "./googleAuth";
+
+// Complete Android Google redirect (Firebase JS) before the UI mounts so
+// onAuthStateChanged sees the signed-in user immediately on return.
+consumeGoogleRedirectResult().catch((e) => {
+  console.warn(
+    "[GoogleSignIn] startup redirect consume failed",
+    e?.code || "",
+    String(e?.message || e).slice(0, 160),
+  );
+});
 
 const App = React.lazy(() => import("./App.jsx"));
 

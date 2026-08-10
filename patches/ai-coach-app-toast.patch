@@ -1,0 +1,25 @@
+diff --git a/src/App.jsx b/src/App.jsx
+@@ -9467,10 +9467,20 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
+           ? "لقد استخدمت رسائلك المجانية الثلاث لهذا اليوم. يمكنك العودة غدًا أو الترقية إلى AI Coach Pro."
+           : "You've used your 3 free AI messages for today. Come back tomorrow or upgrade to AI Coach Pro.";
+     }
+-    if (code === "unauthenticated") {
++    if (code === "auth_missing") {
+       return ar
+-        ? "جلسة الدخول انتهت. سجل دخولك مرة تانية."
+-        : "Your session expired. Please sign in again.";
++        ? "يرجى تسجيل الدخول أولاً."
++        : "Please sign in first.";
++    }
++    if (code === "token_refresh_failed") {
++      return ar
++        ? "تعذر التحقق من جلسة الدخول. حاول مرة أخرى."
++        : "Could not verify your sign-in session. Please try again.";
++    }
++    if (code === "backend_unauthorized" || code === "unauthenticated") {
++      return ar
++        ? "تعذر التحقق من حسابك حالياً. حاول تسجيل الدخول مرة أخرى."
++        : "Could not verify your account right now. Please sign in again.";
+     }
+     if (code === "forbidden") {
+       return ar

@@ -59,6 +59,15 @@ function resolveAnonKey() {
   return SUPABASE_ANON_KEY || "";
 }
 
+function diag(...args) {
+  try {
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 function normalizeUsage(data, fallbackDate) {
   if (!data || typeof data !== "object") return null;
   if (data.usage && typeof data.usage === "object") {
@@ -105,9 +114,13 @@ function extractReply(data) {
   return "";
 }
 
+/**
+ * Classify HTTP errors with distinct codes so the UI does not map every
+ * auth-related failure to a single "session expired" string.
+ */
 function classifyHttpError(status, data) {
   const msg = String(data?.message || data?.error || "");
-  if (status === 401) return "unauthenticated";
+  if (status === 401) return "backend_unauthorized";
   if (status === 403) return "forbidden";
   if (status === 429) {
     if (
@@ -144,22 +157,39 @@ export async function generateCoachReply({
   if (!endpoint) {
     const err = new Error("AI endpoint is not configured");
     err.code = "no_endpoint";
+    diag("[AI_COACH_FINAL_ERROR] code=no_endpoint");
     throw err;
   }
 
   const user = auth.currentUser;
   if (!user) {
+    diag("[AI_COACH_AUTH] currentUser=NULL");
     const err = new Error("Sign in required");
-    err.code = "unauthenticated";
+    err.code = "auth_missing";
+    diag("[AI_COACH_FINAL_ERROR] code=auth_missing");
     throw err;
   }
 
   let idToken;
   try {
-    idToken = await user.getIdToken(/* forceRefresh */ false);
+    // Force-refresh once so a stale cached token is not sent to the backend.
+    idToken = await user.getIdToken(/* forceRefresh */ true);
+    diag(
+      "[AI_COACH_AUTH] token_obtained uid=" +
+        String(user.uid) +
+        " tokenLength=" +
+        String(idToken ? idToken.length : 0),
+    );
   } catch (e) {
+    diag(
+      "[AI_COACH_AUTH] getIdToken_FAILED " +
+        String(e?.code || "") +
+        " " +
+        String(e?.message || e).slice(0, 120),
+    );
     const err = new Error("Could not refresh session");
-    err.code = "unauthenticated";
+    err.code = "token_refresh_failed";
+    diag("[AI_COACH_FINAL_ERROR] code=token_refresh_failed");
     throw err;
   }
 
@@ -191,6 +221,7 @@ export async function generateCoachReply({
     uid: user.uid,
   };
 
+  diag("[AI_COACH_HTTP] request_start");
   let res;
   try {
     res = await fetch(endpoint, {
@@ -199,10 +230,21 @@ export async function generateCoachReply({
       body: JSON.stringify(body),
     });
   } catch (e) {
-    // True network/CORS failure only — fetch threw before any HTTP response.
+    diag(
+      "[AI_COACH_HTTP] network_error=" +
+        String(e?.message || e).slice(0, 160),
+    );
     const err = new Error(e?.message || "Network error");
     err.code = "network";
+    diag("[AI_COACH_FINAL_ERROR] code=network");
     throw err;
+  }
+
+  diag("[AI_COACH_HTTP] status=" + String(res.status));
+  if (res.status === 401) {
+    diag("[AI_COACH_HTTP] unauthorized_401");
+  } else if (!res.ok) {
+    diag("[AI_COACH_HTTP] http_error=" + String(res.status));
   }
 
   let data = null;
@@ -231,6 +273,7 @@ export async function generateCoachReply({
         hasPro: data?.hasPro,
       };
     }
+    diag("[AI_COACH_FINAL_ERROR] code=" + code);
     throw err;
   }
 
@@ -238,8 +281,10 @@ export async function generateCoachReply({
   if (!reply) {
     const err = new Error("Empty AI response");
     err.code = "empty_response";
+    diag("[AI_COACH_FINAL_ERROR] code=empty_response");
     throw err;
   }
 
+  diag("[AI_COACH_FINAL_ERROR] code=ok");
   return { reply: String(reply), usage };
 }

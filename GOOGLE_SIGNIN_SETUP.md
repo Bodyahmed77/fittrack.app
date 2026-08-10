@@ -3,7 +3,29 @@
 Package: `com.fittrack.app`  
 Firebase project: `fittrack-698fa`
 
-## Why Google Sign-In breaks after switching to release builds
+## Current approach (Capacitor 7 + Credential Manager)
+
+Android Google Sign-In uses **@capacitor-firebase/authentication 7.x** with
+**Android Credential Manager** (Google's recommended API, not the deprecated
+Google Sign-In for Android SDK and not an external-browser OAuth flow).
+
+Flow:
+
+1. User taps Continue with Google
+2. `FirebaseAuthentication.signInWithGoogle({ useCredentialManager: true, skipNativeAuth: true })`
+3. System Credential Manager account picker (saved Google accounts on device)
+4. Plugin returns an ID token
+5. App calls Firebase JS `signInWithCredential(GoogleAuthProvider.credential(idToken))`
+6. Existing FitTrack onboarding runs; new Google users without a phone see **Complete your profile**
+
+Web / desktop continues to use Firebase `signInWithPopup`.
+
+There is **no** custom URI scheme (`com.fittrack.app://google-auth`), **no**
+`Browser.open()`, **no** `signInWithRedirect`, and **no** `https://localhost` OAuth callback.
+
+---
+
+## Why Google Sign-In can break after switching to release builds
 
 Debug builds use the **debug keystore** SHA-1.  
 Release APKs/AABs from GitHub Actions use the **release keystore** SHA-1.  
@@ -69,25 +91,19 @@ It does **not** print the full JSON.
 
 ## 4. Code / Capacitor (already in the repo)
 
-- `capacitor.config.json` → `FirebaseAuthentication.providers: ["google.com"]`
-- `src/googleAuth.js` → native `@capacitor-firebase/authentication` → Firebase `signInWithCredential`
+- `capacitor.config.json` → `FirebaseAuthentication.providers: ["google.com"]`, `skipNativeAuth: true`
+- `src/googleAuth.js` → native Credential Manager via plugin → Firebase `signInWithCredential`
 - `src/firebase.js` → project `fittrack-698fa`
 - Android package / `appId` → `com.fittrack.app`
+- `android/variables.gradle` (injected by CI):
+  - `rgcfaIncludeGoogle = true`
+  - `androidxCredentialsVersion = '1.3.0'`
 
 Do not commit `google-services.json` or any `.keystore` file (see `.gitignore`).
 
-## 5. Test on a real device
+## 5. Web OAuth client (required for ID tokens)
 
-1. Install the **release APK** artifact from Actions (signed with the release keystore).
-2. Tap Google Sign-In.
-3. Separately test the **Play Store** build after publishing (Play signing cert must also be in Firebase).
-
-Email/password login is independent and should keep working either way.
-
-
-## 6. Web OAuth client (required for ID tokens)
-
-Google Sign-In on Android requests an **ID token** using the **Web** OAuth client (`client_type: 3` in `google-services.json`).
+Google Credential Manager / native Google Sign-In requests an **ID token** using the **Web** OAuth client (`client_type: 3` in `google-services.json`).
 
 1. Firebase Console → Project settings → Your apps → Android app
 2. After SHA-1 is registered, **Download google-services.json** again
@@ -95,40 +111,16 @@ Google Sign-In on Android requests an **ID token** using the **Web** OAuth clien
 4. Re-encode and update GitHub secret `GOOGLE_SERVICES_JSON_BASE64`
 5. Rebuild the release APK
 
-Without a Web client, native Google Sign-In often returns **ApiException: 10 (DEVELOPER_ERROR)** and the account picker may never appear.
+Without a Web client, native Google Sign-In often returns a developer / configuration error.
 
-## 7. Native plugin flag (`rgcfaIncludeGoogle`)
-
-The Android build workflow sets `rgcfaIncludeGoogle = true` in `android/variables.gradle` so `@capacitor-firebase/authentication` includes the Google provider dependency. This is applied automatically on every GitHub Actions build.
-
-
----
-
-## Android: external Chrome OAuth (current flow)
-
-Android Google Sign-In opens **Chrome / Custom Tabs** (not the Capacitor WebView) so the user can pick a Google account already saved on the device.
-
-1. App builds an OAuth URL with the **Web client ID** (type 3 from `google-services.json`) and `redirect_uri=com.fittrack.app://google-auth`.
-2. `@capacitor/browser` opens that URL in the system browser.
-3. After the user selects an account, Google redirects to `com.fittrack.app://google-auth#id_token=...`.
-4. The app receives the deep link via `App.addListener('appUrlOpen')`, builds a Firebase credential from the `id_token`, and signs in.
-5. The user is **not** left on `https://localhost`.
-
-### Google Cloud Console — authorized redirect URI
-
-In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → your **Web client** (OAuth 2.0 Client ID):
-
-- Add authorized redirect URI: `com.fittrack.app://google-auth`
-
-Without this, Google may reject the redirect after account selection.
-
-### CI helpers
-
-- `scripts/extract-google-web-client-id.py` — writes `src/googleWebClientId.js` before `npm run build` (uses `GOOGLE_SERVICES_JSON_BASE64`).
-- `scripts/inject-google-auth-deeplink.py` — adds the `com.fittrack.app` / `google-auth` intent-filter to `AndroidManifest.xml` after `cap sync`.
-
-Web / desktop continues to use Firebase `signInWithPopup`.
-
-### New Google users — phone required
+## 6. New Google users — phone required
 
 If the signed-in Google user has no `account.phone` in Firestore, the app shows a **Complete your profile** step (phone only) before the normal onboarding questionnaire. Existing Google users who already have a phone skip this step.
+
+## 7. Test on a real device
+
+1. Install the **release APK** artifact from Actions (signed with the release keystore).
+2. Tap Google Sign-In → Credential Manager account picker should appear.
+3. Separately test the **Play Store** build after publishing (Play signing cert must also be in Firebase).
+
+Email/password login is independent and should keep working either way.

@@ -1,0 +1,11 @@
+See PR description. Full src/App.jsx must be uploaded from local build (~12415 lines).
+
+Root cause: cross-origin TikTok iframe steals mid-video vertical pans; Android WebView often paints iframes above sibling overlays so a transparent gesture layer never received touches.
+
+Fix summary (VideoPlayer only):
+- Gesture overlay with translateZ(0) + slight alpha above iframe
+- Native non-passive touchmove forwards dy to [data-fittrack-scroll]
+- scrolling=no clips Description/Related
+- Short tap peels overlay ~1.8s for Play/Pause
+- No modes, no permanent pointer-events:none
+- AI Coach / Google Auth / billing / system bars untouched

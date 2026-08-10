@@ -3056,23 +3056,15 @@ function Toast({ message }) {
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [show, setShow] = useState(false);
-  const frameWrapRef = useRef(null);
+  // When true, iframe receives taps (play/pause). Default false so vertical
+  // swipes over the video area scroll the parent exercise screen instead.
+  const [iframeInteractive, setIframeInteractive] = useState(false);
   const isTikTok = !!videoId && /^\d+$/.test(videoId);
 
-  // Block vertical pans inside TikTok embed (nested scroll) without killing taps/play.
-  // Must use non-passive listener — React's synthetic onTouchMove is passive on many browsers.
+  // Reset interaction lock each time the player opens.
   useEffect(() => {
-    if (!show || !isTikTok) return undefined;
-    const el = frameWrapRef.current;
-    if (!el) return undefined;
-    const blockPan = (e) => {
-      if (e.touches && e.touches.length === 1) {
-        e.preventDefault();
-      }
-    };
-    el.addEventListener("touchmove", blockPan, { passive: false });
-    return () => el.removeEventListener("touchmove", blockPan);
-  }, [show, isTikTok]);
+    if (!show) setIframeInteractive(false);
+  }, [show]);
 
   if (!videoId) return null;
   const embedSrc = isTikTok
@@ -3170,15 +3162,13 @@ function VideoPlayer({ videoId, ar }) {
             border: `1px solid ${C.border}`,
             boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
             isolation: "isolate",
-            // Clip TikTok chrome (description / related) and block nested scroll.
             overscrollBehavior: "none",
-            touchAction: "manipulation",
           }}
-          ref={frameWrapRef}
         >
-          {/* The iframe sandbox keeps the embed playable and interactive while
-              denying top-level navigation, popups and deep links, so tapping
-              the clip can no longer leave Fifty Fit for the TikTok app. */}
+          {/* TikTok embed is cross-origin and scrollable. We clip it and, by
+              default, set pointer-events:none so vertical swipes reach the
+              parent exercise scroller (NOT preventDefault — that blocked parent).
+              User can enable interaction via the center control. */}
           <iframe
             src={embedSrc}
             title={ar ? "فيديو التمرين" : "Exercise video"}
@@ -3193,12 +3183,58 @@ function VideoPlayer({ videoId, ar }) {
               border: "none",
               overflow: "hidden",
               overscrollBehavior: "none",
-              // Prefer taps/play over free panning inside the embed.
-              touchAction: "manipulation",
+              // YouTube needs interaction; TikTok defaults to none so parent scrolls.
+              pointerEvents:
+                isTikTok && !iframeInteractive ? "none" : "auto",
             }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
           />
+          {isTikTok && !iframeInteractive && (
+            <button
+              type="button"
+              onClick={() => setIframeInteractive(true)}
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                zIndex: 2,
+                padding: "10px 14px",
+                borderRadius: 20,
+                border: "none",
+                background: "rgba(0,0,0,0.72)",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {ar ? "تشغيل / تحكم" : "Play / Controls"}
+            </button>
+          )}
+          {isTikTok && iframeInteractive && (
+            <button
+              type="button"
+              onClick={() => setIframeInteractive(false)}
+              style={{
+                position: "absolute",
+                left: 8,
+                bottom: 8,
+                zIndex: 2,
+                padding: "6px 10px",
+                borderRadius: 12,
+                border: "none",
+                background: "rgba(0,0,0,0.72)",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: 11,
+                cursor: "pointer",
+              }}
+            >
+              {ar ? "تمرير الشاشة" : "Scroll page"}
+            </button>
+          )}
           <button
             onClick={() => setShow(false)}
             aria-label={ar ? "إغلاق الفيديو" : "Close video"}
@@ -3206,6 +3242,7 @@ function VideoPlayer({ videoId, ar }) {
               position: "absolute",
               top: 8,
               right: 8,
+              zIndex: 3,
               width: 30,
               height: 30,
               borderRadius: "50%",
@@ -9334,29 +9371,41 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
     }
   }, [open]);
 
-  // Keep the composer above the Android/iOS keyboard without fixed px hacks.
-  // visualViewport reports the visible area; the covered bottom is the keyboard.
-  // Listeners are always removed on close/unmount to avoid leaks.
+  // Keyboard lift: lock the "open height" baseline when the drawer opens.
+  // Previous formula (innerHeight - vv.height) often equals 0 on Cap 7 edge-to-edge
+  // because both values shrink together — so the composer never moved.
+  // Using a baseline captured at open time measures the real IME coverage.
+  const kbBaseRef = useRef(0);
   useEffect(() => {
     if (!open) {
       setKeyboardInset(0);
+      kbBaseRef.current = 0;
       return undefined;
     }
     if (typeof window === "undefined") return undefined;
     const vv = window.visualViewport;
+    // Capture baseline AFTER layout settles (next frames).
+    const captureBase = () => {
+      const h = vv ? vv.height : window.innerHeight;
+      if (h > 0) kbBaseRef.current = h;
+    };
+    captureBase();
+    const t1 = window.setTimeout(captureBase, 50);
+    const t2 = window.setTimeout(captureBase, 200);
 
     const update = () => {
       try {
-        if (!vv) {
-          setKeyboardInset(0);
+        const base = kbBaseRef.current;
+        if (!base) {
+          captureBase();
           return;
         }
-        // Prefer visualViewport math (works with Cap 7 edge-to-edge).
-        const covered = Math.max(
-          0,
-          Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)),
-        );
-        setKeyboardInset(covered > 40 ? covered : 0);
+        const visible = vv ? vv.height : window.innerHeight;
+        // offsetTop shifts when the visual viewport is panned by the IME
+        const offset = vv ? vv.offsetTop || 0 : 0;
+        const covered = Math.max(0, Math.round(base - visible - offset));
+        // Ignore tiny noise; real keyboards are typically > 120px
+        setKeyboardInset(covered > 80 ? covered : 0);
       } catch (_) {
         setKeyboardInset(0);
       }
@@ -9367,16 +9416,19 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
       vv.addEventListener("scroll", update);
     }
     window.addEventListener("resize", update);
-    // focusin helps when IME opens before viewport settles
     window.addEventListener("focusin", update);
+    window.addEventListener("focusout", update);
     update();
     return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
       if (vv) {
         vv.removeEventListener("resize", update);
         vv.removeEventListener("scroll", update);
       }
       window.removeEventListener("resize", update);
       window.removeEventListener("focusin", update);
+      window.removeEventListener("focusout", update);
     };
   }, [open]);
 

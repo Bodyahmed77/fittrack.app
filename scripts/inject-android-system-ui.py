@@ -16,6 +16,9 @@ STATUS_ITEMS = [
     ('android:navigationBarColor', '#000000'),
     ('android:windowBackground', '@android:color/black'),
     ('android:navigationBarDividerColor', '#000000'),
+    # Light icons (false = light content on dark bar)
+    ('android:windowLightStatusBar', 'false'),
+    ('android:windowLightNavigationBar', 'false'),
 ]
 
 

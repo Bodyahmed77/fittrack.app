@@ -66,7 +66,7 @@ export const PRIVACY_POLICY_SECTIONS = [
   },
   {
     title: "12. Contact Us",
-    body: "If you have any questions or concerns about this Privacy Policy or your data, please contact us at:\n\nEmail: support@yourapp.com\nWhatsApp: +20 110 817 8493\nWebsite: https://yourapp.com",
+    body: "If you have any questions or concerns about this Privacy Policy or your data, please contact us at:\n\nEmail: sumoslmer47@gmail.com\nWhatsApp: +20 110 817 8493\nWebsite: https://yourapp.com",
   },
 ];
 
@@ -101,6 +101,6 @@ export const TERMS_SECTIONS = [
   },
   {
     title: "8. Contact",
-    body: "For questions about these Terms, contact us at support@yourapp.com.",
+    body: "For questions about these Terms, contact us at sumoslmer47@gmail.com.",
   },
 ];

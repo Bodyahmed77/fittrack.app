@@ -5,17 +5,7 @@
   "backgroundColor": "#000000",
   "server": {
     "androidScheme": "https",
-    "hostname": "localhost",
-    "allowNavigation": [
-      "accounts.google.com",
-      "*.google.com",
-      "*.googleapis.com",
-      "*.gstatic.com",
-      "*.googleusercontent.com",
-      "fittrack-698fa.firebaseapp.com",
-      "*.firebaseapp.com",
-      "*.firebase.com"
-    ]
+    "hostname": "localhost"
   },
   "plugins": {
     "SplashScreen": {

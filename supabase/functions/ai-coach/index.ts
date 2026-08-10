@@ -8,10 +8,11 @@
 //   GEMINI_API_KEY (required)
 // Optional:
 //   FIREBASE_PROJECT_ID (default: fittrack-698fa)
-//   GEMINI_MODEL (default: gemini-2.5-flash)
+//   GEMINI_MODEL (default: gemini-3.5-flash-lite)
 //
 // Schema: public.ai_usage (uid text, usage_date date, count int) PK (uid, usage_date)
 // Atomic limit: public.reserve_ai_usage(uid, usage_date, limit) → jsonb
+// Chat transcripts are NOT stored. Only daily usage counters persist.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
@@ -19,8 +20,9 @@ import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
 const FREE_LIMIT = 3;
 const PRO_LIMIT = 50;
-// gemini-2.0-flash was shut down by Google (2026).
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+// gemini-2.0-flash shut down; gemini-2.5-flash returns 404 for new API keys.
+// gemini-3.5-flash-lite is GA (docs: ai.google.dev/gemini-api/docs/models).
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.5-flash-lite";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -104,6 +106,7 @@ Deno.serve(async (req) => {
         : new Date().toISOString().slice(0, 10);
     const hasAiPro = !!body.hasAiPro;
     const limit = hasAiPro ? PRO_LIMIT : FREE_LIMIT;
+    // In-request context only (from client React state). Never written to DB.
     const messages = Array.isArray(body.messages)
       ? (body.messages as Array<{ role?: string; content?: string }>).slice(-6)
       : [];
@@ -127,6 +130,7 @@ Deno.serve(async (req) => {
     const sb = createClient(supabaseUrl, serviceKey);
 
     // Atomic reserve: increments count only if under limit (avoids race).
+    // Persists ONLY uid + usage_date + count — never message content.
     const { data: reserved, error: reserveErr } = await sb.rpc(
       "reserve_ai_usage",
       {
@@ -141,7 +145,6 @@ Deno.serve(async (req) => {
         code: reserveErr.code,
         message: String(reserveErr.message || "").slice(0, 160),
       });
-      // Fallback if RPC not applied yet
       const { data: existing, error: readErr } = await sb
         .from("ai_usage")
         .select("count")
@@ -228,6 +231,7 @@ Deno.serve(async (req) => {
 
     const prompt = `${systemPrompt}\n\nUser context: ${userCtx}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 1500)}\nCoach:`;
 
+    // Simple text generateContent only — no tools, grounding, or multimodal.
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiKey)}`,
       {
@@ -236,7 +240,6 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.7,
             maxOutputTokens: 1024,
           },
         }),
@@ -245,7 +248,20 @@ Deno.serve(async (req) => {
 
     if (!geminiRes.ok) {
       const errText = await geminiRes.text();
-      console.error("Gemini error", geminiRes.status, errText.slice(0, 300));
+      // Safe diagnostics only — no prompts, keys, or tokens.
+      let geminiCode = "";
+      try {
+        const parsed = JSON.parse(errText);
+        geminiCode = String(parsed?.error?.status || parsed?.error?.code || "");
+      } catch {
+        /* ignore */
+      }
+      console.error("Gemini error", {
+        status: geminiRes.status,
+        model: GEMINI_MODEL,
+        code: geminiCode,
+        message: errText.slice(0, 180),
+      });
       if (geminiRes.status === 429) {
         return json(429, {
           error: "quota",
@@ -256,6 +272,7 @@ Deno.serve(async (req) => {
         error: "gemini_failed",
         message: "AI generation failed",
         geminiStatus: geminiRes.status,
+        model: GEMINI_MODEL,
       });
     }
 

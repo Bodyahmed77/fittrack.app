@@ -3061,24 +3061,78 @@ function VideoPlayer({ videoId, ar }) {
   const overlayRef = useRef(null);
   const peelTimerRef = useRef(null);
 
+  // TikTok iframe is cross-origin: its document steals vertical pans and they
+  // never bubble to the FitTrack page. A sibling overlay above the iframe
+  // (forced onto its own compositor layer — Android WebView often paints
+  // iframes above normal z-index siblings) forwards vertical drags to the
+  // exercise scroller. Short taps peel the overlay so Play/Pause reaches the
+  // iframe. No user-facing modes/toggles.
   useEffect(() => {
+    if (!show || !isTikTok) return undefined;
+    const el = overlayRef.current;
+    if (!el) return undefined;
+
+    const getScroller = () => {
+      if (typeof document === "undefined") return null;
+      return (
+        document.querySelector("[data-fittrack-scroll]") ||
+        document.querySelector("[data-main-scroll]")
+      );
+    };
+
+    const onStart = (e) => {
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      gestureRef.current = { y: t.clientY, moved: false };
+    };
+
+    const onMove = (e) => {
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      const y = t.clientY;
+      const dy = y - gestureRef.current.y;
+      if (Math.abs(dy) < 4 && !gestureRef.current.moved) return;
+      gestureRef.current.moved = true;
+      gestureRef.current.y = y;
+      const scroller = getScroller();
+      if (scroller) scroller.scrollTop -= dy;
+      // Non-passive listener: stop the browser treating this as a page pan
+      // that goes nowhere (iframe already cannot receive it under the overlay).
+      if (e.cancelable) e.preventDefault();
+    };
+
+    const onEnd = () => {
+      if (gestureRef.current.moved) {
+        gestureRef.current.moved = false;
+        return;
+      }
+      // Short tap: peel overlay so the following interaction can hit TikTok
+      // controls (Play/Pause). Overlay returns shortly after — not a mode UI.
+      el.style.pointerEvents = "none";
+      if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
+      peelTimerRef.current = setTimeout(() => {
+        if (overlayRef.current) overlayRef.current.style.pointerEvents = "auto";
+      }, 1800);
+    };
+
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd, { passive: true });
+    el.addEventListener("touchcancel", onEnd, { passive: true });
+
     return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
       if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
     };
-  }, []);
+  }, [show, isTikTok]);
 
   if (!videoId) return null;
   const embedSrc = isTikTok
     ? `https://www.tiktok.com/embed/v2/${videoId}`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
-
-  const scrollExerciseParent = (dy) => {
-    const el =
-      typeof document !== "undefined"
-        ? document.querySelector("[data-fittrack-scroll]")
-        : null;
-    if (el) el.scrollTop -= dy;
-  };
 
   return (
     <div
@@ -3170,14 +3224,10 @@ function VideoPlayer({ videoId, ar }) {
             background: "#000",
             border: `1px solid ${C.border}`,
             boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
-            isolation: "isolate",
-            overscrollBehavior: "none",
+            // Avoid isolation:isolate — it can let the iframe paint above siblings
+            // in Android WebView and swallow touches meant for the gesture layer.
           }}
         >
-          {/* Always-interactive iframe: Play/Pause works. scrolling=no clips
-              TikTok description/related. Gesture layer forwards vertical pans
-              to the exercise scroller; short taps peel the layer so controls
-              receive the next touch (no mode toggles). */}
           <iframe
             src={embedSrc}
             title={ar ? "فيديو التمرين" : "Exercise video"}
@@ -3192,6 +3242,8 @@ function VideoPlayer({ videoId, ar }) {
               border: "none",
               overflow: "hidden",
               overscrollBehavior: "none",
+              // Keep iframe interactive for Play/Pause when overlay is peeled.
+              zIndex: 1,
             }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
@@ -3203,41 +3255,13 @@ function VideoPlayer({ videoId, ar }) {
               style={{
                 position: "absolute",
                 inset: 0,
-                zIndex: 2,
+                zIndex: 5,
+                // Force a compositor layer above the iframe (Android WebView).
+                transform: "translateZ(0)",
+                WebkitTransform: "translateZ(0)",
+                // Non-zero alpha so the layer reliably receives hit-tests.
+                background: "rgba(0,0,0,0.02)",
                 touchAction: "none",
-                background: "transparent",
-              }}
-              onTouchStart={(e) => {
-                if (!e.touches || !e.touches[0]) return;
-                gestureRef.current = {
-                  y: e.touches[0].clientY,
-                  moved: false,
-                };
-              }}
-              onTouchMove={(e) => {
-                if (!e.touches || !e.touches[0]) return;
-                const y = e.touches[0].clientY;
-                const dy = y - gestureRef.current.y;
-                if (Math.abs(dy) < 6 && !gestureRef.current.moved) return;
-                gestureRef.current.moved = true;
-                gestureRef.current.y = y;
-                scrollExerciseParent(dy);
-                if (e.cancelable) e.preventDefault();
-              }}
-              onTouchEnd={() => {
-                if (gestureRef.current.moved) {
-                  gestureRef.current.moved = false;
-                  return;
-                }
-                const el = overlayRef.current;
-                if (!el) return;
-                el.style.pointerEvents = "none";
-                if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
-                peelTimerRef.current = setTimeout(() => {
-                  if (overlayRef.current) {
-                    overlayRef.current.style.pointerEvents = "auto";
-                  }
-                }, 1600);
               }}
             />
           )}
@@ -3248,7 +3272,7 @@ function VideoPlayer({ videoId, ar }) {
               position: "absolute",
               top: 8,
               right: 8,
-              zIndex: 3,
+              zIndex: 6,
               width: 30,
               height: 30,
               borderRadius: "50%",

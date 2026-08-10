@@ -3029,7 +3029,7 @@ function Toast({ message }) {
         bottom: "calc(90px + env(safe-area-inset-bottom))",
         left: "50%",
         transform: "translateX(-50%)",
-        zIndex: 200,
+        zIndex: 2000,
         background: C.mode === "dark" ? "#22272e" : "#1f2937",
         color: "#fff",
         padding: "11px 20px",

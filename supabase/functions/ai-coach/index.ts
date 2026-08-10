@@ -1,19 +1,17 @@
 // Supabase Edge Function: ai-coach
 // Architecture: Firebase Auth ID token → verify inside function → Gemini
 //
-// Deploy with:
+// Deploy:
 //   supabase functions deploy ai-coach --no-verify-jwt
-// (or set verify_jwt = false in config) so the gateway does not reject
-// Firebase JWTs. Validation happens inside this function.
 //
-// Secrets (Supabase → Edge Functions → Secrets):
-//   GEMINI_API_KEY
+// Secrets:
+//   GEMINI_API_KEY (required)
 // Optional:
 //   FIREBASE_PROJECT_ID (default: fittrack-698fa)
+//   GEMINI_MODEL (default: gemini-2.5-flash)
 //
-// IMPORTANT: Do NOT use oauth2.googleapis.com/tokeninfo for Firebase ID
-// tokens — that endpoint is for Google OAuth ID tokens and rejects
-// securetoken.google.com Firebase JWTs (→ 401 unauthenticated).
+// Schema: public.ai_usage (uid text, usage_date date, count int) PK (uid, usage_date)
+// Atomic limit: public.reserve_ai_usage(uid, usage_date, limit) → jsonb
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
@@ -21,7 +19,8 @@ import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
 const FREE_LIMIT = 3;
 const PRO_LIMIT = 50;
-const GEMINI_MODEL = "gemini-2.0-flash";
+// gemini-2.0-flash was shut down by Google (2026).
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -37,7 +36,7 @@ function json(status: number, body: Record<string, unknown>) {
   });
 }
 
-/** Verify Firebase Auth ID token using Google securetoken JWKS. */
+/** Verify Firebase Auth ID token via Google securetoken JWKS (not tokeninfo). */
 async function verifyFirebaseIdToken(idToken: string) {
   const JWKS = jose.createRemoteJWKSet(
     new URL(
@@ -127,40 +126,85 @@ Deno.serve(async (req) => {
     }
     const sb = createClient(supabaseUrl, serviceKey);
 
-    const { data: existing, error: readErr } = await sb
-      .from("ai_usage")
-      .select("count")
-      .eq("uid", uid)
-      .eq("usage_date", localDate)
-      .maybeSingle();
+    // Atomic reserve: increments count only if under limit (avoids race).
+    const { data: reserved, error: reserveErr } = await sb.rpc(
+      "reserve_ai_usage",
+      {
+        p_uid: uid,
+        p_usage_date: localDate,
+        p_limit: limit,
+      },
+    );
 
-    if (readErr) {
-      console.error("ai_usage read", readErr);
-      return json(500, {
-        error: "backend_error",
-        message: "Usage read failed",
+    if (reserveErr) {
+      console.error("ai_usage reserve", {
+        code: reserveErr.code,
+        message: String(reserveErr.message || "").slice(0, 160),
       });
-    }
+      // Fallback if RPC not applied yet
+      const { data: existing, error: readErr } = await sb
+        .from("ai_usage")
+        .select("count")
+        .eq("uid", uid)
+        .eq("usage_date", localDate)
+        .maybeSingle();
 
-    const used = (existing as { count?: number } | null)?.count ?? 0;
-    if (used >= limit) {
-      return json(429, {
-        error: "daily_limit",
-        code: "daily_limit",
-        message: "Daily AI message limit reached",
-        date: localDate,
-        used,
-        count: used,
-        limit,
-        remaining: 0,
-        hasPro: hasAiPro,
-      });
+      if (readErr) {
+        console.error("ai_usage read", {
+          code: readErr.code,
+          message: String(readErr.message || "").slice(0, 160),
+        });
+        return json(500, {
+          error: "usage_read_failed",
+          message: "Usage read failed",
+        });
+      }
+
+      const used = (existing as { count?: number } | null)?.count ?? 0;
+      if (used >= limit) {
+        return json(429, {
+          error: "daily_limit",
+          code: "daily_limit",
+          message: "Daily AI message limit reached",
+          date: localDate,
+          used,
+          count: used,
+          limit,
+          remaining: 0,
+          hasPro: hasAiPro,
+        });
+      }
+
+      (body as Record<string, unknown>).__legacyUsage = used;
+    } else {
+      const r = (reserved || {}) as {
+        allowed?: boolean;
+        count?: number;
+        limit?: number;
+        remaining?: number;
+      };
+      if (!r.allowed) {
+        return json(429, {
+          error: "daily_limit",
+          code: "daily_limit",
+          message: "Daily AI message limit reached",
+          date: localDate,
+          used: r.count ?? limit,
+          count: r.count ?? limit,
+          limit,
+          remaining: 0,
+          hasPro: hasAiPro,
+        });
+      }
+      (body as Record<string, unknown>).__reservedCount = r.count ?? 1;
+      (body as Record<string, unknown>).__reservedRemaining =
+        r.remaining ?? Math.max(0, limit - (r.count ?? 1));
     }
 
     const geminiKey = Deno.env.get("GEMINI_API_KEY");
     if (!geminiKey) {
       return json(500, {
-        error: "backend_error",
+        error: "gemini_not_configured",
         message: "GEMINI_API_KEY not configured",
       });
     }
@@ -177,7 +221,12 @@ Deno.serve(async (req) => {
       )
       .join("\n");
 
-    const prompt = `${systemPrompt}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 2000)}\nCoach:`;
+    const userCtx =
+      body.context && typeof body.context === "object"
+        ? JSON.stringify(body.context).slice(0, 1200)
+        : "";
+
+    const prompt = `${systemPrompt}\n\nUser context: ${userCtx}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 1500)}\nCoach:`;
 
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiKey)}`,
@@ -204,8 +253,9 @@ Deno.serve(async (req) => {
         });
       }
       return json(500, {
-        error: "backend_error",
+        error: "gemini_failed",
         message: "AI generation failed",
+        geminiStatus: geminiRes.status,
       });
     }
 
@@ -223,13 +273,32 @@ Deno.serve(async (req) => {
       });
     }
 
-    const newCount = used + 1;
-    const { error: writeErr } = await sb.from("ai_usage").upsert(
-      { uid, usage_date: localDate, count: newCount },
-      { onConflict: "uid,usage_date" },
-    );
-    if (writeErr) {
-      console.error("ai_usage write", writeErr);
+    let newCount =
+      typeof (body as Record<string, unknown>).__reservedCount === "number"
+        ? ((body as Record<string, unknown>).__reservedCount as number)
+        : null;
+    let remaining =
+      typeof (body as Record<string, unknown>).__reservedRemaining === "number"
+        ? ((body as Record<string, unknown>).__reservedRemaining as number)
+        : null;
+
+    if (newCount == null) {
+      const used =
+        typeof (body as Record<string, unknown>).__legacyUsage === "number"
+          ? ((body as Record<string, unknown>).__legacyUsage as number)
+          : 0;
+      newCount = used + 1;
+      remaining = Math.max(0, limit - newCount);
+      const { error: writeErr } = await sb.from("ai_usage").upsert(
+        { uid, usage_date: localDate, count: newCount },
+        { onConflict: "uid,usage_date" },
+      );
+      if (writeErr) {
+        console.error("ai_usage write", {
+          code: writeErr.code,
+          message: String(writeErr.message || "").slice(0, 160),
+        });
+      }
     }
 
     return json(200, {
@@ -239,12 +308,15 @@ Deno.serve(async (req) => {
         count: newCount,
         used: newCount,
         limit,
-        remaining: Math.max(0, limit - newCount),
+        remaining: remaining ?? Math.max(0, limit - (newCount || 0)),
         hasPro: hasAiPro,
       },
     });
   } catch (e) {
-    console.error("ai-coach unhandled", e);
+    console.error(
+      "ai-coach unhandled",
+      String((e as Error)?.message || e).slice(0, 200),
+    );
     return json(500, { error: "backend_error", message: "Internal error" });
   }
 });

@@ -12,10 +12,10 @@ STYLES = ROOT / "android" / "app" / "src" / "main" / "res" / "values" / "styles.
 MANIFEST = ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
 
 STATUS_ITEMS = [
-    ("android:statusBarColor", "#000000"),
-    ("android:navigationBarColor", "#000000"),
-    ("android:windowBackground", "@android:color/black"),
-    ("android:navigationBarDividerColor", "#000000"),
+    ('android:statusBarColor', '#000000'),
+    ('android:navigationBarColor', '#000000'),
+    ('android:windowBackground', '@android:color/black'),
+    ('android:navigationBarDividerColor', '#000000'),
 ]
 
 
@@ -23,10 +23,12 @@ def patch_styles(path: Path) -> str:
     if not path.is_file():
         return "styles.xml missing (skip)"
     text = path.read_text(encoding="utf-8")
+    # Ensure each item exists inside every <style> that looks like AppTheme
     changed = False
     for name, value in STATUS_ITEMS:
         item = f'<item name="{name}">{value}</item>'
-        if f'name="{name}"' in text:
+        if name.split(":")[-1] in text and f'name="{name}"' in text:
+            # replace existing value
             new_text, n = re.subn(
                 rf'<item name="{re.escape(name)}">[^<]*</item>',
                 item,
@@ -34,8 +36,9 @@ def patch_styles(path: Path) -> str:
             )
             if n:
                 text = new_text
-                changed = True
+                changed = True or changed
             continue
+        # insert before closing </style> of first style block
         if item not in text:
             text2, n = re.subn(
                 r"(</style>)",
@@ -56,6 +59,7 @@ def patch_manifest(path: Path) -> str:
     if not path.is_file():
         return "AndroidManifest missing (skip)"
     text = path.read_text(encoding="utf-8")
+    # Prefer adjustResize so the WebView shrinks with the keyboard (chat composer).
     if "windowSoftInputMode" in text:
         new_text, n = re.subn(
             r'android:windowSoftInputMode="[^"]*"',
@@ -66,6 +70,7 @@ def patch_manifest(path: Path) -> str:
             path.write_text(new_text, encoding="utf-8")
             return "windowSoftInputMode -> adjustResize"
         return "windowSoftInputMode already set"
+    # Insert on application activity if missing
     new_text, n = re.subn(
         r"(<activity\b[^>]*android:name=\"[^\"]*MainActivity\"[^>]*)(>)",
         r'\1 android:windowSoftInputMode="adjustResize"\2',

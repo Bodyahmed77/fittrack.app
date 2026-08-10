@@ -4,7 +4,18 @@
   "webDir": "dist",
   "backgroundColor": "#000000",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "hostname": "localhost",
+    "allowNavigation": [
+      "accounts.google.com",
+      "*.google.com",
+      "*.googleapis.com",
+      "*.gstatic.com",
+      "*.googleusercontent.com",
+      "fittrack-698fa.firebaseapp.com",
+      "*.firebaseapp.com",
+      "*.firebase.com"
+    ]
   },
   "plugins": {
     "SplashScreen": {

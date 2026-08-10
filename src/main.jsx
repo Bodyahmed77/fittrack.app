@@ -1,15 +1,31 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { consumeGoogleRedirectResult } from "./googleAuth";
+import {
+  consumeGoogleRedirectResult,
+  installGoogleAuthAppStateHook,
+} from "./googleAuth";
 
 // Complete Android Google redirect (Firebase JS) before the UI mounts so
 // onAuthStateChanged sees the signed-in user immediately on return.
-consumeGoogleRedirectResult().catch((e) => {
-  console.warn(
-    "[GoogleSignIn] startup redirect consume failed",
-    e?.code || "",
-    String(e?.message || e).slice(0, 160),
-  );
+// createInitialState is optional — googleAuth falls back to a minimal user doc.
+consumeGoogleRedirectResult()
+  .then((result) => {
+    if (result?.user) {
+      console.info("[GoogleSignIn] startup redirect consumed");
+    }
+  })
+  .catch((e) => {
+    console.warn(
+      "[GoogleSignIn] startup redirect consume failed",
+      e?.code || "",
+      String(e?.message || e).slice(0, 160),
+    );
+  });
+
+// If the user backgrounds the app during OAuth and returns, retry consume
+// and always emit the settled event so loading UI cannot stick forever.
+installGoogleAuthAppStateHook().catch((e) => {
+  console.warn("[GoogleSignIn] app state hook install failed", e);
 });
 
 const App = React.lazy(() => import("./App.jsx"));

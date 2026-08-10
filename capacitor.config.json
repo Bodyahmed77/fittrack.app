@@ -24,9 +24,11 @@
     },
     "FirebaseAuthentication": {
       "skipNativeAuth": true,
-      "providers": [
-        "google.com"
-      ]
+      "providers": ["google.com"]
+    },
+    "Keyboard": {
+      "resize": "none",
+      "resizeOnFullScreen": false
     }
   }
 }

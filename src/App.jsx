@@ -3056,20 +3056,29 @@ function Toast({ message }) {
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [show, setShow] = useState(false);
-  // When true, iframe receives taps (play/pause). Default false so vertical
-  // swipes over the video area scroll the parent exercise screen instead.
-  const [iframeInteractive, setIframeInteractive] = useState(false);
   const isTikTok = !!videoId && /^\d+$/.test(videoId);
+  const gestureRef = useRef({ y: 0, moved: false });
+  const overlayRef = useRef(null);
+  const peelTimerRef = useRef(null);
 
-  // Reset interaction lock each time the player opens.
   useEffect(() => {
-    if (!show) setIframeInteractive(false);
-  }, [show]);
+    return () => {
+      if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
+    };
+  }, []);
 
   if (!videoId) return null;
   const embedSrc = isTikTok
     ? `https://www.tiktok.com/embed/v2/${videoId}`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+
+  const scrollExerciseParent = (dy) => {
+    const el =
+      typeof document !== "undefined"
+        ? document.querySelector("[data-fittrack-scroll]")
+        : null;
+    if (el) el.scrollTop -= dy;
+  };
 
   return (
     <div
@@ -3165,10 +3174,10 @@ function VideoPlayer({ videoId, ar }) {
             overscrollBehavior: "none",
           }}
         >
-          {/* TikTok embed is cross-origin and scrollable. We clip it and, by
-              default, set pointer-events:none so vertical swipes reach the
-              parent exercise scroller (NOT preventDefault — that blocked parent).
-              User can enable interaction via the center control. */}
+          {/* Always-interactive iframe: Play/Pause works. scrolling=no clips
+              TikTok description/related. Gesture layer forwards vertical pans
+              to the exercise scroller; short taps peel the layer so controls
+              receive the next touch (no mode toggles). */}
           <iframe
             src={embedSrc}
             title={ar ? "فيديو التمرين" : "Exercise video"}
@@ -3183,57 +3192,54 @@ function VideoPlayer({ videoId, ar }) {
               border: "none",
               overflow: "hidden",
               overscrollBehavior: "none",
-              // YouTube needs interaction; TikTok defaults to none so parent scrolls.
-              pointerEvents:
-                isTikTok && !iframeInteractive ? "none" : "auto",
             }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
           />
-          {isTikTok && !iframeInteractive && (
-            <button
-              type="button"
-              onClick={() => setIframeInteractive(true)}
+          {isTikTok && (
+            <div
+              ref={overlayRef}
+              aria-hidden
               style={{
                 position: "absolute",
-                left: "50%",
-                top: "50%",
-                transform: "translate(-50%, -50%)",
+                inset: 0,
                 zIndex: 2,
-                padding: "10px 14px",
-                borderRadius: 20,
-                border: "none",
-                background: "rgba(0,0,0,0.72)",
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 12,
-                cursor: "pointer",
+                touchAction: "none",
+                background: "transparent",
               }}
-            >
-              {ar ? "تشغيل / تحكم" : "Play / Controls"}
-            </button>
-          )}
-          {isTikTok && iframeInteractive && (
-            <button
-              type="button"
-              onClick={() => setIframeInteractive(false)}
-              style={{
-                position: "absolute",
-                left: 8,
-                bottom: 8,
-                zIndex: 2,
-                padding: "6px 10px",
-                borderRadius: 12,
-                border: "none",
-                background: "rgba(0,0,0,0.72)",
-                color: "#fff",
-                fontWeight: 700,
-                fontSize: 11,
-                cursor: "pointer",
+              onTouchStart={(e) => {
+                if (!e.touches || !e.touches[0]) return;
+                gestureRef.current = {
+                  y: e.touches[0].clientY,
+                  moved: false,
+                };
               }}
-            >
-              {ar ? "تمرير الشاشة" : "Scroll page"}
-            </button>
+              onTouchMove={(e) => {
+                if (!e.touches || !e.touches[0]) return;
+                const y = e.touches[0].clientY;
+                const dy = y - gestureRef.current.y;
+                if (Math.abs(dy) < 6 && !gestureRef.current.moved) return;
+                gestureRef.current.moved = true;
+                gestureRef.current.y = y;
+                scrollExerciseParent(dy);
+                if (e.cancelable) e.preventDefault();
+              }}
+              onTouchEnd={() => {
+                if (gestureRef.current.moved) {
+                  gestureRef.current.moved = false;
+                  return;
+                }
+                const el = overlayRef.current;
+                if (!el) return;
+                el.style.pointerEvents = "none";
+                if (peelTimerRef.current) clearTimeout(peelTimerRef.current);
+                peelTimerRef.current = setTimeout(() => {
+                  if (overlayRef.current) {
+                    overlayRef.current.style.pointerEvents = "auto";
+                  }
+                }, 1600);
+              }}
+            />
           )}
           <button
             onClick={() => setShow(false)}
@@ -9371,64 +9377,87 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
     }
   }, [open]);
 
-  // Keyboard lift: lock the "open height" baseline when the drawer opens.
-  // Previous formula (innerHeight - vv.height) often equals 0 on Cap 7 edge-to-edge
-  // because both values shrink together — so the composer never moved.
-  // Using a baseline captured at open time measures the real IME coverage.
-  const kbBaseRef = useRef(0);
+  // Single keyboard system: @capacitor/keyboard height on Android (works with
+  // Cap 7 edge-to-edge). visualViewport is web-only fallback. Pure visualViewport
+  // previously reported 0 because layout+visual heights shrink together.
   useEffect(() => {
     if (!open) {
       setKeyboardInset(0);
-      kbBaseRef.current = 0;
       return undefined;
     }
     if (typeof window === "undefined") return undefined;
-    const vv = window.visualViewport;
-    // Capture baseline AFTER layout settles (next frames).
-    const captureBase = () => {
-      const h = vv ? vv.height : window.innerHeight;
-      if (h > 0) kbBaseRef.current = h;
-    };
-    captureBase();
-    const t1 = window.setTimeout(captureBase, 50);
-    const t2 = window.setTimeout(captureBase, 200);
 
-    const update = () => {
+    let removed = false;
+    const handles = [];
+
+    const setInset = (px) => {
+      if (removed) return;
+      const n = Math.max(0, Math.round(Number(px) || 0));
+      setKeyboardInset(n > 40 ? n : 0);
+    };
+
+    (async () => {
       try {
-        const base = kbBaseRef.current;
-        if (!base) {
-          captureBase();
-          return;
+        const { Capacitor } = await import("@capacitor/core");
+        if (!Capacitor.isNativePlatform()) return;
+        const { Keyboard } = await import("@capacitor/keyboard");
+        try {
+          if (Keyboard.setResizeMode) {
+            await Keyboard.setResizeMode({ mode: "none" });
+          }
+        } catch (_) {
+          /* ignore */
         }
-        const visible = vv ? vv.height : window.innerHeight;
-        // offsetTop shifts when the visual viewport is panned by the IME
-        const offset = vv ? vv.offsetTop || 0 : 0;
-        const covered = Math.max(0, Math.round(base - visible - offset));
-        // Ignore tiny noise; real keyboards are typically > 120px
-        setKeyboardInset(covered > 80 ? covered : 0);
-      } catch (_) {
-        setKeyboardInset(0);
+        handles.push(
+          await Keyboard.addListener("keyboardWillShow", (info) => {
+            setInset(info?.keyboardHeight ?? 0);
+          }),
+        );
+        handles.push(
+          await Keyboard.addListener("keyboardDidShow", (info) => {
+            setInset(info?.keyboardHeight ?? 0);
+          }),
+        );
+        handles.push(
+          await Keyboard.addListener("keyboardWillHide", () => setInset(0)),
+        );
+        handles.push(
+          await Keyboard.addListener("keyboardDidHide", () => setInset(0)),
+        );
+      } catch (e) {
+        console.warn("[AICoach] Keyboard plugin unavailable", e);
       }
-    };
+    })();
 
+    const vv = window.visualViewport;
+    let base = vv ? vv.height : window.innerHeight;
+    const onVv = () => {
+      if (!vv) return;
+      const covered = Math.max(
+        0,
+        Math.round(base - vv.height - (vv.offsetTop || 0)),
+      );
+      setInset(covered);
+    };
     if (vv) {
-      vv.addEventListener("resize", update);
-      vv.addEventListener("scroll", update);
+      vv.addEventListener("resize", onVv);
+      vv.addEventListener("scroll", onVv);
     }
-    window.addEventListener("resize", update);
-    window.addEventListener("focusin", update);
-    window.addEventListener("focusout", update);
-    update();
+
     return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
+      removed = true;
+      handles.forEach((h) => {
+        try {
+          h?.remove?.();
+        } catch (_) {
+          /* ignore */
+        }
+      });
       if (vv) {
-        vv.removeEventListener("resize", update);
-        vv.removeEventListener("scroll", update);
+        vv.removeEventListener("resize", onVv);
+        vv.removeEventListener("scroll", onVv);
       }
-      window.removeEventListener("resize", update);
-      window.removeEventListener("focusin", update);
-      window.removeEventListener("focusout", update);
+      setKeyboardInset(0);
     };
   }, [open]);
 
@@ -12304,6 +12333,7 @@ export default function GymApp() {
       >
         <div
           ref={mainScrollRef}
+          data-fittrack-scroll="1"
           style={{
             flex: 1,
             overflowY: "auto",

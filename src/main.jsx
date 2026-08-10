@@ -1,6 +1,23 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
 
+
+// Keep Android system bars black (matches app chrome after Cap 7 edge-to-edge margins).
+async function applySystemBarColors() {
+  try {
+    const { Capacitor } = await import("@capacitor/core");
+    if (!Capacitor.isNativePlatform()) return;
+    const { StatusBar, Style } = await import("@capacitor/status-bar");
+    await StatusBar.setOverlaysWebView({ overlay: false });
+    await StatusBar.setBackgroundColor({ color: "#000000" });
+    // Style.Dark => light icons for dark backgrounds
+    await StatusBar.setStyle({ style: Style.Dark });
+  } catch (e) {
+    console.warn("[SystemBars] status bar color apply failed", e);
+  }
+}
+applySystemBarColors();
+
 const App = React.lazy(() => import("./App.jsx"));
 
 class ErrorBoundary extends React.Component {

@@ -32,6 +32,41 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Extract Google Web Client ID (from google-services secret, before web build)
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GS_B64:-}" ]; then
+            echo "::warning::GOOGLE_SERVICES_JSON_BASE64 empty — Android Google browser OAuth will fail until set"
+            exit 0
+          fi
+          mkdir -p /tmp/gs-extract
+          echo "$GS_B64" | base64 -d > /tmp/gs-extract/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("/tmp/gs-extract/google-services.json").read_text(encoding="utf-8"))
+          web_id = ""
+          for client in data.get("client") or []:
+              for oa in client.get("oauth_client") or []:
+                  if oa.get("client_type") == 3 and oa.get("client_id"):
+                      web_id = oa["client_id"]
+                      break
+              if web_id:
+                  break
+          out = Path("src/googleWebClientId.js")
+          if not web_id:
+              print("::warning::No client_type 3 Web OAuth client in google-services.json")
+          else:
+              out.write_text(
+                  "// Auto-generated in CI from google-services.json (public client id)\n"
+                  f'export const GOOGLE_WEB_CLIENT_ID = "{web_id}";\n',
+                  encoding="utf-8",
+              )
+              print(f"web client id written (length={len(web_id)})")
+          PY
+
       - name: Build the web app
         run: npm run build
 
@@ -181,6 +216,9 @@ jobs:
 
       - name: Sync web assets into the Android project
         run: npx cap sync android
+
+      - name: Inject Google OAuth deep-link intent-filter
+        run: python3 scripts/inject-google-auth-deeplink.py
 
       - name: Verify google-services.json still present after sync
         run: |

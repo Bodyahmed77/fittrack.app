@@ -5,13 +5,13 @@ export function googleSignInErrorMessage(err, ar) {
   const code = err?.code || "";
   if (code === "timeout") {
     return ar
-      ? "انتهت مهلة تسجيل Google. لو شاشة الحساب ظهرت في Chrome، ارجع للتطبيق بعد الاختيار أو حاول تاني."
-      : "Google Sign-In timed out. If the account chooser appeared in Chrome, return to the app after choosing, or try again.";
+      ? "انتهت مهلة تسجيل Google. لو شاشة الحساب ظهرت، ارجع للتطبيق بعد الاختيار أو حاول تاني."
+      : "Google Sign-In timed out. If the account chooser appeared, return to the app after choosing, or try again.";
   }
-  if (code === "redirect_failed" || code === "oauth_error") {
+  if (code === "redirect_failed") {
     return ar
-      ? "تعذر إكمال تسجيل Google. حاول تاني."
-      : "Could not complete Google Sign-In. Please try again.";
+      ? "تعذر إكمال تسجيل Google داخل التطبيق. حاول تاني."
+      : "Could not complete Google Sign-In inside the app. Please try again.";
   }
   if (code === "popup_blocked") {
     return ar
@@ -30,8 +30,13 @@ export function googleSignInErrorMessage(err, ar) {
   }
   if (code === "developer_error") {
     return ar
-      ? "خطأ إعداد Google Sign-In. تأكد من Web Client ID ورابط العودة com.fittrack.app://google-auth في Google Cloud Console."
-      : "Google Sign-In configuration error. Check the Web Client ID and authorized redirect URI com.fittrack.app://google-auth in Google Cloud Console.";
+      ? "خطأ إعداد Google Sign-In (كود 10). راجع SHA-1 للإصدار الحالي وملف google-services.json (Android + Web)."
+      : "Google Sign-In configuration error (code 10). Check this APK's SHA-1 and google-services.json (Android + Web clients).";
+  }
+  if (code === "credential_manager_unsupported") {
+    return ar
+      ? "هذا الجهاز لا يدعم Credential Manager لتسجيل Google. حدّث خدمات Google Play وحاول تاني."
+      : "This device does not support Google Credential Manager. Update Google Play services and try again.";
   }
   if (
     code === "cancelled" ||

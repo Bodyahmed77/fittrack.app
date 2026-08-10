@@ -114,11 +114,8 @@ function extractReply(data) {
   return "";
 }
 
-/**
- * Classify HTTP errors with distinct codes so the UI does not map every
- * auth-related failure to a single "session expired" string.
- */
 function classifyHttpError(status, data) {
+  const errField = String(data?.error || data?.code || "");
   const msg = String(data?.message || data?.error || "");
   if (status === 401) return "backend_unauthorized";
   if (status === 403) return "forbidden";
@@ -130,22 +127,20 @@ function classifyHttpError(status, data) {
     ) {
       return "daily_limit";
     }
-    if (/quota|resource.?exhausted|rate.?limit/i.test(msg)) {
+    if (/quota|resource.?exhausted|rate.?limit/i.test(msg) || errField === "quota") {
       return "quota";
     }
     return "rate_limit";
   }
+  if (errField === "gemini_not_configured") return "gemini_not_configured";
+  if (errField === "gemini_failed") return "gemini_failed";
+  if (errField === "usage_read_failed") return "usage_read_failed";
+  if (errField === "empty_response") return "empty_response";
   if (status >= 500) return "backend_error";
   if (status >= 400) return "bad_request";
   return "backend_error";
 }
 
-/**
- * Call Supabase Edge Function ai-coach.
- * Uses Firebase ID token only in Authorization (CORS-safe).
- * Do NOT send custom headers not listed in Access-Control-Allow-Headers —
- * browsers will abort the request and surface it as a network failure.
- */
 export async function generateCoachReply({
   messages,
   lang,
@@ -172,7 +167,6 @@ export async function generateCoachReply({
 
   let idToken;
   try {
-    // Force-refresh once so a stale cached token is not sent to the backend.
     idToken = await user.getIdToken(/* forceRefresh */ true);
     diag(
       "[AI_COACH_AUTH] token_obtained uid=" +
@@ -198,8 +192,6 @@ export async function generateCoachReply({
     [...recent].reverse().find((m) => m && m.role === "user" && m.content) ||
     null;
 
-  // ONLY headers allowed by Supabase CORS:
-  // authorization, x-client-info, apikey, content-type
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${idToken}`,
@@ -254,6 +246,15 @@ export async function generateCoachReply({
     data = null;
   }
 
+  if (data && typeof data === "object") {
+    diag(
+      "[AI_COACH_HTTP] body_error=" +
+        String(data.error || data.code || "") +
+        " body_message=" +
+        String(data.message || "").slice(0, 120),
+    );
+  }
+
   const usage = normalizeUsage(data, localDate);
   const code = classifyHttpError(res.status, data);
 
@@ -263,6 +264,8 @@ export async function generateCoachReply({
     );
     err.code = code;
     err.status = res.status;
+    err.backendError = data?.error || data?.code || "";
+    err.backendMessage = data?.message || "";
     if (code === "daily_limit") {
       err.usage = usage || {
         date: data?.date || localDate,

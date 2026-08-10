@@ -3056,9 +3056,25 @@ function Toast({ message }) {
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [show, setShow] = useState(false);
-  if (!videoId) return null;
+  const frameWrapRef = useRef(null);
+  const isTikTok = !!videoId && /^\d+$/.test(videoId);
 
-  const isTikTok = /^\d+$/.test(videoId);
+  // Block vertical pans inside TikTok embed (nested scroll) without killing taps/play.
+  // Must use non-passive listener — React's synthetic onTouchMove is passive on many browsers.
+  useEffect(() => {
+    if (!show || !isTikTok) return undefined;
+    const el = frameWrapRef.current;
+    if (!el) return undefined;
+    const blockPan = (e) => {
+      if (e.touches && e.touches.length === 1) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("touchmove", blockPan, { passive: false });
+    return () => el.removeEventListener("touchmove", blockPan);
+  }, [show, isTikTok]);
+
+  if (!videoId) return null;
   const embedSrc = isTikTok
     ? `https://www.tiktok.com/embed/v2/${videoId}`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
@@ -3154,7 +3170,11 @@ function VideoPlayer({ videoId, ar }) {
             border: `1px solid ${C.border}`,
             boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
             isolation: "isolate",
+            // Clip TikTok chrome (description / related) and block nested scroll.
+            overscrollBehavior: "none",
+            touchAction: "manipulation",
           }}
+          ref={frameWrapRef}
         >
           {/* The iframe sandbox keeps the embed playable and interactive while
               denying top-level navigation, popups and deep links, so tapping
@@ -3164,12 +3184,17 @@ function VideoPlayer({ videoId, ar }) {
             title={ar ? "فيديو التمرين" : "Exercise video"}
             sandbox="allow-scripts allow-same-origin allow-presentation"
             referrerPolicy="no-referrer"
+            scrolling="no"
             style={{
               position: "absolute",
               inset: 0,
               width: "100%",
               height: "100%",
               border: "none",
+              overflow: "hidden",
+              overscrollBehavior: "none",
+              // Prefer taps/play over free panning inside the embed.
+              touchAction: "manipulation",
             }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
@@ -9311,34 +9336,47 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
 
   // Keep the composer above the Android/iOS keyboard without fixed px hacks.
   // visualViewport reports the visible area; the covered bottom is the keyboard.
+  // Listeners are always removed on close/unmount to avoid leaks.
   useEffect(() => {
     if (!open) {
       setKeyboardInset(0);
-      return;
+      return undefined;
     }
-    const vv = typeof window !== "undefined" ? window.visualViewport : null;
-    if (!vv) return;
+    if (typeof window === "undefined") return undefined;
+    const vv = window.visualViewport;
 
     const update = () => {
       try {
+        if (!vv) {
+          setKeyboardInset(0);
+          return;
+        }
+        // Prefer visualViewport math (works with Cap 7 edge-to-edge).
         const covered = Math.max(
           0,
-          Math.round(window.innerHeight - vv.height - vv.offsetTop),
+          Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)),
         );
-        setKeyboardInset(covered);
+        setKeyboardInset(covered > 40 ? covered : 0);
       } catch (_) {
-        /* ignore */
+        setKeyboardInset(0);
       }
     };
 
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
+    if (vv) {
+      vv.addEventListener("resize", update);
+      vv.addEventListener("scroll", update);
+    }
     window.addEventListener("resize", update);
+    // focusin helps when IME opens before viewport settles
+    window.addEventListener("focusin", update);
     update();
     return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
+      if (vv) {
+        vv.removeEventListener("resize", update);
+        vv.removeEventListener("scroll", update);
+      }
       window.removeEventListener("resize", update);
+      window.removeEventListener("focusin", update);
     };
   }, [open]);
 
@@ -9483,12 +9521,14 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         style={{
           position: "absolute",
           top: 0,
-          bottom: 0,
+          // Lift entire drawer above the soft keyboard (dynamic inset).
+          bottom: keyboardInset,
           width: "min(360px, 92vw)",
           background: C.bg,
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
+          transition: "bottom 0.12s ease-out",
           ...panelSide,
         }}
       >
@@ -9652,11 +9692,11 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           style={{
             display: "flex",
             gap: 8,
+            // Panel bottom already accounts for keyboardInset; keep safe-area only.
             padding: "10px 12px calc(12px + env(safe-area-inset-bottom))",
-            paddingBottom: `calc(12px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
             borderTop: `1px solid ${C.border}`,
-            transition: "padding-bottom 0.12s ease-out",
             background: C.bg,
+            flexShrink: 0,
           }}
         >
           <input

@@ -16,7 +16,10 @@ async function applySystemBarColors() {
     console.warn("[SystemBars] status bar color apply failed", e);
   }
 }
+// Splash / Cap bridge can overwrite bar style once; re-apply after settle.
 applySystemBarColors();
+setTimeout(applySystemBarColors, 400);
+setTimeout(applySystemBarColors, 1200);
 
 const App = React.lazy(() => import("./App.jsx"));
 

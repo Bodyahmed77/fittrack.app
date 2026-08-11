@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'scripts/launch-validation.trigger'
+      - 'scripts/launch-validation.trigger2'
 
 permissions:
   contents: read

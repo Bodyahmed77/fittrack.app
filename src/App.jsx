@@ -3087,7 +3087,7 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const [videoLoaded, setVideoLoaded] = useState(false);
   const isTikTok = /^\d+$/.test(videoId);
   const embedSrc = isTikTok
-    ? `https://www.tiktok.com/embed/v2/${videoId}`
+    ? `https://www.tiktok.com/player/v1/${videoId}?controls=1&autoplay=0&description=0&music_info=0&rel=0`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {
@@ -3185,7 +3185,7 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
           fetchPriority="high"
           title={ar ? "فيديو التمرين" : "Exercise video"}
           sandbox="allow-scripts allow-same-origin allow-presentation"
-          referrerPolicy="no-referrer"
+          referrerPolicy="strict-origin-when-cross-origin"
           style={{
             position: "absolute",
             inset: 0,
@@ -3212,7 +3212,7 @@ function VideoPlayer({ videoId, ar }) {
     if (!videoId || typeof document === "undefined") return undefined;
     const isTikTok = /^\d+$/.test(videoId);
     const href = isTikTok
-      ? `https://www.tiktok.com/embed/v2/${videoId}`
+      ? `https://www.tiktok.com/player/v1/${videoId}?controls=1&autoplay=0&description=0&music_info=0&rel=0`
       : `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0`;
     const link = document.createElement("link");
     link.rel = "prefetch";

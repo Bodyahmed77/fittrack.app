@@ -1,0 +1,67 @@
+name: Apply final Fifty Fit polish
+
+on:
+  push:
+    branches:
+      - fix/fifty-fit-launch-polish
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply final polish
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          app=Path('src/App.jsx')
+          text=app.read_text(encoding='utf-8')
+          original=text
+
+          # Keep all remaining day defaults plan-relative so a new account's
+          # Day 1 is consistent in Home, Plan details, Workout, and AI context.
+          text=text.replace('  const todayIdx = (() => {\n  const js = new Date().getDay();\n  return js === 0 ? 6 : js - 1;\n})();\n', '', 1)
+          text=text.replace('const todayIdx = (() => {\n  const js = new Date().getDay();\n  return js === 0 ? 6 : js - 1;\n})();\n', '', 1)
+          text=text.replace('const [day, setDay] = useState(DAYS[todayIdx]);', 'const [day, setDay] = useState(() => planDayForDate(data, dateKey(0)));', 1)
+          text=text.replace('const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);', 'const [selectedDay, setSelectedDay] = useState(() => planDayForDate(data, dateKey(0)));', 1)
+          text=text.replace('            const d = DAYS[todayIdx];\n            const plan =', '            const d = planDayForDate(data, today);\n            const plan =', 1)
+
+          # Prefetch the exact TikTok embed as soon as the exercise detail is
+          # opened. This does not preload all workouts, only the selected one.
+          marker='''function VideoPlayer({ videoId, ar }) {\n  const { C } = useUI();\n  const [open, setOpen] = useState(false);'''
+          repl='''function VideoPlayer({ videoId, ar }) {\n  const { C } = useUI();\n  const [open, setOpen] = useState(false);\n\n  useEffect(() => {\n    if (!videoId || typeof document === "undefined") return undefined;\n    const isTikTok = /^\\d+$/.test(videoId);\n    const href = isTikTok\n      ? `https://www.tiktok.com/embed/v2/${videoId}`\n      : `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0`;\n    const link = document.createElement("link");\n    link.rel = "prefetch";\n    link.as = "document";\n    link.href = href;\n    document.head.appendChild(link);\n    return () => {\n      try { link.remove(); } catch {}\n    };\n  }, [videoId]);'''
+          text=text.replace(marker,repl,1)
+
+          # Show an immediate lightweight loading state instead of a blank
+          # frame while TikTok initializes, then remove it on iframe load.
+          marker='''function FullScreenVideoViewer({ videoId, ar, onClose }) {\n  const isTikTok = /^\\d+$/.test(videoId);'''
+          repl='''function FullScreenVideoViewer({ videoId, ar, onClose }) {\n  const [videoLoaded, setVideoLoaded] = useState(false);\n  const isTikTok = /^\\d+$/.test(videoId);'''
+          text=text.replace(marker,repl,1)
+          text=text.replace('''  useEffect(() => {\n    registerFullScreenVideoClose(() => {''','''  useEffect(() => {\n    setVideoLoaded(false);\n    registerFullScreenVideoClose(() => {''',1)
+          text=text.replace('''        <iframe\n          src={embedSrc}\n          loading="eager"''','''        {!videoLoaded && (\n          <div\n            aria-live="polite"\n            style={{\n              position: "absolute",\n              inset: 0,\n              zIndex: 1,\n              display: "flex",\n              alignItems: "center",\n              justifyContent: "center",\n              background: "#000",\n              color: "#fff",\n              fontSize: 13,\n              fontWeight: 600,\n            }}\n          >\n            {ar ? "جاري تحميل الفيديو…" : "Loading video…"}\n          </div>\n        )}\n        <iframe\n          src={embedSrc}\n          onLoad={() => setVideoLoaded(true)}\n          loading="eager"''',1)
+
+          if text==original:
+            raise SystemExit('No final polish changes applied')
+          app.write_text(text,encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          npm ci
+          npm run build
+
+      - name: Commit and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          git diff --cached --check
+          git commit -m "fix: polish plan context and video loading"
+          git push origin HEAD
+          git rm .github/workflows/apply-final-polish.yml
+          git commit -m "chore: remove temporary polish workflow"
+          git push origin HEAD

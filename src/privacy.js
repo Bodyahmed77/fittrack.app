@@ -2,102 +2,105 @@
 // Fifty Fit — Privacy Policy & Legal Content
 // ============================================================
 // Centralized legal text so it can be edited in one place without
-// touching the app UI. Contact + company fields are PLACEHOLDERS —
-// replace them with your real details before publishing.
+// touching the app UI.
 // ============================================================
 
 export const APP_INFO = {
   name: "Fifty Fit",
   version: "1.0.0",
-  developer: "Fifty", // TODO: replace
-  email: "sumoslmer47@gmail.com", // TODO: replace
-  whatsapp: "201108178493", // TODO: replace
-  website: "https://yourapp.com", // TODO: replace
+  developer: "Fifty Fit",
+  email: "sumoslmer47@gmail.com",
+  whatsapp: "201108178493",
+  website: "https://bodyahmed77.github.io/fittrack.app/",
 };
 
 export const PRIVACY_POLICY_SECTIONS = [
   {
     title: "Effective Date",
-    body: "This Privacy Policy is effective as of the date of your first use of the app and applies to all users of Fifty Fit.",
+    body: "This Privacy Policy is effective as of August 11, 2026 and applies to users of Fifty Fit.",
   },
   {
     title: "1. Introduction",
-    body: 'Fifty Fit ("we", "our", "us") respects your privacy. This Privacy Policy explains what information we collect when you use our mobile application (the "App"), why we collect it, and how we use and protect it. By creating an account and using the App, you agree to the practices described in this policy.',
+    body: 'Fifty Fit ("we", "our", "us") respects your privacy. This Privacy Policy explains what information we collect when you use our mobile application (the "App"), why we collect it, how it is used, and how you can request deletion of your account and associated data.',
   },
   {
     title: "2. Information We Collect",
-    body: "We collect the following categories of information to provide and improve the App:\n\n• Account Information: When you create an account, we collect your name, email address, phone number, and your chosen password (stored securely with industry-standard encryption by our authentication provider). If you sign in with Google, we collect your Google account name and email.\n\n• Personal & Fitness Data: To personalize your experience, we collect information you provide during onboarding, including your age, gender, height, weight, fitness goals, activity level, and preferred workout days.\n\n• Workout History: We store the exercises you complete, the weights and repetitions you log, and the dates on which you train.\n\n• Weight Logs: We store the body-weight entries you record, along with the date and time.\n\n• Nutrition Data: If you use nutrition tracking, we store the foods you log and your daily calorie and macro targets.\n\n• Subscription Status: We record whether you have an active Pro subscription and its expiration date.\n\n• Device & Usage Data: We may collect basic, non-identifying technical information such as app version and device type to diagnose issues and improve performance.",
+    body: "We handle the following categories of information to provide and improve the App:\n\n• Account Information: name, email address, and Google sign-in information.\n\n• Personal & Fitness Data: age, gender, height, weight, fitness goals, activity level, and preferred workout days that you provide.\n\n• Workout History: exercises completed, weights, repetitions, sets, and training dates.\n\n• Weight Logs: body-weight entries and their dates.\n\n• Nutrition Data: foods you log and your daily calorie and macro targets.\n\n• Subscription Status: active Pro entitlements and expiration information needed to provide paid features.\n\n• AI Coach Requests: information from your current FitTrack context and your message that is sent to Google's Gemini API to generate an answer. Fifty Fit does not store a chat-history database.\n\n• Device & Usage Data: limited technical information needed to operate and troubleshoot the App.",
   },
   {
     title: "3. How We Use Your Information",
-    body: "We use the information we collect to:\n\n• Create and manage your account.\n• Generate personalized workout and nutrition plans based on your goals and body data.\n• Track your workouts, weight, and meal history.\n• Provide and manage your Pro subscription features.\n• Send you reminders and notifications you have opted in to.\n• Support you via WhatsApp or email when you contact us (e.g., for your personalized nutrition plan).\n• Improve the App's features, performance, and reliability.\n\nWe never sell your personal data to third parties.",
+    body: "We use information to:\n\n• Create and manage your account.\n• Generate personalized workout and nutrition plans.\n• Track workouts, weight, and meals.\n• Provide and manage Pro subscription features.\n• Provide AI Coach responses when you request them.\n• Send local reminders and notifications you have enabled.\n• Provide support through email or WhatsApp when you contact us.\n• Improve reliability, security, and performance.\n\nWe do not sell your personal information.",
   },
   {
     title: "4. How We Store & Protect Your Data",
-    body: "Your data is stored securely using Google's Firebase infrastructure (Authentication and Cloud Firestore). Access to your data is restricted to your own account and to us for support and moderation purposes. We apply security best practices including secure communications (HTTPS), authentication checks, and database security rules. No method of transmission or storage is 100% secure, but we work to protect your data using reasonable and appropriate safeguards.",
+    body: "Account and app data are stored using Google Firebase (Authentication and Cloud Firestore). Subscription entitlement and AI usage records are stored in Supabase. We use authenticated requests, HTTPS, server-side authorization checks, and database security controls. No method of transmission or storage is completely risk-free, but we apply reasonable safeguards appropriate to the service.",
   },
   {
-    title: "5. Payments & Subscriptions",
-    body: "All payments for Pro subscriptions are processed securely by Google Play Billing. We do not collect or store your credit card or payment details. Google processes your payment and provides us only with confirmation that your subscription is active. You can manage or cancel your subscription at any time through the Google Play Store.",
+    title: "5. AI Coach & Google Gemini",
+    body: "AI Coach sends the information necessary to answer your request to Google's Gemini API. Fifty Fit does not store conversations in a chat-history table or permanent chat log. Google's handling of Gemini API prompts, responses, abuse-monitoring logs, and related technical data is governed by Google's applicable Gemini API terms and policies. We do not use Google Search or Maps grounding in AI Coach.",
   },
   {
-    title: "6. Notifications",
-    body: "With your permission, we send local notifications (such as workout reminders). These notifications are generated on your device and do not transmit your personal data to our servers beyond what is described in this policy.",
+    title: "6. Payments & Subscriptions",
+    body: "Pro subscriptions are processed through Google Play Billing. Fifty Fit does not collect or store your payment card details. Google Play manages payment processing and subscription management. You can manage or cancel a Google Play subscription through Google Play's subscription center. Deleting your Fifty Fit account does not automatically cancel a Google Play subscription.",
   },
   {
-    title: "7. Data Sharing & Third Parties",
-    body: "We do not sell or rent your personal information. We may share limited data with trusted service providers who help us operate the App (for example, authentication and cloud storage via Google Firebase). These providers are bound by confidentiality obligations and may only use your data to perform services on our behalf.",
+    title: "7. Notifications",
+    body: "With your permission, Fifty Fit may schedule local workout reminders on your device. These notifications are generated locally and are not a separate server-side messaging history.",
   },
   {
-    title: "8. Analytics & Crash Reporting",
-    body: "We do not currently use third-party analytics or crash-reporting SDKs that collect personal identifiers. If we add such tools in the future, this policy will be updated to clearly describe what data is collected and how it is used.",
+    title: "8. Data Sharing & Third Parties",
+    body: "We do not sell or rent your personal information. We use trusted service providers necessary to operate the App, including Google Firebase, Google Play Billing, Supabase, and Google Gemini API. Each service processes information according to its applicable terms and policies.",
   },
   {
-    title: "9. Your Rights & Choices",
-    body: "You have the right to:\n\n• Access and update your personal information through the App's profile and settings screens.\n• Export a copy of your data by contacting us.\n• Delete your account and associated data at any time using the 'Delete Account' option in Settings. When you delete your account, we permanently remove your profile, workout history, weight logs, meal logs, and subscription status from our servers.\n• Opt out of notifications at any time from the App settings or your device settings.\n\nTo exercise any of these rights, contact us using the details at the end of this policy.",
+    title: "9. Analytics & Crash Reporting",
+    body: "Fifty Fit does not currently use a separate third-party analytics or crash-reporting SDK that stores a personal analytics profile. If this changes, this policy will be updated to describe the relevant data handling.",
   },
   {
-    title: "10. Children's Privacy",
-    body: "The App is not directed at children under the age of 13, and we do not knowingly collect personal information from children under 13. If you believe a child has provided us with personal information, please contact us and we will take steps to remove that information.",
+    title: "10. Your Rights & Account Deletion",
+    body: "You can update your information through the App. You can request deletion of your account and associated Fifty Fit data from Settings → Delete Account while signed in. The deletion flow removes the Firebase account, Firestore profile, and server-side Supabase records associated with the account, including entitlement, purchase-token-claim, and AI-usage records.\n\nIf you no longer have the App installed, use the external deletion resource at https://bodyahmed77.github.io/fittrack.app/account-deletion.html.\n\nGoogle Play may retain transaction records required for its own payment, legal, fraud-prevention, or accounting purposes. Google Play subscription cancellation is separate and must be performed through Google Play.",
   },
   {
-    title: "11. Changes to This Policy",
-    body: "We may update this Privacy Policy from time to time. If we make material changes, we will notify you by updating the policy within the App. Your continued use of the App after changes are posted constitutes your acceptance of the updated policy.",
+    title: "11. Children's Privacy",
+    body: "The App is not directed at children under 13, and we do not knowingly collect personal information from children under 13.",
   },
   {
-    title: "12. Contact Us",
-    body: "If you have any questions or concerns about this Privacy Policy or your data, please contact us at:\n\nEmail: sumoslmer47@gmail.com\nWhatsApp: +20 110 817 8493\nWebsite: https://yourapp.com",
+    title: "12. Changes to This Policy",
+    body: "We may update this Privacy Policy when our data practices change. Material changes will be reflected in the published policy and, where appropriate, in the App.",
+  },
+  {
+    title: "13. Contact Us",
+    body: "For privacy or deletion requests:\n\nEmail: sumoslmer47@gmail.com\nWhatsApp: +20 110 817 8493\nWebsite: https://bodyahmed77.github.io/fittrack.app/",
   },
 ];
 
 export const TERMS_SECTIONS = [
   {
     title: "1. Acceptance of Terms",
-    body: 'By downloading, accessing, or using Fifty Fit (the "App"), you agree to be bound by these Terms of Service. If you do not agree, please do not use the App.',
+    body: 'By downloading, accessing, or using Fifty Fit (the "App"), you agree to these Terms of Service. If you do not agree, please do not use the App.',
   },
   {
     title: "2. Use of the App",
-    body: "The App provides fitness tracking, workout plans, and nutrition information for general informational and educational purposes only. It is not medical advice. You should consult a qualified health professional before beginning any exercise or nutrition program, especially if you have a pre-existing medical condition.",
+    body: "Fifty Fit provides fitness tracking, workout plans, nutrition information, and an AI Coach for general informational and educational purposes. The App is not medical advice, diagnosis, or treatment. Consult a qualified health professional before starting an exercise or nutrition program, especially if you have a medical condition.",
   },
   {
     title: "3. Accounts",
-    body: "You are responsible for maintaining the confidentiality of your account credentials and for all activity that occurs under your account. You agree to provide accurate information and to update it as needed.",
+    body: "You are responsible for maintaining access to your account and for providing accurate information. You may request account deletion at any time through the App or the external deletion resource.",
   },
   {
     title: "4. Subscriptions & Payments",
-    body: "Pro features are available through auto-renewing subscriptions purchased via Google Play Billing. Subscriptions renew automatically until cancelled. You can manage or cancel subscriptions through the Google Play Store. We do not offer refunds except where required by applicable law or the Google Play refund policy.",
+    body: "Pro features are provided through Google Play Billing subscriptions. Subscriptions may renew automatically according to the selected Google Play base plan. You can manage or cancel them through Google Play. Refunds are handled according to applicable law and Google Play's refund policies.",
   },
   {
     title: "5. Intellectual Property",
-    body: "All content in the App, including illustrations, text, graphics, and design, is the property of the developer and is protected by applicable intellectual property laws. You may not copy, modify, or redistribute it without permission.",
+    body: "Fifty Fit's original app content, illustrations, text, graphics, and design are protected by applicable intellectual property laws. Third-party names, services, and media remain the property of their respective owners.",
   },
   {
     title: "6. Limitation of Liability",
-    body: 'The App is provided "as is" without warranties of any kind. To the maximum extent permitted by law, we are not liable for any indirect, incidental, or consequential damages arising from your use of the App.',
+    body: 'The App is provided "as is" without warranties of any kind. To the maximum extent permitted by law, we are not liable for indirect, incidental, or consequential damages arising from use of the App.',
   },
   {
     title: "7. Termination",
-    body: "We may suspend or terminate your access to the App if you violate these Terms. You may stop using the App and delete your account at any time.",
+    body: "You may stop using Fifty Fit and request account deletion at any time. We may suspend access for abuse, fraud, or material violations of these Terms.",
   },
   {
     title: "8. Contact",

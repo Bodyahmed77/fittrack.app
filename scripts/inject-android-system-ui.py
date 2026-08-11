@@ -1,43 +1,41 @@
 #!/usr/bin/env python3
-"""Force pure-black Android status + navigation bars after `npx cap sync`.
+"""Patch generated Android resources and enforce the current Play target API.
 
-Root cause of residual gray strips (Cap 7 + edge-to-edge):
-- adjustMarginsForEdgeToEdge leaves native margin regions outside the WebView.
-- On Android 10+ enforceStatusBarContrast / enforceNavigationBarContrast can
-  paint a light scrim that reads as gray even when bar colors are #000000.
-- StatusBar JS plugin does not set navigationBarColor at all.
-- statusBarColor is ignored on some Android 15 builds; windowBackground and
-  contrast flags still matter for the margin regions.
+This script runs after `npx cap sync`, so it is the right place for changes that
+must survive the generated Android project being recreated on every CI build.
 
-This script is idempotent and patches EVERY <style> block in values/styles.xml.
+It currently:
+- forces pure-black Android status/navigation bars;
+- keeps adjustResize for the keyboard;
+- forces compileSdk/targetSdk 36 for the Google Play 2026 submission deadline;
+- installs Android 36/build-tools 36 when sdkmanager is available in CI.
 """
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STYLES = ROOT / "android" / "app" / "src" / "main" / "res" / "values" / "styles.xml"
 STYLES_V31 = ROOT / "android" / "app" / "src" / "main" / "res" / "values-v31" / "styles.xml"
 MANIFEST = ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
+VARIABLES = ROOT / "android" / "variables.gradle"
 
-# Order matters only for readability.
 STATUS_ITEMS = [
     ("android:statusBarColor", "#000000"),
     ("android:navigationBarColor", "#000000"),
     ("android:windowBackground", "@android:color/black"),
     ("android:navigationBarDividerColor", "#000000"),
-    # Light icons on dark bars
     ("android:windowLightStatusBar", "false"),
     ("android:windowLightNavigationBar", "false"),
-    # Disable Material contrast scrims that render as gray strips
     ("android:enforceStatusBarContrast", "false"),
     ("android:enforceNavigationBarContrast", "false"),
 ]
 
 
 def _upsert_items_in_style_block(block: str) -> str:
-    """Insert or replace each STATUS_ITEMS entry inside one <style>...</style>."""
     body = block
     for name, value in STATUS_ITEMS:
         item = f'<item name="{name}">{value}</item>'
@@ -73,7 +71,6 @@ def patch_manifest(path: Path) -> str:
     if not path.is_file():
         return "AndroidManifest missing (skip)"
     text = path.read_text(encoding="utf-8")
-    # adjustResize helps some devices; edge-to-edge may still ignore it for IME.
     if "windowSoftInputMode" in text:
         new_text, n = re.subn(
             r'android:windowSoftInputMode="[^"]*"',
@@ -96,7 +93,52 @@ def patch_manifest(path: Path) -> str:
     return "manifest unchanged"
 
 
+def patch_android_api() -> str:
+    if not VARIABLES.is_file():
+        return "variables.gradle missing — cap add/sync may have failed"
+
+    text = VARIABLES.read_text(encoding="utf-8")
+    original = text
+    text = re.sub(
+        r"compileSdkVersion\s*=\s*\d+",
+        "compileSdkVersion = 36",
+        text,
+    )
+    text = re.sub(
+        r"targetSdkVersion\s*=\s*\d+",
+        "targetSdkVersion = 36",
+        text,
+    )
+    if "compileSdkVersion" not in text:
+        text = text.replace("ext {", "ext {\n    compileSdkVersion = 36", 1)
+    if "targetSdkVersion" not in text:
+        text = text.replace("ext {", "ext {\n    targetSdkVersion = 36", 1)
+    if text != original:
+        VARIABLES.write_text(text, encoding="utf-8")
+        status = "compileSdkVersion=36 targetSdkVersion=36"
+    else:
+        status = "compileSdkVersion=36 targetSdkVersion=36 already set"
+
+    sdkmanager = shutil.which("sdkmanager")
+    if not sdkmanager:
+        return status + "; sdkmanager not found (local build may need Android 36 installed manually)"
+
+    try:
+        subprocess.run(
+            [sdkmanager, "platforms;android-36", "build-tools;36.0.0"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return status + "; Android 36 SDK/build-tools installed"
+    except subprocess.CalledProcessError as exc:
+        print(exc.stdout or "")
+        raise SystemExit("Failed to install Android 36 SDK/build-tools") from exc
+
+
 def main() -> None:
+    print(patch_android_api())
     print(patch_styles(STYLES))
     print(patch_styles(STYLES_V31))
     print(patch_manifest(MANIFEST))

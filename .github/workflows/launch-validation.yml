@@ -6,6 +6,7 @@ on:
       - 'scripts/launch-validation.trigger'
       - 'scripts/launch-validation.trigger2'
       - 'scripts/launch-validation.trigger3'
+      - 'scripts/launch-validation.trigger4'
 
 permissions:
   contents: read

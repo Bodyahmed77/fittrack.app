@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "src" / "App.jsx"
@@ -87,16 +88,22 @@ replace_all(PRIVACY, [
 replace_all(CAP, [('"appName": "FitTrack"', '"appName": "Fifty Fit"')])
 replace_all(INDEX, [('<title>Fifty</title>', '<title>Fifty Fit</title>')])
 
-# Normalize remaining public-name strings in setup/legal docs.
 for rel in ["README.md", "AI_COACH_SETUP.md", "GOOGLE_SIGNIN_SETUP.md", "SIGNING_SETUP.md"]:
     p = ROOT / rel
     if p.exists():
         replace_all(p, [("FitTrack", "Fifty Fit")])
 
-# Remove this one-shot maintenance workflow and script after this run.
+# Remove this one-shot maintenance workflow and script from the repository,
+# then commit the actual launch changes so they persist on the branch.
 workflow = ROOT / ".github" / "workflows" / "launch-finalize.yml"
 if workflow.exists():
     workflow.unlink()
 Path(__file__).unlink()
 
-print("Launch finalization applied: Fifty Fit branding + mandatory Google-account phone onboarding.")
+subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+subprocess.run(["git", "add", "-A"], cwd=ROOT, check=True)
+subprocess.run(["git", "commit", "-m", "fix: finalize Fifty Fit launch identity and phone onboarding"], cwd=ROOT, check=True)
+subprocess.run(["git", "push", "origin", "HEAD:fix/play-readiness-p0-p1"], cwd=ROOT, check=True)
+
+print("Launch finalization applied and persisted: Fifty Fit branding + mandatory Google-account phone onboarding.")

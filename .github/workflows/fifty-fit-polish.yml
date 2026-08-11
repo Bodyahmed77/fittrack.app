@@ -43,7 +43,6 @@ jobs:
           )
           text = text.replace('      const vv = window.visualViewport;\n', '      vv = window.visualViewport;\n', 1)
           text = text.replace('      const onVv = () => {\n', '      onVv = () => {\n', 1)
-
           text = text.replace(
               '            padding: "10px 12px calc(12px + env(safe-area-inset-bottom))",',
               '            padding: keyboardInset > 0 ? "10px 12px 6px" : "10px 12px max(8px, env(safe-area-inset-bottom))",',
@@ -73,7 +72,6 @@ jobs:
               '  const dayName = planDayForDate(data, dateKey(0));\n  const activePlan =\n',
               1,
           )
-
           text = text.replace(
               '      setSelectedDay(weekdayOf(iso));\n',
               '      setSelectedDay(planDayForDate(data, iso));\n',
@@ -121,8 +119,9 @@ jobs:
           index.write_text(html, encoding='utf-8')
           PY
 
-      - name: Validate source and build
+      - name: Repair and validate dependencies
         run: |
+          npm install --package-lock-only --ignore-scripts
           npm ci
           npm run build
           npm audit --omit=dev --audit-level=high
@@ -133,9 +132,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.jsx index.html
+          git add src/App.jsx index.html package-lock.json
           git diff --cached --check
-          git commit -m "fix: harden AI keyboard, crash, plan start, and video loading" || exit 0
+          git commit -m "fix: harden AI keyboard, crash, plan start, video loading, and lockfile" || exit 0
           git push origin HEAD:${{ github.head_ref }}
           git rm .github/workflows/fifty-fit-polish.yml
           git commit -m "chore: remove temporary polish workflow"

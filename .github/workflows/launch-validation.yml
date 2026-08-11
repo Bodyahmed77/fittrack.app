@@ -1,0 +1,33 @@
+name: Launch validation
+
+on:
+  push:
+    paths:
+      - 'scripts/launch-validation.trigger'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build web app
+        run: npm run build
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check Supabase functions
+        run: |
+          deno check supabase/functions/ai-coach/index.ts
+          deno check supabase/functions/ai-report/index.ts

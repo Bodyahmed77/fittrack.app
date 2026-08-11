@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "src" / "App.jsx"
@@ -18,7 +17,6 @@ def replace_all(path, replacements):
     path.write_text(text, encoding="utf-8")
     return True
 
-
 # Public app branding: keep internal identifiers/package IDs stable, but make
 # every user-visible app name consistently "Fifty Fit".
 replace_all(APP, [
@@ -29,7 +27,6 @@ replace_all(APP, [
     ('FitTrack Pro', 'Fifty Fit Pro'),
     ('Unlock FitTrack Pro', 'Unlock Fifty Fit Pro'),
     ('Get more out of FitTrack', 'Get more out of Fifty Fit'),
-    ('Fifty Fit Pro subscription', 'Fifty Fit Pro subscription'),
 ])
 
 # Google-created accounts start with an empty phone. Make phone mandatory
@@ -43,8 +40,7 @@ if 'const [phone, setPhone] = useState(data.account.phone || "");' not in text:
         1,
     )
 
-# Shift onboarding step indexes by one. Do this in descending order so a
-# replacement cannot be shifted twice.
+# Shift only the onboarding step indexes, descending to avoid double shifts.
 for old, new in [(6, 7), (5, 6), (4, 5), (3, 4), (2, 3), (1, 2), (0, 1)]:
     text = text.replace(f'step === {old}', f'step === {new}')
 
@@ -54,15 +50,11 @@ text = text.replace(
     1,
 )
 
-# Validation indexes were shifted with the UI indexes above; add the new
-# mandatory phone validation at step 0.
-phone_validation = '''  const next = () => {\n    setErr("");\n    if (step === 0 && (!phone.trim() || phone.trim().replace(/\\D/g, "").length < 8)) {\n      setErr(ar ? "اكتب رقم تليفون صحيح" : "Enter a valid phone number");\n      return;\n    }'''
-text = re.sub(
-    r'  const next = \(\) => \{\n    setErr\(""\);',
-    phone_validation,
-    text,
-    count=1,
-)
+old_validation = '''  const next = () => {\n    setErr("");'''
+new_validation = '''  const next = () => {\n    setErr("");\n    if (step === 0 && (!phone.trim() || phone.trim().replace(/\\D/g, "").length < 8)) {\n      setErr(ar ? "اكتب رقم تليفون صحيح" : "Enter a valid phone number");\n      return;\n    }'''
+if old_validation not in text:
+    raise SystemExit("Could not find onboarding next() validation")
+text = text.replace(old_validation, new_validation, 1)
 
 text = text.replace(
     '    next.account = {\n      ...next.account,\n      gender,',
@@ -70,12 +62,12 @@ text = text.replace(
     1,
 )
 
-# Insert the phone step immediately before the now-shifted gender step.
-marker = '        {step === 1 && (\n          <div>\n            <div\n              style={{\n                color: C.text,\n                fontSize: 21,\n                fontWeight: 800,\n                marginBottom: 20,\n              }}\n            >\n              {ar ? "إيه نوعك؟" : "What\'s your gender?"}'
-if 'placeholder={ar ? "رقم التليفون" : "Phone number"}' not in text[text.find('function OnboardingScreen'):text.find('function OnboardingScreen') + 20000]:
+# Insert the phone step immediately before the shifted gender step.
+marker = '''        {step === 1 && (\n          <div>\n            <div\n              style={{\n                color: C.text,\n                fontSize: 21,\n                fontWeight: 800,\n                marginBottom: 20,\n              }}\n            >\n              {ar ? "إيه نوعك؟" : "What's your gender?"}'''
+if 'placeholder={ar ? "رقم التليفون" : "Phone number"}' not in text:
     phone_step = '''        {step === 0 && (\n          <div>\n            <div\n              style={{\n                color: C.text,\n                fontSize: 21,\n                fontWeight: 800,\n                marginBottom: 8,\n              }}\n            >\n              {ar ? "رقم تليفونك إيه؟" : "What's your phone number?"}\n            </div>\n            <div style={{ color: C.sub, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>\n              {ar\n                ? "هنستخدمه للتواصل معاك بخصوص الخطط المخصصة والدعم عند الحاجة."\n                : "We'll use it for custom-plan communication and support when needed."}\n            </div>\n            <TextField\n              icon={Phone}\n              type="tel"\n              value={phone}\n              onChange={(e) => setPhone(e.target.value)}\n              placeholder={ar ? "رقم التليفون" : "Phone number"}\n            />\n          </div>\n        )}\n'''
     if marker not in text:
-        raise SystemExit('Could not find onboarding gender marker')
+        raise SystemExit("Could not find onboarding gender marker")
     text = text.replace(marker, phone_step + marker, 1)
 
 APP.write_text(text, encoding="utf-8")
@@ -91,22 +83,20 @@ replace_all(PRIVACY, [
     ('FitTrack context', 'Fifty Fit context'),
     ('your current FitTrack context', 'your current Fifty Fit context'),
     ('associated FitTrack data', 'associated Fifty Fit data'),
-    ('associated with the account', 'associated with the account'),
-    ('https://bodyahmed77.github.io/fittrack.app/account-deletion.html', 'https://bodyahmed77.github.io/fittrack.app/account-deletion.html'),
 ])
 replace_all(CAP, [('"appName": "FitTrack"', '"appName": "Fifty Fit"')])
 replace_all(INDEX, [('<title>Fifty</title>', '<title>Fifty Fit</title>')])
 
-# Remove this one-shot maintenance workflow and script after the first run.
-workflow = ROOT / ".github" / "workflows" / "launch-finalize.yml"
-if workflow.exists():
-    workflow.unlink()
-Path(__file__).unlink()
-
-# Normalize any remaining public-name strings in small legal/docs files.
+# Normalize remaining public-name strings in setup/legal docs.
 for rel in ["README.md", "AI_COACH_SETUP.md", "GOOGLE_SIGNIN_SETUP.md", "SIGNING_SETUP.md"]:
     p = ROOT / rel
     if p.exists():
         replace_all(p, [("FitTrack", "Fifty Fit")])
+
+# Remove this one-shot maintenance workflow and script after this run.
+workflow = ROOT / ".github" / "workflows" / "launch-finalize.yml"
+if workflow.exists():
+    workflow.unlink()
+Path(__file__).unlink()
 
 print("Launch finalization applied: Fifty Fit branding + mandatory Google-account phone onboarding.")

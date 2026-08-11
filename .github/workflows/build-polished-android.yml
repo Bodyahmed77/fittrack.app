@@ -1,3 +1,4 @@
+# Final Android validation workflow; removed after the release candidate build.
 name: Validate polished Fifty Fit Android
 
 on:

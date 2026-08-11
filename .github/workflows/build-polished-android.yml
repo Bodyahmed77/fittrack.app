@@ -1,4 +1,4 @@
-# Final Android validation workflow; removed after the release candidate build.
+# Temporary final Android release-candidate validation; remove after successful build.
 name: Validate polished Fifty Fit Android
 
 on:
@@ -117,10 +117,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: fifty-fit-polished-apk
+          name: fifty-fit-final-apk
           path: android/app/build/outputs/apk/release/app-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: fifty-fit-polished-aab
+          name: fifty-fit-final-aab
           path: android/app/build/outputs/bundle/release/app-release.aab

@@ -1,0 +1,43 @@
+name: Enforce Android API 36 in main release workflow
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add API 36 configuration to release workflow
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/build-android.yml')
+          text=p.read_text(encoding='utf-8')
+          marker='''      # google-services.json must exist BEFORE Gradle runs. Never commit it;\n'''
+          step='''      - name: Force Android 16 / API 36 for Google Play\n        run: |\n          set -euo pipefail\n          sdkmanager "platforms;android-36" "build-tools;36.0.0"\n          python3 - <<'ENDAPI36'\n          from pathlib import Path\n          import re\n          p = Path("android/variables.gradle")\n          text = p.read_text(encoding="utf-8")\n          text = re.sub(r"targetSdkVersion\\s*=\\s*\\d+", "targetSdkVersion = 36", text)\n          text = re.sub(r"compileSdkVersion\\s*=\\s*\\d+", "compileSdkVersion = 36", text)\n          if "targetSdkVersion" not in text: text += "\\next.targetSdkVersion = 36\\n"\n          if "compileSdkVersion" not in text: text += "\\next.compileSdkVersion = 36\\n"\n          p.write_text(text, encoding="utf-8")\n          ENDAPI36\n\n'''
+          if marker not in text: raise SystemExit('release workflow marker missing')
+          if 'Force Android 16 / API 36 for Google Play' not in text:
+              text=text.replace(marker,step+marker,1)
+          p.write_text(text,encoding='utf-8')
+          PY
+      - name: Commit and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/build-android.yml
+          git diff --cached --check
+          git commit -m "build: target Android API 36 for Google Play"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+          git rm .github/workflows/patch-main-api36.yml
+          git commit -m "chore: remove temporary API 36 patch workflow"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

@@ -209,7 +209,7 @@ function exerciseEditorRow(x, i) {
 async function saveTraining() {
   if (!currentCustomer.entitlements?.trainingPro) return alert("Training Pro is not active for this customer.");
   const payload = { ...normalizeTraining(planDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
-  await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload }, { merge: true });
+  await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload, workoutStartDate: payload.startDate }, { merge: true });
   currentCustomer.customTrainingPlan = payload;
   planDraft = normalizeTraining(payload);
   alert("Training plan published. The customer will see it in the app.");

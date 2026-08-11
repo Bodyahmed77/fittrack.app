@@ -8834,6 +8834,12 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const use = () => {
     const next = clone(data);
     next.activePlanId = planId;
+    // Switching to a Pro plan starts that plan from Day 1 today.
+    if (plan.pro && data.entitlements.trainingPro && !isActive) {
+      next.workoutStartDate = dateKey(0);
+      // A built-in plan selection intentionally replaces an admin custom plan.
+      next.customTrainingPlan = null;
+    }
     setData(next);
     showToast(
       ar

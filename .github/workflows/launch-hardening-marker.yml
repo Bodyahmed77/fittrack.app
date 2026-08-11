@@ -1,0 +1,12 @@
+name: Launch hardening marker
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+permissions:
+  contents: read
+jobs:
+  marker:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Launch hardening branch is ready for review"

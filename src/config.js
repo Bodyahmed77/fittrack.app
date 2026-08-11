@@ -186,7 +186,7 @@ export const AI_COACH_PRICES = {
 
 // ------------------------------------------------------------
 // PAYWALL OPTIONS
-// Duration tiers: month / 3mo / 6mo / year
+// Duration catalog for future Google Play base-plan support; launch enables monthly only.
 // ------------------------------------------------------------
 export const DURATIONS = [
   { id: "monthly", label: "شهري", labelEn: "Monthly", months: 1 },

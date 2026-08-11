@@ -185,6 +185,7 @@ import {
 } from "./config";
 import {
   purchase as billingPurchase,
+  queryProducts as billingQueryProducts,
   restorePurchases as billingRestore,
 } from "./billing";
 import { registerServerEntitlement } from "./registerPurchase";
@@ -214,7 +215,7 @@ async function scheduleDailyReminder(timeStr) {
     notifications: [
       {
         id: NOTIF_ID_DAILY_REMINDER,
-        title: "FitTrack",
+        title: "Fifty Fit",
         body: "Don't forget today's workout! 💪",
         schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
       },
@@ -238,7 +239,7 @@ async function scheduleSubscriptionExpiryReminder(expiresAtISO) {
     notifications: [
       {
         id: NOTIF_ID_SUB_EXPIRY,
-        title: "FitTrack Pro",
+        title: "Fifty Fit Pro",
         body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
         schedule: { at: fireDate },
       },
@@ -3819,7 +3820,7 @@ function AppLogo({ size = 74 }) {
     >
       <img
         src={logoSrc}
-        alt="FitTrack"
+        alt="Fifty Fit"
         style={{ width: "100%", height: "100%", objectFit: "contain" }}
       />
     </div>
@@ -3911,7 +3912,7 @@ function SplashScreen() {
           letterSpacing: 0.3,
         }}
       >
-        FitTrack
+        Fifty Fit
       </div>
       <div style={{ color: C.sub, fontSize: 12.5 }}>Loading your progress…</div>
     </div>
@@ -4210,7 +4211,7 @@ function WelcomeScreen({ go }) {
         <AppLogo size={90} />
         <div style={{ textAlign: "center" }}>
           <div style={{ color: C.text, fontSize: 25, fontWeight: 800 }}>
-            FitTrack
+            Fifty Fit
           </div>
           <div
             style={{
@@ -4801,6 +4802,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const [step, setStep] = useState(0);
+  const [phone, setPhone] = useState(data.account.phone || "");
   const [gender, setGender] = useState("");
   const [age, setAge] = useState("");
   const [height, setHeight] = useState("");
@@ -4836,29 +4838,33 @@ function OnboardingScreen({ data, setData, go, showToast }) {
 
   const [activityLevel, setActivityLevel] = useState("moderate");
   const steps = ar
-    ? ["النوع", "السن", "الطول", "الوزن", "الهدف", "النشاط", "الجدول"]
-    : ["Gender", "Age", "Height", "Weight", "Goal", "Activity", "Schedule"];
+    ? ["رقم الهاتف", "النوع", "السن", "الطول", "الوزن", "الهدف", "النشاط", "الجدول"]
+    : ["Phone", "Gender", "Age", "Height", "Weight", "Goal", "Activity", "Schedule"];
   const total = steps.length;
 
   const next = () => {
     setErr("");
-    if (step === 0 && !gender) {
+    if (step === 0 && (!phone.trim() || phone.trim().replace(/\D/g, "").length < 8)) {
+      setErr(ar ? "اكتب رقم تليفون صحيح" : "Enter a valid phone number");
+      return;
+    }
+    if (step === 1 && !gender) {
       setErr(ar ? "من فضلك اختر نوعك" : "Please select your gender");
       return;
     }
-    if (step === 1 && (!age || age < 13 || age > 100)) {
+    if (step === 2 && (!age || age < 13 || age > 100)) {
       setErr(ar ? "اكتب سن صحيح (13-100)" : "Enter a valid age (13-100)");
       return;
     }
-    if (step === 2 && (!height || height < 100 || height > 250)) {
+    if (step === 3 && (!height || height < 100 || height > 250)) {
       setErr(ar ? "اكتب طول صحيح بالسنتيمتر" : "Enter a valid height in cm");
       return;
     }
-    if (step === 3 && (!weight || weight < 30 || weight > 300)) {
+    if (step === 4 && (!weight || weight < 30 || weight > 300)) {
       setErr(ar ? "اكتب وزن صحيح بالكيلوجرام" : "Enter a valid weight in kg");
       return;
     }
-    if (step === 4 && !goal) {
+    if (step === 5 && !goal) {
       setErr(ar ? "من فضلك اختر هدفك" : "Please choose a goal");
       return;
     }
@@ -4874,6 +4880,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
     const next = clone(data);
     next.account = {
       ...next.account,
+      phone: phone.trim(),
       gender,
       age: Number(age),
       height: Number(height),
@@ -4962,6 +4969,32 @@ function OnboardingScreen({ data, setData, go, showToast }) {
                 color: C.text,
                 fontSize: 21,
                 fontWeight: 800,
+                marginBottom: 8,
+              }}
+            >
+              {ar ? "رقم تليفونك إيه؟" : "What's your phone number?"}
+            </div>
+            <div style={{ color: C.sub, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>
+              {ar
+                ? "هنستخدمه للتواصل معاك بخصوص الخطط المخصصة والدعم عند الحاجة."
+                : "We'll use it for custom-plan communication and support when needed."}
+            </div>
+            <TextField
+              icon={Phone}
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder={ar ? "رقم التليفون" : "Phone number"}
+            />
+          </div>
+        )}
+        {step === 1 && (
+          <div>
+            <div
+              style={{
+                color: C.text,
+                fontSize: 21,
+                fontWeight: 800,
                 marginBottom: 20,
               }}
             >
@@ -4998,7 +5031,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             </div>
           </div>
         )}
-        {step === 1 && (
+        {step === 2 && (
           <div>
             <div
               style={{
@@ -5018,7 +5051,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             />
           </div>
         )}
-        {step === 2 && (
+        {step === 3 && (
           <div>
             <div
               style={{
@@ -5038,7 +5071,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             />
           </div>
         )}
-        {step === 3 && (
+        {step === 4 && (
           <div>
             <div
               style={{
@@ -5058,7 +5091,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             />
           </div>
         )}
-        {step === 4 && (
+        {step === 5 && (
           <div>
             <div
               style={{
@@ -5108,7 +5141,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             </div>
           </div>
         )}
-        {step === 5 && (
+        {step === 6 && (
           <div>
             <div
               style={{
@@ -5199,7 +5232,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             </div>
           </div>
         )}
-        {step === 6 && (
+        {step === 7 && (
           <div>
             <div
               style={{
@@ -5730,7 +5763,7 @@ function HomeScreen({ data, go }) {
             <Crown size={22} color={C.gold} />
             <div style={{ flex: 1 }}>
               <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>
-                {ar ? "افتح FitTrack Pro" : "Unlock FitTrack Pro"}
+                {ar ? "افتح Fifty Fit Pro" : "Unlock Fifty Fit Pro"}
               </div>
               <div style={{ color: C.sub, fontSize: 11.5 }}>
                 {ar
@@ -8800,6 +8833,28 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
   const [selectedDuration, setSelectedDuration] = useState("monthly");
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [storeProducts, setStoreProducts] = useState([]);
+
+  // Launch policy: expose only a real monthly subscription until the native
+  // billing bridge supports selecting Google Play base-plan offer tokens.
+  // This prevents the UI from showing four prices that all purchase the same
+  // underlying product/base plan. Longer periods can be enabled later without
+  // changing the entitlement model.
+  const availableDurations = DURATIONS.filter((d) => d.id === "monthly");
+
+  useEffect(() => {
+    let alive = true;
+    billingQueryProducts("monthly")
+      .then((result) => {
+        if (alive) setStoreProducts(Array.isArray(result?.products) ? result.products : []);
+      })
+      .catch(() => {
+        if (alive) setStoreProducts([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedPlan]);
   // Success modal — replaces the toast-only confirmation so the user
   // explicitly acknowledges a completed purchase (nutrition modal explains
   // that the personalized plan is inside the app; AI plan explains quota).
@@ -8817,7 +8872,15 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       : "intl";
   const regionPrices = PAYWALL_PRICES[region] || PAYWALL_PRICES.intl;
   const planPrice = regionPrices[selectedPlan] || plan?.prices || {};
-  const displayPrice = planPrice[selectedDuration] ?? price;
+  const storeProduct = storeProducts.find(
+    (p) => p?.productId === BILLING_PRODUCTS[selectedPlan],
+  );
+  const storePrice =
+    storeProduct?.price ||
+    storeProduct?.formattedPrice ||
+    storeProduct?.priceString ||
+    null;
+  const displayPrice = storePrice || planPrice[selectedDuration] || price;
   const currency = ar ? regionPrices.currencyLabelAr : regionPrices.currencyLabelEn;
   const durationLabel = ar ? duration?.label : duration?.labelEn;
   const selectedPlanActive =
@@ -9099,7 +9162,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
 
   return (
     <div dir={ar ? "rtl" : "ltr"}>
-      <TopBar title="FitTrack Pro" onBack={back} />
+      <TopBar title="Fifty Fit Pro" onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <div style={{ textAlign: "center", marginBottom: 18 }}>
           <Crown size={30} color={C.gold} />
@@ -9111,7 +9174,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
               marginTop: 8,
             }}
           >
-            {ar ? "استفد أكتر من FitTrack" : "Get more out of FitTrack"}
+            {ar ? "استفد أكتر من Fifty Fit" : "Get more out of Fifty Fit"}
           </div>
           <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>
             {ar
@@ -9156,7 +9219,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
             marginBottom: 16,
           }}
         >
-          {DURATIONS.map((d) => (
+          {availableDurations.map((d) => (
             <button
               key={d.id}
               onClick={() => setSelectedDuration(d.id)}
@@ -9284,6 +9347,19 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
                 </span>
               </div>
             ))}
+          </div>
+          <div
+            style={{
+              color: C.sub,
+              fontSize: 11.5,
+              textAlign: "center",
+              lineHeight: 1.5,
+              margin: "2px 8px 10px",
+            }}
+          >
+            {ar
+              ? "اشتراك شهري يتجدد تلقائيًا حتى الإلغاء من Google Play."
+              : "Monthly subscription. Renews automatically until canceled in Google Play."}
           </div>
           <GreenButton
             onClick={() => purchase(selectedPlan, selectedDuration)}
@@ -10758,7 +10834,7 @@ function RemindersScreen({ data, setData, back, showToast }) {
         notifications: [
           {
             id: 9999,
-            title: "FitTrack",
+            title: "Fifty Fit",
             body: ar
               ? "متنساش تمرين النهاردة! 💪"
               : "Don't forget today's workout! 💪",
@@ -11267,8 +11343,8 @@ function DeleteAccountScreen({
             </div>
             <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
               {ar
-                ? "هيتم حذف بيانات FitTrack: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
-                : "This permanently deletes your FitTrack data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
+                ? "هيتم حذف بيانات Fifty Fit: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
+                : "This permanently deletes your Fifty Fit data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
             </div>
           </div>
         </Card>
@@ -11699,7 +11775,7 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
             margin: "18px 0",
           }}
         >
-          FitTrack · {ar ? "الإصدار" : "Version"} 1.0.0
+          Fifty Fit · {ar ? "الإصدار" : "Version"} 1.0.0
         </div>
       </div>
     </div>

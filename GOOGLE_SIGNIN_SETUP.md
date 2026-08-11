@@ -16,7 +16,7 @@ Flow:
 3. System Credential Manager account picker (saved Google accounts on device)
 4. Plugin returns an ID token
 5. App calls Firebase JS `signInWithCredential(GoogleAuthProvider.credential(idToken))`
-6. Existing FitTrack onboarding runs; new Google users without a phone see **Complete your profile**
+6. Existing Fifty Fit onboarding runs; new Google users without a phone see **Complete your profile**
 
 Web / desktop continues to use Firebase `signInWithPopup`.
 

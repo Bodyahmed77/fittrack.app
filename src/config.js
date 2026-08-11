@@ -127,6 +127,19 @@ export const PRO_AI_MESSAGES_PER_DAY = 50;
 export const AI_COACH_ENDPOINT =
   "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/ai-coach";
 
+// Server-side entitlement store. The ai-coach function grants quotas
+// from this table ONLY, so every real purchase must be registered here.
+// Same Supabase project as the AI coach endpoint — one host, two functions.
+// Override at build time with VITE_VERIFY_PURCHASE_ENDPOINT if needed.
+export const VERIFY_PURCHASE_ENDPOINT =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_VERIFY_PURCHASE_ENDPOINT) ||
+  (AI_COACH_ENDPOINT || "").replace(
+    "/functions/v1/ai-coach",
+    "/functions/v1/verify-purchase",
+  );
+
 // Optional public Supabase anon/publishable key (safe in client).
 // Required by Supabase gateway on some projects alongside Authorization.
 // Set via VITE_SUPABASE_ANON_KEY at build time, or leave empty if the
@@ -183,6 +196,7 @@ export const PAYWALL_PRICES = {
     training: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
     nutrition: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
     both: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
+    ai: { monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
   },
   intl: {
     currency: "USD",
@@ -191,6 +205,7 @@ export const PAYWALL_PRICES = {
     training: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
     nutrition: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
     both: { monthly: 7.99, quarterly: 19.99, halfyearly: 34.99, yearly: 59.99 },
+    ai: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
   },
 };
 
@@ -235,5 +250,20 @@ export const PAYWALL_PLANS = {
     prices: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
     featuresAr: ["كل حاجة في الخطتين فوق", "أفضل قيمة — وفّر أكتر"],
     featuresEn: ["Everything in both plans above", "Best value — save more"],
+  },
+  ai: {
+    title: "AI Coach Pro",
+    titleAr: "مدرب ذكي برو",
+    prices: { monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
+    featuresAr: [
+      "حتى 50 رسالة يومية للمدرب الذكي (بدلًا من 3)",
+      "إجابات مبينة على خطتك ووزنك وتمارين اليوم",
+      "إجابات بالعربية والإنجليزية",
+    ],
+    featuresEn: [
+      "Up to 50 AI messages per day (instead of 3)",
+      "Answers grounded in your plan, weight & today's exercises",
+      "Arabic & English support",
+    ],
   },
 };

@@ -47,6 +47,7 @@ import {
   Phone,
   WifiOff,
   RefreshCcw,
+  CheckCircle,
 } from "lucide-react";
 import {
   LineChart,
@@ -178,11 +179,15 @@ import {
   FREE_AI_MESSAGES_PER_DAY,
   PRO_AI_MESSAGES_PER_DAY,
   AI_COACH_PRICES,
+  PAYWALL_PRICES,
+  BILLING_PRODUCTS,
 } from "./config";
 import {
   purchase as billingPurchase,
   restorePurchases as billingRestore,
 } from "./billing";
+import { registerServerEntitlement } from "./registerPurchase";
+import { buildFitTrackAiContext } from "./aiCoachContext";
 import {
   requestReview as requestInAppReview,
   maybeRequestReview,
@@ -8890,26 +8895,43 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
 }
 
 /* ============================== PAYWALL ============================== */
-function PaywallScreen({ data, setData, back, showToast }) {
+// params.focus === "ai" opens the paywall pre-selected on the AI Coach
+// Pro plan (from the AI Coach drawer upgrade card via go("paywall", { focus: "ai" })).
+function PaywallScreen({ data, setData, back, showToast, params = {} }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
-  const [selectedPlan, setSelectedPlan] = useState("both");
+  const initialPlan = params?.focus === "ai" ? "ai" : "both";
+  const [selectedPlan, setSelectedPlan] = useState(initialPlan);
   const [selectedDuration, setSelectedDuration] = useState("monthly");
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
-
-  const planIds = ["training", "nutrition", "both"];
+  // Success modal — replaces the toast-only confirmation so the user
+  // explicitly acknowledges a completed purchase (nutrition modal explains
+  // that the personalized plan is inside the app; AI plan explains quota).
+  const [successModal, setSuccessModal] = useState(null);
   const plan = PAYWALL_PLANS[selectedPlan];
   const duration = DURATIONS.find((d) => d.id === selectedDuration);
   const months = duration?.months || 1;
   const price = plan?.prices?.[selectedDuration] || 0;
-  const currency = ar ? "جنيه" : "EGP";
+  // Region-aware display currency (Egypt vs international) — same rule as
+  // the AI Coach drawer and profile region selection.
+  const region =
+    (data.settings?.region || data.account?.region || "").toLowerCase() === "eg" ||
+    lang === "ar"
+      ? "eg"
+      : "intl";
+  const regionPrices = PAYWALL_PRICES[region] || PAYWALL_PRICES.intl;
+  const planPrice = regionPrices[selectedPlan] || plan?.prices || {};
+  const displayPrice = planPrice[selectedDuration] ?? price;
+  const currency = ar ? regionPrices.currencyLabelAr : regionPrices.currencyLabelEn;
   const durationLabel = ar ? duration?.label : duration?.labelEn;
   const selectedPlanActive =
     selectedPlan === "training"
       ? data.entitlements.trainingPro
       : selectedPlan === "nutrition"
       ? data.entitlements.nutritionPro
+      : selectedPlan === "ai"
+      ? data.entitlements.aiCoachPro
       : data.entitlements.trainingPro && data.entitlements.nutritionPro;
 
   // Apply the unlocked entitlement(s) to the data and persist.
@@ -8918,6 +8940,7 @@ function PaywallScreen({ data, setData, back, showToast }) {
       next.entitlements.nutritionPro = true;
     if (planId === "training" || planId === "both")
       next.entitlements.trainingPro = true;
+    if (planId === "ai") next.entitlements.aiCoachPro = true;
   };
 
   const purchase = async (planId, durationId) => {
@@ -8944,7 +8967,28 @@ function PaywallScreen({ data, setData, back, showToast }) {
         return;
       }
 
-      // 2) Unlock entitlements locally (and persist via setData).
+      // 2) Register the purchase server-side so the entitlement store
+      //    (the authoritative quota source) reflects this subscription.
+      //    The app purchase was already acknowledged to Google Play above;
+      //    the server writes the entitlement for the signed-in user only.
+      if (planId === "ai") {
+        try {
+          await registerServerEntitlement(
+            BILLING_PRODUCTS.ai,
+            result?.productId || BILLING_PRODUCTS.ai,
+            result?.result,
+          );
+        } catch (regErr) {
+          showToast(
+            ar
+              ? "تم الشراء لكن تعذر تسجيل الاشتراك. افتح المحادثة وراسلنا لو الميزة مش شغالة."
+              : "Purchase completed but the subscription could not be registered. Message us in-app if the feature does not activate.",
+            7000,
+          );
+        }
+      }
+
+      // 3) Unlock entitlements locally (and persist via setData).
       const next = clone(data);
       unlockPlans(next, planId);
       next.entitlements.proExpiresAt = null;
@@ -8968,29 +9012,52 @@ function PaywallScreen({ data, setData, back, showToast }) {
       }
       await setData(next);
 
-      // 3) Show a clear confirmation message on success.
-      //    For the Nutrition plan (or "both"), include the WhatsApp note.
-      const isNutrition = planId === "nutrition" || planId === "both";
-      if (isNutrition) {
-        showToast(
-          ar
-            ? "تم تفعيل اشتراكك بنجاح. هنتواصل معاك على واتساب خلال 12 ساعة عشان نبعتلك خطتك الغذائية المخصصة."
-            : "Your subscription was activated successfully. We will contact you via WhatsApp within 12 hours to send you your personalized nutrition plan.",
-          7000,
-        );
+      // 3) Show a clear success modal on completion (not just a toast):
+      //    - Nutrition: plan is already inside the app (Nutrition Plan tab);
+      //      WhatsApp is only the human-support channel, no waiting needed.
+      //    - Training: personalized plan is ready in-app.
+      //    - AI Coach: quota upgraded, open the drawer to start chatting.
+      if (planId === "ai") {
+        setSuccessModal({
+          title: ar ? "تم تفعيل AI Coach Pro!" : "AI Coach Pro is active!",
+          message: ar
+            ? "حدّك اليومي ارتفع لـ 50 رسالة. افتح المدرب الذكي دلوقتي وابدأ اسأل."
+            : "Your daily limit is now up to 50 messages. Open the AI Coach and start asking.",
+          cta: ar ? "افتح المدرب الذكي" : "Open AI Coach",
+          onCta: () => {
+            setSuccessModal(null);
+            back();
+            window.dispatchEvent(new Event("fiftyfit-open-ai"));
+          },
+        });
+      } else if (planId === "nutrition" || planId === "both") {
+        setSuccessModal({
+          title: ar ? "تم تفعيل اشتراكك!" : "Subscription activated!",
+          message: ar
+            ? "خطتك الغذائية المخصصة جاهزة داخل التطبيق — هتلاقيها في تبويب الخطة الغذائية. احتجت مساعدة، كلمنا على واتساب في أي وقت."
+            : "Your personalized nutrition plan is ready inside the app — find it in the Nutrition Plan tab. Need help anytime, chat with us on WhatsApp.",
+          cta: ar ? "شوف الخطة الغذائية" : "View nutrition plan",
+          onCta: () => {
+            setSuccessModal(null);
+            back();
+          },
+        });
       } else {
-        showToast(
-          ar
-            ? "تم تفعيل اشتراكك بنجاح! خطة التدريب المخصصة جاهزة."
-            : "Your subscription was activated successfully! Your personalized training plan is ready.",
-          4000,
-        );
+        setSuccessModal({
+          title: ar ? "تم تفعيل اشتراكك!" : "Subscription activated!",
+          message: ar
+            ? "خطة التدريب المخصصة جاهزة داخل التطبيق."
+            : "Your personalized training plan is ready inside the app.",
+          cta: ar ? "ابدأ التمرين" : "Start training",
+          onCta: () => {
+            setSuccessModal(null);
+            back();
+          },
+        });
       }
 
       // 4) Trigger in-app review after a successful unlock.
       maybeRequestReview("purchase").catch(() => {});
-
-      back();
     } catch (e) {
       showToast(
         ar
@@ -9258,8 +9325,8 @@ function PaywallScreen({ data, setData, back, showToast }) {
                 ? "جاري الشراء…"
                 : "Processing…"
               : ar
-              ? `اشترك الآن — ${price} ${currency}`
-              : `Subscribe now — ${price} ${currency}`}
+              ? `اشترك الآن — ${displayPrice} ${currency}`
+              : `Subscribe now — ${displayPrice} ${currency}`}
           </GreenButton>
           </Card>
         </div>
@@ -9277,6 +9344,89 @@ function PaywallScreen({ data, setData, back, showToast }) {
             ? "الدفع يتم بشكل آمن عبر Google Play Billing. الاشتراك بيتجدد تلقائيًا وبتقدر تلغيه في أي وقت."
             : "Payments are processed securely via Google Play Billing. Subscriptions auto-renew and can be cancelled anytime."}
         </div>
+
+        {successModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1500,
+              padding: 24,
+            }}
+            onClick={() => setSuccessModal(null)}
+          >
+            <div
+              dir={ar ? "rtl" : "ltr"}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: 18,
+                padding: 22,
+                width: "100%",
+                maxWidth: 340,
+                textAlign: "center",
+              }}
+            >
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 999,
+                  background: C.green,
+                  color: "#04140a",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  marginBottom: 12,
+                }}
+              >
+                <CheckCircle size={26} />
+              </div>
+              <div
+                style={{
+                  color: C.text,
+                  fontWeight: 800,
+                  fontSize: 16,
+                  marginBottom: 8,
+                }}
+              >
+                {successModal.title}
+              </div>
+              <div
+                style={{
+                  color: C.sub,
+                  fontSize: 13,
+                  lineHeight: 1.55,
+                  marginBottom: 18,
+                }}
+              >
+                {successModal.message}
+              </div>
+              <button
+                type="button"
+                onClick={successModal.onCta}
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: C.green,
+                  color: "#04140a",
+                  fontWeight: 800,
+                  fontSize: 13.5,
+                  cursor: "pointer",
+                }}
+              >
+                {successModal.cta}
+              </button>
+            </div>
+          </div>
+        )}
         {(data.entitlements.trainingPro ||
           data.entitlements.nutritionPro ||
           data.entitlements.aiCoachPro) && (
@@ -9344,99 +9494,6 @@ function PaywallScreen({ data, setData, back, showToast }) {
 // Messages stay in component state only (cleared when the screen unmounts
 // or the app session ends). Only a daily {date,count} counter is persisted.
 
-/** Compact FitTrack state for AI Coach — no tokens, no chat history, no media URLs. */
-function buildFitTrackAiContext(data, lang) {
-  const ar = lang === "ar";
-  const today = dateKey(0);
-  const dayName = DAYS[todayIdx];
-  const plan =
-    PLAN_TEMPLATES[data?.activePlanId] || PLAN_TEMPLATES.beginner;
-  const dayMeta = plan.schedule?.[dayName] || {};
-  const { list: exercises } = getUsableExercises(data, dayName);
-  const log = data?.logs?.[today] || {};
-  const bw = Array.isArray(data?.bodyWeight) ? data.bodyWeight : [];
-  const currentWeight =
-    bw.length > 0
-      ? bw[bw.length - 1]?.weight
-      : data?.account?.weight || null;
-  let weightDelta = null;
-  if (bw.length >= 2) {
-    const prev = Number(bw[bw.length - 2]?.weight);
-    const cur = Number(bw[bw.length - 1]?.weight);
-    if (Number.isFinite(prev) && Number.isFinite(cur)) {
-      weightDelta = Number((cur - prev).toFixed(1));
-    }
-  }
-  const compactExercises = (exercises || []).slice(0, 12).map((e) => {
-    const sets = log[e.id]?.sets || [];
-    const doneSets = sets.filter((s) => s.done).length;
-    return {
-      name: ar ? e.nameAr || e.name : e.name,
-      targetSets: e.targetSets,
-      targetReps: e.targetReps,
-      completedSets: doneSets,
-      finished: !!log[e.id]?.finished,
-    };
-  });
-  const totalSets = compactExercises.reduce(
-    (a, e) => a + (Number(e.targetSets) || 0),
-    0,
-  );
-  const doneSets = compactExercises.reduce(
-    (a, e) => a + (Number(e.completedSets) || 0),
-    0,
-  );
-  const targets = data?.dailyTargets || null;
-  const mealsToday = data?.meals?.[today] || {};
-  let mealsLogged = 0;
-  try {
-    Object.values(mealsToday).forEach((m) => {
-      mealsLogged += Array.isArray(m?.items) ? m.items.length : 0;
-    });
-  } catch (_) {}
-  const acc = data?.account || {};
-  return {
-    user: {
-      name: acc.name || null,
-      gender: acc.gender || null,
-      age: acc.age || null,
-      height: acc.height || null,
-      weight: currentWeight != null && currentWeight !== "" ? currentWeight : null,
-      goal: acc.goal || null,
-      daysPerWeek: acc.daysPerWeek || null,
-      activityLevel: acc.activityLevel || null,
-    },
-    workout: {
-      planId: data?.activePlanId || null,
-      planName: ar ? plan.nameAr || plan.name : plan.name,
-      todayWeekday: dayName,
-      todayDate: today,
-      dayTitle: ar ? dayMeta.titleAr || dayMeta.title : dayMeta.title,
-      isRestDay: compactExercises.length === 0,
-      exercises: compactExercises,
-      setsDone: doneSets,
-      setsTotal: totalSets,
-      workoutPct: totalSets ? Math.round((doneSets / totalSets) * 100) : 0,
-    },
-    weight: {
-      current: currentWeight != null && currentWeight !== "" ? currentWeight : null,
-      recentDelta: weightDelta,
-      entriesCount: bw.length,
-    },
-    nutrition: {
-      hasPlan: !!data?.nutritionPlan,
-      dailyTargets: targets
-        ? {
-            calories: targets.calories ?? targets.kcal ?? null,
-            protein: targets.protein ?? null,
-            carbs: targets.carbs ?? null,
-            fat: targets.fat ?? null,
-          }
-        : null,
-      mealsLoggedToday: mealsLogged,
-    },
-  };
-}
 
 function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   const { C, lang } = useUI();
@@ -9471,6 +9528,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
     if (typeof window === "undefined") return undefined;
 
     let removed = false;
+    let nativeMode = false;
     const handles = [];
 
     const setInset = (px) => {
@@ -9479,53 +9537,66 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
       setKeyboardInset(n > 40 ? n : 0);
     };
 
+    // Exclusive source-of-truth selection:
+    // - Native Android: ONLY @capacitor/keyboard heights. visualViewport is
+    //   deliberately skipped there because its resize events fire from the
+    //   same Android keyboard and previously raced the Capacitor values,
+    //   leaving a large stale gap below the input bar.
+    // - Web: visualViewport fallback only (keyboard plugin unavailable).
     (async () => {
       try {
         const { Capacitor } = await import("@capacitor/core");
-        if (!Capacitor.isNativePlatform()) return;
-        const { Keyboard } = await import("@capacitor/keyboard");
-        try {
-          if (Keyboard.setResizeMode) {
-            await Keyboard.setResizeMode({ mode: "none" });
+        if (Capacitor.isNativePlatform()) {
+          nativeMode = true;
+          try {
+            const { Keyboard } = await import("@capacitor/keyboard");
+            try {
+              if (Keyboard.setResizeMode) {
+                await Keyboard.setResizeMode({ mode: "none" });
+              }
+            } catch (_) {
+              /* ignore */
+            }
+            handles.push(
+              await Keyboard.addListener("keyboardWillShow", (info) => {
+                setInset(info?.keyboardHeight ?? 0);
+              }),
+            );
+            handles.push(
+              await Keyboard.addListener("keyboardDidShow", (info) => {
+                setInset(info?.keyboardHeight ?? 0);
+              }),
+            );
+            handles.push(
+              await Keyboard.addListener("keyboardWillHide", () => setInset(0)),
+            );
+            handles.push(
+              await Keyboard.addListener("keyboardDidHide", () => setInset(0)),
+            );
+          } catch (e) {
+            console.warn("[AICoach] Keyboard plugin unavailable", e);
           }
-        } catch (_) {
-          /* ignore */
+          return;
         }
-        handles.push(
-          await Keyboard.addListener("keyboardWillShow", (info) => {
-            setInset(info?.keyboardHeight ?? 0);
-          }),
+      } catch (_) {
+        /* not running in a Capacitor build → web mode */
+      }
+      // Web mode: visualViewport only.
+      const vv = window.visualViewport;
+      let base = vv ? vv.height : window.innerHeight;
+      const onVv = () => {
+        if (!vv || removed || nativeMode) return;
+        const covered = Math.max(
+          0,
+          Math.round(base - vv.height - (vv.offsetTop || 0)),
         );
-        handles.push(
-          await Keyboard.addListener("keyboardDidShow", (info) => {
-            setInset(info?.keyboardHeight ?? 0);
-          }),
-        );
-        handles.push(
-          await Keyboard.addListener("keyboardWillHide", () => setInset(0)),
-        );
-        handles.push(
-          await Keyboard.addListener("keyboardDidHide", () => setInset(0)),
-        );
-      } catch (e) {
-        console.warn("[AICoach] Keyboard plugin unavailable", e);
+        setInset(covered);
+      };
+      if (vv) {
+        vv.addEventListener("resize", onVv);
+        vv.addEventListener("scroll", onVv);
       }
     })();
-
-    const vv = window.visualViewport;
-    let base = vv ? vv.height : window.innerHeight;
-    const onVv = () => {
-      if (!vv) return;
-      const covered = Math.max(
-        0,
-        Math.round(base - vv.height - (vv.offsetTop || 0)),
-      );
-      setInset(covered);
-    };
-    if (vv) {
-      vv.addEventListener("resize", onVv);
-      vv.addEventListener("scroll", onVv);
-    }
 
     return () => {
       removed = true;
@@ -9592,6 +9663,11 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         ? "المدرب الذكي مشغول حاليًا. حاول بعد شوية."
         : "AI Coach is busy right now. Try again shortly.";
     }
+    if (code === "provider_overloaded") {
+      return ar
+        ? "الخدمة مكدّسة حاليًا. حاول بعد دقيقة تقريبًا."
+        : "The AI service is overloaded right now. Please try again in about a minute.";
+    }
     if (code === "network") {
       return ar
         ? "تعذر الاتصال بالمدرب الذكي. تأكد من الإنترنت وحاول مرة تانية."
@@ -9625,7 +9701,34 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         lang,
         localDate: today,
         hasAiPro: !!data.entitlements?.aiCoachPro,
-        userContext: buildFitTrackAiContext(data, lang),
+        userContext: buildFitTrackAiContext(
+          data,
+          lang,
+          (() => {
+            const d = DAYS[todayIdx];
+            const plan =
+              PLAN_TEMPLATES[data?.activePlanId] || PLAN_TEMPLATES.beginner;
+            const dayMeta = plan.schedule?.[d] || {};
+            return {
+              dayName: d,
+              planId: data?.activePlanId,
+              planName: ar ? plan.nameAr || plan.name : plan.name,
+              dayTitle: ar ? dayMeta.titleAr || dayMeta.title : dayMeta.title,
+              todayDate: dateKey(0),
+              exercises: (getUsableExercises(data, d).list || []).slice(0, 12),
+            };
+          })(),
+        ),
+      }).catch((e) => {
+        // If the server says the client's PRO assumption was wrong, sync it
+        // (hasPro in usage is the SERVER-TRUTH value).
+        if (e?.usage && typeof e.usage.hasPro === "boolean" && e.usage.hasPro !== !!data.entitlements?.aiCoachPro) {
+          const next = clone(data);
+          next.entitlements = { ...(next.entitlements || {}) };
+          next.entitlements.aiCoachPro = e.usage.hasPro;
+          setData(next);
+        }
+        throw e;
       });
       const reply = typeof result === "string" ? result : result?.reply || "";
       setMessages((m) => [...m, { role: "assistant", content: reply }]);
@@ -9635,6 +9738,11 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           date: result.usage.date || today,
           count: result.usage.count ?? result.usage.used ?? 0,
         };
+        // Server is the source of truth for the PRO tier.
+        if (typeof result.usage.hasPro === "boolean" && result.usage.hasPro !== !!data.entitlements?.aiCoachPro) {
+          next.entitlements = { ...(next.entitlements || {}) };
+          next.entitlements.aiCoachPro = result.usage.hasPro;
+        }
         setData(next);
       }
     } catch (e) {
@@ -9644,6 +9752,12 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           date: e.usage.date || today,
           count: e.usage.count ?? e.usage.used ?? 0,
         };
+        // Sync the PRO flag with the server-truth value so the UI stays
+        // honest about the real tier.
+        if (typeof e.usage.hasPro === "boolean") {
+          next.entitlements = { ...(next.entitlements || {}) };
+          next.entitlements.aiCoachPro = e.usage.hasPro;
+        }
         setData(next);
       } else {
         // Roll back optimistic user bubble for non-limit failures
@@ -11858,6 +11972,7 @@ export default function GymApp() {
           trainingPro: restored.includes("training") || restored.includes("both"),
           nutritionPro:
             restored.includes("nutrition") || restored.includes("both"),
+          aiCoachPro: restored.includes("ai"),
           proExpiresAt: null,
         });
       })
@@ -11866,6 +11981,7 @@ export default function GymApp() {
           setVerifiedEntitlements({
             trainingPro: false,
             nutritionPro: false,
+            aiCoachPro: false,
             proExpiresAt: null,
           });
         }
@@ -12319,6 +12435,7 @@ export default function GymApp() {
         setData={setData}
         back={back}
         showToast={showToast}
+        params={params}
       />
     );
   else if (screen === "profile")

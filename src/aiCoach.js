@@ -125,6 +125,7 @@ function classifyHttpError(status, data) {
   const known = new Set([
     "daily_limit",
     "busy",
+    "provider_overloaded",
     "gemini_rate_limited",
     "gemini_failed",
     "gemini_timeout",
@@ -154,7 +155,7 @@ function classifyHttpError(status, data) {
     }
     return "busy";
   }
-  if (status === 503) return "busy";
+  if (status === 503) return errField === "provider_overloaded" ? errField : "busy";
   if (status === 504) return "gemini_timeout";
   if (status >= 500) {
     if (errField === "gemini_failed") return "gemini_failed";

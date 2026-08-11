@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fifty Fit — Account Deletion</title>
+  <style>body{font-family:Arial,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#171717}label{display:block;margin-top:16px;font-weight:700}input,textarea{width:100%;box-sizing:border-box;padding:12px;margin-top:6px;border:1px solid #bbb;border-radius:8px}button{margin-top:18px;padding:12px 18px;border:0;border-radius:8px;background:#166534;color:white;font-weight:700;cursor:pointer}small{color:#666}</style>
+</head>
+<body>
+  <h1>Fifty Fit — Account & Data Deletion</h1>
+  <p>This page lets you request deletion of your Fifty Fit account and associated app data if you no longer have the app installed.</p>
+  <p>For security, we verify ownership before completing a deletion request. Google Play subscriptions are managed separately and are not cancelled automatically by deleting a Fifty Fit account.</p>
+
+  <form id="requestForm">
+    <label for="email">Email used for your Fifty Fit account</label>
+    <input id="email" name="email" type="email" required autocomplete="email">
+    <label for="details">Optional details</label>
+    <textarea id="details" name="details" rows="4" placeholder="Anything that helps us identify the account"></textarea>
+    <button type="submit">Request account deletion</button>
+  </form>
+  <p><small>If your email app does not open, contact <a href="mailto:sumoslmer47@gmail.com">sumoslmer47@gmail.com</a> directly from the email address used for your Fifty Fit account.</small></p>
+
+  <script>
+    document.getElementById('requestForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      const details = document.getElementById('details').value.trim();
+      const subject = encodeURIComponent('Fifty Fit account deletion request');
+      const body = encodeURIComponent(
+        'Please delete my Fifty Fit account and associated app data.\n\nAccount email: ' +
+        email + '\n\nAdditional details:\n' + details
+      );
+      window.location.href = 'mailto:sumoslmer47@gmail.com?subject=' + subject + '&body=' + body;
+    });
+  </script>
+</body>
+</html>

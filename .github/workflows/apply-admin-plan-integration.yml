@@ -1,0 +1,87 @@
+name: Integrate external admin plans
+
+on:
+  push:
+    branches:
+      - fix/fifty-fit-launch-polish
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Patch app integration
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('src/App.jsx')
+          text=p.read_text(encoding='utf-8')
+
+          old='''    meals: {},\n  };\n}'''
+          new='''    meals: {},\n    // External admin-managed plans. These remain separate from billing entitlements;\n    // Firestore rules allow only authorized admins to publish them.\n    customTrainingPlan: null,\n    customNutritionPlan: null,\n  };\n}'''
+          if old not in text: raise SystemExit('freshState marker missing')
+          text=text.replace(old,new,1)
+
+          old='''function getMergedExercises(data, day) {\n  const activePlan =\n    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;\n  const base = activePlan.schedule[day].exercises;\n  const custom = data.customPlan[day] || { added: [], removedIds: [] };\n  const removed = new Set(custom.removedIds || []);\n  return [...base.filter((e) => !removed.has(e.id)), ...(custom.added || [])];\n}\nfunction getUsableExercises(data, day) {\n  // Free plan caps the *default* plan exercises only. Custom exercises the\n  // user adds themselves stay available without a Pro paywall.\n  const activePlan =\n    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;\n  const base = activePlan.schedule[day]?.exercises || [];\n  const custom = data.customPlan[day] || { added: [], removedIds: [] };\n  const removed = new Set(custom.removedIds || []);\n  const baseVisible = base.filter((e) => !removed.has(e.id));\n  const customAdded = custom.added || [];\n  const pro = data.entitlements.trainingPro;\n  const freeBase = pro ? baseVisible : baseVisible.slice(0, FREE_EXERCISE_CAP);\n  const lockedCount = pro\n    ? 0\n    : Math.max(0, baseVisible.length - FREE_EXERCISE_CAP);\n  return {\n    list: [...freeBase, ...customAdded],\n    lockedCount,\n  };\n}'''
+          new='''function getMergedExercises(data, day) {\n  const activePlan =\n    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;\n  const customTrainingDay =\n    data.entitlements.trainingPro &&\n    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];\n  const base = customTrainingDay\n    ? (customTrainingDay.exercises || []).map((e) => ({\n        ...EX[e.id],\n        ...e,\n        name: e.name || EX[e.id]?.name || e.id,\n        nameAr: e.nameAr || EX[e.id]?.nameAr || e.name || e.id,\n        startWeight: e.startWeight ?? EX[e.id]?.startWeight ?? 0,\n        vid: e.vid || EX[e.id]?.vid || null,\n        demoImage: e.demoImage || EX[e.id]?.demoImage || null,\n      }))\n    : (activePlan.schedule[day]?.exercises || []);\n  const custom = data.customPlan[day] || { added: [], removedIds: [] };\n  const removed = new Set(custom.removedIds || []);\n  return [...base.filter((e) => !removed.has(e.id)), ...(custom.added || [])];\n}\nfunction getUsableExercises(data, day) {\n  // An admin-published custom Training Pro plan is the active workout source.\n  // Otherwise use the selected built-in plan and preserve the existing free cap.\n  const activePlan =\n    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;\n  const customTrainingDay =\n    data.entitlements.trainingPro &&\n    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];\n  const base = customTrainingDay\n    ? (customTrainingDay.exercises || []).map((e) => ({\n        ...EX[e.id],\n        ...e,\n        name: e.name || EX[e.id]?.name || e.id,\n        nameAr: e.nameAr || EX[e.id]?.nameAr || e.name || e.id,\n        startWeight: e.startWeight ?? EX[e.id]?.startWeight ?? 0,\n        vid: e.vid || EX[e.id]?.vid || null,\n        demoImage: e.demoImage || EX[e.id]?.demoImage || null,\n      }))\n    : (activePlan.schedule[day]?.exercises || []);\n  const custom = data.customPlan[day] || { added: [], removedIds: [] };\n  const removed = new Set(custom.removedIds || []);\n  const baseVisible = base.filter((e) => !removed.has(e.id));\n  const customAdded = custom.added || [];\n  const pro = data.entitlements.trainingPro;\n  const freeBase = customTrainingDay || pro ? baseVisible : baseVisible.slice(0, FREE_EXERCISE_CAP);\n  const lockedCount = customTrainingDay || pro\n    ? 0\n    : Math.max(0, baseVisible.length - FREE_EXERCISE_CAP);\n  return { list: [...freeBase, ...customAdded], lockedCount };\n}'''
+          if old not in text: raise SystemExit('exercise helper block missing')
+          text=text.replace(old,new,1)
+
+          old='''  const activePlan =\n    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;\n  const dayTitle = ar\n    ? activePlan.schedule[selectedDay].titleAr\n    : activePlan.schedule[selectedDay].title;'''
+          new='''  const activePlan =\n    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;\n  const assignedCustomDay =\n    data.entitlements.trainingPro &&\n    data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)];\n  const daySchedule = assignedCustomDay || activePlan.schedule[selectedDay];\n  const dayTitle = ar ? daySchedule.titleAr : daySchedule.title;'''
+          if old not in text: raise SystemExit('WorkoutScreen title marker missing')
+          text=text.replace(old,new,1)
+
+          old='''      // 3) Unlock entitlements locally only after server verification.\n      const next = clone(data);\n      unlockPlans(next, planId);\n      next.entitlements.proExpiresAt = null;'''
+          new='''      // 3) Unlock entitlements locally only after server verification.\n      const hadTrainingPro = !!data.entitlements.trainingPro;\n      const next = clone(data);\n      unlockPlans(next, planId);\n      next.entitlements.proExpiresAt = null;\n      // A newly activated Training Pro subscription starts its selected plan\n      // at Day 1 on the actual purchase date, never on the calendar weekday.\n      if (!hadTrainingPro && next.entitlements.trainingPro) {\n        next.workoutStartDate = dateKey(0);\n      }'''
+          if old not in text: raise SystemExit('purchase activation marker missing')
+          text=text.replace(old,new,1)
+
+          old='''      const next = clone(data);\n      activatedPlans.forEach((p) => unlockPlans(next, p));\n      next.entitlements.proExpiresAt = null;\n      if (next.entitlements.trainingPro) {'''
+          new='''      const hadTrainingPro = !!data.entitlements.trainingPro;\n      const next = clone(data);\n      activatedPlans.forEach((p) => unlockPlans(next, p));\n      next.entitlements.proExpiresAt = null;\n      if (!hadTrainingPro && next.entitlements.trainingPro) {\n        next.workoutStartDate = dateKey(0);\n      }\n      if (next.entitlements.trainingPro) {'''
+          if old not in text: raise SystemExit('restore activation marker missing')
+          text=text.replace(old,new,1)
+
+          old='''  const plan = data.nutritionPlan;\n  const targets = data.dailyTargets;'''
+          new='''  const plan = data.nutritionPlan;\n  const customNutritionPlan = data.customNutritionPlan;\n  const targets = data.dailyTargets;'''
+          if old not in text: raise SystemExit('MealsScreen plan marker missing')
+          text=text.replace(old,new,1)
+
+          old='''        {pro && plan ? ('''
+          new='''        {pro && customNutritionPlan ? (\n          <Card\n            onClick={() => go("nutritionPlan")}\n            style={{\n              marginTop: 14,\n              background: C.greenSoft,\n              border: `1px solid ${C.green}55`,\n            }}\n          >\n            {(() => {\n              const start = customNutritionPlan.startDate || today;\n              const startMs = new Date(start + "T00:00:00").getTime();\n              const nowMs = new Date(today + "T00:00:00").getTime();\n              const diff = Math.max(0, Math.floor((nowMs - startMs) / 86400000));\n              const dayIndex = Number.isFinite(diff) ? Math.min(6, diff % 7) : 0;\n              const todayPlan = customNutritionPlan.days?.[dayIndex];\n              const hasTargets = todayPlan && (todayPlan.targetKcal || todayPlan.targetProtein || todayPlan.targetCarbs || todayPlan.targetFat);\n              return (\n                <>\n                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>\n                    <div style={{ width: 40, height: 40, borderRadius: 12, background: C.card2, display: "flex", alignItems: "center", justifyContent: "center" }}>🍽️</div>\n                    <div style={{ flex: 1 }}>\n                      <div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>{ar ? (customNutritionPlan.titleAr || "خطتك الغذائية") : (customNutritionPlan.title || "Your Nutrition Plan")}</div>\n                      <div style={{ color: C.sub, fontSize: 11.5 }}>{ar ? (todayPlan?.titleAr || "خطة اليوم") : (todayPlan?.title || "Today's plan")}</div>\n                    </div>\n                    <ChevronRight size={18} color={C.sub2} style={{ transform: ar ? "scaleX(-1)" : "none" }} />\n                  </div>\n                  <div style={{ color: C.sub, fontSize: 11.5 }}>\n                    {hasTargets ? (ar ? `${todayPlan.targetKcal || "—"} سعرة · بروتين ${todayPlan.targetProtein || "—"}ج · كارب ${todayPlan.targetCarbs || "—"}ج · دهون ${todayPlan.targetFat || "—"}ج` : `${todayPlan.targetKcal || "—"} kcal · P ${todayPlan.targetProtein || "—"}g · C ${todayPlan.targetCarbs || "—"}g · F ${todayPlan.targetFat || "—"}g`) : (ar ? "اضغط لعرض خطة اليوم كاملة" : "Tap to view today's full plan")}\n                  </div>\n                </>\n              );\n            })()}\n          </Card>\n        ) : pro && plan ? ('''
+          if old not in text: raise SystemExit('nutrition card marker missing')
+          text=text.replace(old,new,1)
+
+          marker='''function FoodPickerScreen({ data, setData, back, mealId, showToast }) {'''
+          component='''function NutritionPlanScreen({ data, back }) {\n  const { C, lang } = useUI();\n  const ar = lang === "ar";\n  const plan = data.customNutritionPlan;\n  const today = dateKey(0);\n  if (!plan) {\n    return (\n      <div dir={ar ? "rtl" : "ltr"}>\n        <TopBar title={ar ? "خطتك الغذائية" : "Your Nutrition Plan"} onBack={back} />\n        <div style={{ padding: "0 18px" }}><Card style={{ textAlign: "center", padding: 30, color: C.sub }}>{ar ? "لم يتم إضافة خطة غذائية مخصصة لحسابك بعد." : "Your personalized nutrition plan has not been published yet."}</Card></div>\n      </div>\n    );\n  }\n  const start = plan.startDate || today;\n  const startMs = new Date(start + "T00:00:00").getTime();\n  const nowMs = new Date(today + "T00:00:00").getTime();\n  const diff = Math.max(0, Math.floor((nowMs - startMs) / 86400000));\n  const dayIndex = Number.isFinite(diff) ? diff % 7 : 0;\n  const day = plan.days?.[dayIndex] || plan.days?.[0];\n  return (\n    <div dir={ar ? "rtl" : "ltr"}>\n      <TopBar title={ar ? "خطتك الغذائية" : "Your Nutrition Plan"} onBack={back} />\n      <div style={{ padding: "0 18px 24px" }}>\n        <Card style={{ background: C.greenSoft, border: `1px solid ${C.green}55`, marginBottom: 12 }}>\n          <div style={{ color: C.text, fontSize: 19, fontWeight: 900 }}>{ar ? (plan.titleAr || "خطتك الغذائية") : (plan.title || "Your Nutrition Plan")}</div>\n          <div style={{ color: C.sub, fontSize: 12, marginTop: 5 }}>{ar ? "خطة مخصصة لك من فريق Fifty Fit" : "A plan prepared for you by the Fifty Fit team"}</div>\n          {(day.targetKcal || day.targetProtein || day.targetCarbs || day.targetFat) && (\n            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginTop: 14 }}>\n              {[[ar ? "السعرات" : "Kcal",day.targetKcal],["P",day.targetProtein],["C",day.targetCarbs],["F",day.targetFat]].map(([label,val]) => <div key={label} style={{ background: C.card2, borderRadius: 10, padding: "10px 7px", textAlign: "center" }}><div style={{ color: C.sub2, fontSize: 9, fontWeight: 800 }}>{label}</div><div style={{ color: C.text, fontSize: 14, fontWeight: 900, marginTop: 2 }}>{val || "—"}</div></div>)}\n            </div>\n          )}\n        </Card>\n        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8 }}>\n          {(plan.days || []).map((d,i) => <div key={i} style={{ minWidth: 72, padding: "9px 7px", borderRadius: 11, background: i === dayIndex ? C.green : C.card2, color: i === dayIndex ? C.onAccent : C.sub, textAlign: "center", fontSize: 11, fontWeight: 800 }}>{ar ? (d.titleAr || `اليوم ${i+1}`) : (d.title || `Day ${i+1}`)}</div>)}\n        </div>\n        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>\n          {(day.meals || []).map((meal) => (\n            <Card key={meal.id}>\n              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}><div style={{ width: 40, height: 40, borderRadius: 11, background: C.card2, display: "grid", placeItems: "center" }}>🍽️</div><div><div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>{ar ? (meal.titleAr || meal.title) : meal.title}</div><div style={{ color: C.sub2, fontSize: 10 }}>{ar ? "وجبة مخصصة" : "Personalized meal"}</div></div></div>\n              {meal.items && <div style={{ color: C.text, fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{meal.items}</div>}\n              {(ar ? meal.noteAr : meal.note) && <div style={{ marginTop: 9, paddingTop: 9, borderTop: `1px solid ${C.border}`, color: C.sub, fontSize: 11.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{ar ? meal.noteAr : meal.note}</div>}\n            </Card>\n          ))}\n        </div>\n      </div>\n    </div>\n  );\n}\n\n'''
+          if marker not in text: raise SystemExit('FoodPicker marker missing')
+          text=text.replace(marker,component+marker,1)
+
+          old='''  else if (screen === "meals")\n    content = (\n      <MealsScreen\n        data={data}\n        setData={setData}\n        back={back}\n        showToast={showToast}\n        go={go}\n      />\n    );'''
+          new='''  else if (screen === "meals")\n    content = (\n      <MealsScreen\n        data={data}\n        setData={setData}\n        back={back}\n        showToast={showToast}\n        go={go}\n      />\n    );\n  else if (screen === "nutritionPlan")\n    content = <NutritionPlanScreen data={data} back={back} />;'''
+          if old not in text: raise SystemExit('screen routing marker missing')
+          text=text.replace(old,new,1)
+
+          p.write_text(text,encoding='utf-8')
+          PY
+      - name: Validate web build
+        run: |
+          npm ci
+          npm run build
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          git diff --cached --check
+          git commit -m "feat: connect admin-managed training and nutrition plans"
+          git push origin HEAD:fix/fifty-fit-launch-polish
+          git rm .github/workflows/apply-admin-plan-integration.yml
+          git commit -m "chore: remove temporary admin integration workflow"
+          git push origin HEAD:fix/fifty-fit-launch-polish

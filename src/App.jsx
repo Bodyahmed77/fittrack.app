@@ -9958,7 +9958,6 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           background: C.bg,
           display: "flex",
           flexDirection: "column",
-          position: "absolute",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
           overscrollBehavior: "contain",
           transition: "bottom 0.12s ease-out",

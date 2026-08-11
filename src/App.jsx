@@ -48,6 +48,7 @@ import {
   WifiOff,
   RefreshCcw,
   CheckCircle,
+  Flag,
 } from "lucide-react";
 import {
   LineChart,
@@ -213,7 +214,7 @@ async function scheduleDailyReminder(timeStr) {
     notifications: [
       {
         id: NOTIF_ID_DAILY_REMINDER,
-        title: "Fifty",
+        title: "FitTrack",
         body: "Don't forget today's workout! 💪",
         schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
       },
@@ -237,7 +238,7 @@ async function scheduleSubscriptionExpiryReminder(expiresAtISO) {
     notifications: [
       {
         id: NOTIF_ID_SUB_EXPIRY,
-        title: "Fifty Pro",
+        title: "FitTrack Pro",
         body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
         schedule: { at: fireDate },
       },
@@ -3818,7 +3819,7 @@ function AppLogo({ size = 74 }) {
     >
       <img
         src={logoSrc}
-        alt="Fifty"
+        alt="FitTrack"
         style={{ width: "100%", height: "100%", objectFit: "contain" }}
       />
     </div>
@@ -3910,7 +3911,7 @@ function SplashScreen() {
           letterSpacing: 0.3,
         }}
       >
-        Fifty
+        FitTrack
       </div>
       <div style={{ color: C.sub, fontSize: 12.5 }}>Loading your progress…</div>
     </div>
@@ -4209,7 +4210,7 @@ function WelcomeScreen({ go }) {
         <AppLogo size={90} />
         <div style={{ textAlign: "center" }}>
           <div style={{ color: C.text, fontSize: 25, fontWeight: 800 }}>
-            Fifty
+            FitTrack
           </div>
           <div
             style={{
@@ -4796,113 +4797,6 @@ function GeneratingPlan({ steps, activeIdx }) {
   );
 }
 
-function GooglePhoneScreen({ data, setData, go, showToast }) {
-  const { C, lang } = useUI();
-  const ar = lang === "ar";
-  const [phone, setPhone] = useState(data?.account?.phone || "");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setError("");
-    const trimmed = (phone || "").trim();
-    if (!trimmed || trimmed.replace(/\D/g, "").length < 8) {
-      setError(ar ? "اكتب رقم تليفون صحيح" : "Enter a valid phone number");
-      return;
-    }
-    setBusy(true);
-    try {
-      const next = clone(data);
-      next.account = { ...next.account, phone: trimmed };
-      // Keep name/email from Google if already present on the profile.
-      setData(next);
-      showToast(
-        ar
-          ? "تم حفظ رقم التليفون — كمّل بياناتك"
-          : "Phone saved — continue setup",
-      );
-      go("onboarding");
-    } catch (e) {
-      setError(
-        ar
-          ? "تعذر حفظ الرقم — حاول تاني"
-          : "Could not save phone — please try again",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      dir={ar ? "rtl" : "ltr"}
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        padding: "0 24px",
-        paddingTop: "env(safe-area-inset-top)",
-      }}
-    >
-      <div style={{ paddingTop: 48, paddingBottom: 12 }}>
-        <AppLogo size={52} />
-      </div>
-      <div
-        style={{ color: C.text, fontSize: 22, fontWeight: 800, marginTop: 8 }}
-      >
-        {ar ? "أكمل ملفك" : "Complete your profile"}
-      </div>
-      <div
-        style={{
-          color: C.sub,
-          fontSize: 13.5,
-          marginTop: 8,
-          marginBottom: 20,
-          lineHeight: 1.55,
-        }}
-      >
-        {ar
-          ? "رقم التليفون مطلوب للتواصل معك بخصوص خطط التغذية والتدريب اللي هتشتريها."
-          : "Your phone number is required so we can contact you about purchased nutrition and training plans."}
-      </div>
-      <TextField
-        icon={Phone}
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        placeholder={ar ? "رقم التليفون" : "Phone number"}
-        error={error}
-        type="tel"
-      />
-      <button
-        type="button"
-        onClick={submit}
-        disabled={busy}
-        style={{
-          marginTop: 22,
-          width: "100%",
-          padding: "14px 16px",
-          borderRadius: 14,
-          border: "none",
-          background: C.text,
-          color: C.bg,
-          fontWeight: 800,
-          fontSize: 15,
-          opacity: busy ? 0.7 : 1,
-          cursor: busy ? "default" : "pointer",
-        }}
-      >
-        {busy
-          ? ar
-            ? "جاري الحفظ…"
-            : "Saving…"
-          : ar
-            ? "متابعة"
-            : "Continue"}
-      </button>
-    </div>
-  );
-}
-
 function OnboardingScreen({ data, setData, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
@@ -4952,8 +4846,8 @@ function OnboardingScreen({ data, setData, go, showToast }) {
       setErr(ar ? "من فضلك اختر نوعك" : "Please select your gender");
       return;
     }
-    if (step === 1 && (!age || age < 10 || age > 100)) {
-      setErr(ar ? "اكتب سن صحيح (10-100)" : "Enter a valid age (10-100)");
+    if (step === 1 && (!age || age < 13 || age > 100)) {
+      setErr(ar ? "اكتب سن صحيح (13-100)" : "Enter a valid age (13-100)");
       return;
     }
     if (step === 2 && (!height || height < 100 || height > 250)) {
@@ -5836,7 +5730,7 @@ function HomeScreen({ data, go }) {
             <Crown size={22} color={C.gold} />
             <div style={{ flex: 1 }}>
               <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>
-                {ar ? "افتح Fifty Fit Pro" : "Unlock Fifty Fit Pro"}
+                {ar ? "افتح FitTrack Pro" : "Unlock FitTrack Pro"}
               </div>
               <div style={{ color: C.sub, fontSize: 11.5 }}>
                 {ar
@@ -9110,10 +9004,16 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         return;
       }
       if (purchaseRecords.length === 0 && !res?.preview) {
+        setVerifiedEntitlements({
+          trainingPro: false,
+          nutritionPro: false,
+          aiCoachPro: false,
+          proExpiresAt: null,
+        });
         showToast(
           ar
             ? "مفيش اشتراكات سابقة نستردّها"
-            : "No previous subscriptions to restore",
+            : "No active subscriptions to restore",
         );
         return;
       }
@@ -9199,7 +9099,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
 
   return (
     <div dir={ar ? "rtl" : "ltr"}>
-      <TopBar title="Fifty Fit Pro" onBack={back} />
+      <TopBar title="FitTrack Pro" onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <div style={{ textAlign: "center", marginBottom: 18 }}>
           <Crown size={30} color={C.gold} />
@@ -9211,7 +9111,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
               marginTop: 8,
             }}
           >
-            {ar ? "استفد أكتر من Fifty Fit" : "Get more out of Fifty Fit"}
+            {ar ? "استفد أكتر من FitTrack" : "Get more out of FitTrack"}
           </div>
           <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>
             {ar
@@ -9573,6 +9473,9 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   const [messages, setMessages] = useState([]); // session-only — cleared when drawer closes
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportReason, setReportReason] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const listRef = useRef(null);
   const inputBarRef = useRef(null);
@@ -9583,6 +9486,9 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
       setMessages([]);
       setInput("");
       setBusy(false);
+      setReportTarget(null);
+      setReportReason("");
+      setReportBusy(false);
       setKeyboardInset(0);
     }
   }, [open]);
@@ -9738,6 +9644,11 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         ? "الخدمة مكدّسة حاليًا. حاول بعد دقيقة تقريبًا."
         : "The AI service is overloaded right now. Please try again in about a minute.";
     }
+    if (code === "gemini_safety_blocked") {
+      return ar
+        ? "الإجابة دي اتمنعت بسبب فلتر الأمان. جرّب سؤال مختلف."
+        : "That answer was blocked by the safety filter. Try a different question.";
+    }
     if (code === "network") {
       return ar
         ? "تعذر الاتصال بالمدرب الذكي. تأكد من الإنترنت وحاول مرة تانية."
@@ -9752,6 +9663,31 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
     return ar
       ? "حصلت مشكلة في المدرب الذكي. حاول مرة تانية."
       : "Something went wrong with AI Coach. Please try again.";
+  };
+
+  const submitAiReport = async () => {
+    if (!reportTarget || reportBusy) return;
+    const reason = reportReason.trim();
+    if (!reason) {
+      showToast(ar ? "اكتب سبب البلاغ" : "Please describe the issue");
+      return;
+    }
+    setReportBusy(true);
+    try {
+      const { reportAiContent } = await import("./aiReport");
+      await reportAiContent({
+        response: String(reportTarget.content || "").slice(0, 2000),
+        reason: reason.slice(0, 500),
+        lang: ar ? "ar" : "en",
+      });
+      setReportTarget(null);
+      setReportReason("");
+      showToast(ar ? "تم إرسال البلاغ، شكرًا لمساعدتنا." : "Report sent. Thanks for helping us improve.");
+    } catch {
+      showToast(ar ? "تعذر إرسال البلاغ. حاول مرة أخرى." : "Could not send the report. Please try again.");
+    } finally {
+      setReportBusy(false);
+    }
   };
 
   const send = async () => {
@@ -9877,6 +9813,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           background: C.bg,
           display: "flex",
           flexDirection: "column",
+          position: "absolute",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
           transition: "bottom 0.12s ease-out",
           ...panelSide,
@@ -9934,24 +9871,64 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
                 : "Ask about workouts, nutrition, or progress — Arabic or English"}
             </div>
           )}
-          {messages.map((m, i) => (
-            <div
-              key={i}
-              style={{
-                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                maxWidth: "92%",
-                background: m.role === "user" ? C.green : C.card2,
-                color: m.role === "user" ? "#04140a" : C.text,
-                padding: "10px 12px",
-                borderRadius: 14,
-                fontSize: 13.5,
-                lineHeight: 1.45,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {m.content}
-            </div>
-          ))}
+          {messages.map((m, i) =>
+            m.role === "assistant" ? (
+              <div key={i} style={{ alignSelf: "flex-start", maxWidth: "92%" }}>
+                <div
+                  style={{
+                    background: C.card2,
+                    color: C.text,
+                    padding: "10px 12px",
+                    borderRadius: 14,
+                    fontSize: 13.5,
+                    lineHeight: 1.45,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {m.content}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReportTarget({ index: i, content: m.content });
+                    setReportReason("");
+                  }}
+                  style={{
+                    marginTop: 4,
+                    padding: "3px 6px",
+                    border: "none",
+                    background: "transparent",
+                    color: C.sub2,
+                    fontSize: 10.5,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <Flag size={11} />
+                  {ar ? "الإبلاغ عن إجابة" : "Report answer"}
+                </button>
+              </div>
+            ) : (
+              <div
+                key={i}
+                style={{
+                  alignSelf: "flex-end",
+                  maxWidth: "92%",
+                  background: C.green,
+                  color: "#04140a",
+                  padding: "10px 12px",
+                  borderRadius: 14,
+                  fontSize: 13.5,
+                  lineHeight: 1.45,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {m.content}
+              </div>
+            ),
+          )}
           {busy && (
             <div style={{ color: C.sub, fontSize: 12 }}>{ar ? "بيفكر..." : "Thinking..."}</div>
           )}
@@ -10036,6 +10013,70 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
             </div>
           )}
         </div>
+
+        {reportTarget && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 20,
+              background: "rgba(0,0,0,0.55)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 18,
+            }}
+            onClick={() => !reportBusy && setReportTarget(null)}
+          >
+            <div
+              dir={ar ? "rtl" : "ltr"}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "100%",
+                maxWidth: 330,
+                background: C.card,
+                border: `1px solid ${C.border}`,
+                borderRadius: 16,
+                padding: 16,
+              }}
+            >
+              <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginBottom: 6 }}>
+                {ar ? "الإبلاغ عن إجابة AI" : "Report an AI answer"}
+              </div>
+              <div style={{ color: C.sub, fontSize: 11.5, lineHeight: 1.5, marginBottom: 10 }}>
+                {ar ? "ساعدنا نراجع الإجابة ونحسن الأمان والجودة." : "Tell us what was wrong so we can review and improve safety and quality."}
+              </div>
+              <textarea
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                maxLength={500}
+                rows={4}
+                placeholder={ar ? "إيه المشكلة في الإجابة؟" : "What was wrong with this answer?"}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  resize: "none",
+                  background: C.card2,
+                  color: C.text,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 12,
+                  padding: "10px 12px",
+                  outline: "none",
+                  fontSize: 12.5,
+                  lineHeight: 1.45,
+                }}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button type="button" disabled={reportBusy} onClick={() => setReportTarget(null)} style={{ flex: 1, padding: "10px 12px", borderRadius: 11, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontWeight: 700, cursor: "pointer" }}>
+                  {ar ? "إلغاء" : "Cancel"}
+                </button>
+                <button type="button" disabled={reportBusy || !reportReason.trim()} onClick={submitAiReport} style={{ flex: 1, padding: "10px 12px", borderRadius: 11, border: "none", background: C.green, color: C.onAccent, fontWeight: 800, cursor: reportBusy ? "wait" : "pointer", opacity: reportBusy || !reportReason.trim() ? 0.5 : 1 }}>
+                  {reportBusy ? (ar ? "جاري الإرسال…" : "Sending…") : (ar ? "إرسال البلاغ" : "Send report")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div
           ref={inputBarRef}
@@ -10134,7 +10175,7 @@ function ProfileScreen({ data, go, isAdmin }) {
   const ar = lang === "ar";
   const p = data.profile;
   const pct = Math.round((p.xp / p.xpMax) * 100);
-  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro;
+  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;
   const menu = [
     {
       icon: UserCircle,
@@ -10717,7 +10758,7 @@ function RemindersScreen({ data, setData, back, showToast }) {
         notifications: [
           {
             id: 9999,
-            title: "Fifty Fit",
+            title: "FitTrack",
             body: ar
               ? "متنساش تمرين النهاردة! 💪"
               : "Don't forget today's workout! 💪",
@@ -11226,8 +11267,8 @@ function DeleteAccountScreen({
             </div>
             <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
               {ar
-                ? "هيتم حذف بيانات Fifty Fit: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
-                : "This permanently deletes your Fifty Fit data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
+                ? "هيتم حذف بيانات FitTrack: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
+                : "This permanently deletes your FitTrack data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
             </div>
           </div>
         </Card>
@@ -11658,7 +11699,7 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
             margin: "18px 0",
           }}
         >
-          Fifty Fit · {ar ? "الإصدار" : "Version"} 1.0.0
+          FitTrack · {ar ? "الإصدار" : "Version"} 1.0.0
         </div>
       </div>
     </div>
@@ -12043,8 +12084,15 @@ export default function GymApp() {
         if (cancelled) return;
         const records = result?.purchases || [];
         if (!records.length) {
-          // Do not wipe existing local entitlements on empty query —
-          // user may be offline or plugin may be unavailable briefly.
+          // An empty real Play query means there are no active purchases.
+          // Preview/unsupported results are not authoritative and must not wipe offline state.
+          if (result?.preview || result?.unsupported) return;
+          setVerifiedEntitlements({
+            trainingPro: false,
+            nutritionPro: false,
+            aiCoachPro: false,
+            proExpiresAt: null,
+          });
           return;
         }
         const activated = {
@@ -12152,16 +12200,8 @@ export default function GymApp() {
       return;
     }
     // New Google users must provide a phone before the normal onboarding flow.
-    const isGoogle = (firebaseUser?.providerData || []).some(
-      (p) => p?.providerId === "google.com",
-    );
-    const hasPhone = !!(data?.account?.phone || "").trim();
-    if (isGoogle && !hasPhone) {
-      setPhase("googlePhone");
-      return;
-    }
     setPhase("onboarding");
-  }, [firebaseUser, loaded, localLang, savedLanguage, data.onboarded, data?.account?.phone]); // eslint-disable-line
+  }, [firebaseUser, loaded, localLang, savedLanguage, data.onboarded]); // eslint-disable-line
 
   // Keep the Firestore profile complete: the signed-in identity, the chosen
   // language and the program start date are written once and then survive
@@ -12293,7 +12333,7 @@ export default function GymApp() {
           CapApp.exitApp();
           return;
         }
-        return; // onboarding/googlePhone/language: no natural "back" target, ignore
+        return; // onboarding/language: no natural "back" target, ignore
       }
       if (navHistory.length > 0) {
         back();
@@ -12405,15 +12445,6 @@ export default function GymApp() {
   else if (phase === "signup")
     authScreen = (
       <SignUpScreen go={setPhase} showToast={showToast} localLang={localLang} />
-    );
-  else if (phase === "googlePhone")
-    authScreen = (
-      <GooglePhoneScreen
-        data={data}
-        setData={setData}
-        go={setPhase}
-        showToast={showToast}
-      />
     );
   else if (phase === "onboarding")
     authScreen = (

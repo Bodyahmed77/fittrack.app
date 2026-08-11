@@ -1,6 +1,6 @@
 {
   "appId": "com.fittrack.app",
-  "appName": "Fifty Fit",
+  "appName": "FitTrack",
   "webDir": "dist",
   "backgroundColor": "#000000",
   "server": {

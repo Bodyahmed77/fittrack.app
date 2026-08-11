@@ -1,5 +1,5 @@
 // ============================================================
-// Fifty Fit App — External Configuration
+// FitTrack App — External Configuration
 // ============================================================
 // Centralize all external assets (images, videos, product IDs)
 // here so they can be updated easily without touching the app logic.
@@ -126,6 +126,15 @@ export const PRO_AI_MESSAGES_PER_DAY = 50;
 // Override at build time with VITE_AI_ENDPOINT if needed.
 export const AI_COACH_ENDPOINT =
   "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/ai-coach";
+
+export const AI_REPORT_ENDPOINT =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_AI_REPORT_ENDPOINT) ||
+  (AI_COACH_ENDPOINT || "").replace(
+    "/functions/v1/ai-coach",
+    "/functions/v1/ai-report",
+  );
 
 // Server-side entitlement store. The ai-coach function grants quotas
 // from this table ONLY, so every real purchase must be registered here.

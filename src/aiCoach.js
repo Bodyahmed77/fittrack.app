@@ -60,12 +60,7 @@ function resolveAnonKey() {
 }
 
 function diag(...args) {
-  try {
-    // eslint-disable-next-line no-console
-    console.log(...args);
-  } catch (_) {
-    /* ignore */
-  }
+  if (import.meta?.env?.DEV) console.log(...args);
 }
 
 function normalizeUsage(data, fallbackDate) {
@@ -130,6 +125,7 @@ function classifyHttpError(status, data) {
     "gemini_failed",
     "gemini_timeout",
     "gemini_not_configured",
+    "gemini_safety_blocked",
     "empty_response",
     "usage_read_failed",
     "bad_request",
@@ -243,23 +239,23 @@ export async function generateCoachReply({
       message: lastUser ? String(lastUser.content) : "",
       lang: lang || "en",
       localDate: localDate || "",
-      timeZone:
-        typeof Intl !== "undefined" && Intl.DateTimeFormat
-          ? Intl.DateTimeFormat().resolvedOptions().timeZone || ""
-          : "",
       context: userContext || {},
-      hasAiPro: !!hasAiPro,
-      uid: user.uid,
     };
 
     diag("[AI_COACH_HTTP] request_start");
     let res;
     try {
-      res = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
+      // Retry only bounded server overload. The server does not consume quota
+      // before granting a global AI slot, so these retries cannot burn messages.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+        if (res.status !== 503 || attempt === 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 900 + Math.random() * 900 * (attempt + 1)));
+      }
     } catch (e) {
       diag(
         "[AI_COACH_HTTP] network_error=" +

@@ -203,6 +203,12 @@ async function callGeminiModel(
           body: JSON.stringify({
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: { maxOutputTokens: 1024 },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            ],
           }),
         },
       );
@@ -227,6 +233,9 @@ async function callGeminiModel(
         return { ok: false, code: "gemini_failed", status: geminiRes.status, model };
       }
       const geminiData = await geminiRes.json();
+      if (geminiData?.promptFeedback?.blockReason || geminiData?.candidates?.[0]?.finishReason === "SAFETY") {
+        return { ok: false, code: "gemini_safety_blocked", status: 400, model } as const;
+      }
       const reply =
         geminiData?.candidates?.[0]?.content?.parts
           ?.map((p: { text?: string }) => p?.text || "")
@@ -344,9 +353,14 @@ Deno.serve(async (req) => {
 
     // ---- Input validation
     const lang = body.lang === "ar" ? "ar" : "en";
-    // Quota bucket is server UTC, matching the PostgreSQL RPC's current_date.
+    // Quota bucket is calculated on the server in the app's operating timezone.
     // The client-supplied localDate remains intentionally ignored.
-    const localDate = new Date().toISOString().slice(0, 10);
+    const localDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Africa/Cairo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
     const messages = Array.isArray(body.messages)
       ? (body.messages as Array<{ role?: string; content?: string }>).slice(-6)
       : [];
@@ -367,7 +381,16 @@ Deno.serve(async (req) => {
     }
     const sb = createClient(supabaseUrl, serviceKey);
 
-    // ---- SERVER-SIDE entitlement (not client-provided).
+    // Global DB-backed concurrency gate: four provider calls maximum across all Edge isolates.
+    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 45 });
+    const slotId = Number(aiSlot || 0);
+    if (aiSlotErr || !slotId) {
+      log("request_complete", { status: 503, error: "provider_overloaded", durationMs: Date.now() - t0 });
+      return json(503, { error: "provider_overloaded", message: "AI service is busy right now — please try again shortly" });
+    }
+
+    try {
+      // ---- SERVER-SIDE entitlement (not client-provided).
     const hasAiPro = await lookupEntitlement(sb, uid);
     const limit = hasAiPro ? PRO_LIMIT : FREE_LIMIT;
 
@@ -415,13 +438,13 @@ Deno.serve(async (req) => {
     // ---- Build prompt (unchanged hardened system prompt + compact context)
     const systemPrompt =
       lang === "ar"
-        ? `أنت مدرب اللياقة والتغذية داخل تطبيق FitTrack (Fifty Fit).
+        ? `أنت مدرب اللياقة والتغذية داخل تطبيق FitTrack.
 ساعد المستخدم بناءً على بيانات FitTrack الحالية المرفقة في السياق فقط.
 - إذا وُجد الاسم أو الوزن أو الهدف أو تمارين اليوم في السياق، استخدمها مباشرة ولا تقل إنك لا تعرفها.
 - لا تختلق بيانات غير موجودة في السياق. إذا لم تكن المعلومة متاحة، قل ذلك بوضوح.
 - عند السؤال عن تمرين اليوم، اعتمد على قائمة التمارين في السياق. يمكنك اقتراح بدائل مع توضيح أنها اقتراحات إضافية.
 - أجب باختصار ووضوح بالعربية. لا تقدم نصائح طبية. لا تكشف تفاصيل تقنية داخلية أو مفاتيح أو توكنات.`
-        : `You are the fitness and nutrition coach inside the FitTrack (Fifty Fit) app.
+        : `You are the fitness and nutrition coach inside the FitTrack app.
 Assist the user using ONLY the current FitTrack context provided below.
 - If the user's name, weight, goal, or today's exercises appear in the context, use them directly. Do not claim you cannot access information that is present.
 - Do not invent data that is not in the context. If something is unavailable, say so clearly.
@@ -508,15 +531,18 @@ Assist the user using ONLY the current FitTrack context provided below.
         hasPro: hasAiPro,
       },
     });
-  } catch (e) {
-    log("request_complete", {
-      status: 500,
-      error: "backend_error",
-      durationMs: Date.now() - t0,
-      detail: String((e as Error)?.message || e).slice(0, 120),
-    });
-    return json(500, { error: "backend_error", message: "Internal error" });
-  } finally {
-    releaseConcurrencySlot();
-  }
+      } catch (e) {
+        log("request_complete", {
+          status: 500,
+          error: "backend_error",
+          durationMs: Date.now() - t0,
+          detail: String((e as Error)?.message || e).slice(0, 120),
+        });
+        return json(500, { error: "backend_error", message: "Internal error" });
+      } finally {
+        await asRpc(sb).rpc("release_ai_slot", { p_slot_id: slotId }).catch(() => {});
+      }
+    } finally {
+      releaseConcurrencySlot();
+    }
 });

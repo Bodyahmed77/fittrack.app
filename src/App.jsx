@@ -3911,7 +3911,7 @@ function SplashScreen() {
           letterSpacing: 0.3,
         }}
       >
-        Fifty
+        FitTrack
       </div>
       <div style={{ color: C.sub, fontSize: 12.5 }}>Loading your progress…</div>
     </div>
@@ -4210,7 +4210,7 @@ function WelcomeScreen({ go }) {
         <AppLogo size={90} />
         <div style={{ textAlign: "center" }}>
           <div style={{ color: C.text, fontSize: 25, fontWeight: 800 }}>
-            Fifty
+            FitTrack
           </div>
           <div
             style={{
@@ -9004,10 +9004,16 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         return;
       }
       if (purchaseRecords.length === 0 && !res?.preview) {
+        setVerifiedEntitlements({
+          trainingPro: false,
+          nutritionPro: false,
+          aiCoachPro: false,
+          proExpiresAt: null,
+        });
         showToast(
           ar
             ? "مفيش اشتراكات سابقة نستردّها"
-            : "No previous subscriptions to restore",
+            : "No active subscriptions to restore",
         );
         return;
       }
@@ -10169,7 +10175,7 @@ function ProfileScreen({ data, go, isAdmin }) {
   const ar = lang === "ar";
   const p = data.profile;
   const pct = Math.round((p.xp / p.xpMax) * 100);
-  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro;
+  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;
   const menu = [
     {
       icon: UserCircle,
@@ -12078,8 +12084,15 @@ export default function GymApp() {
         if (cancelled) return;
         const records = result?.purchases || [];
         if (!records.length) {
-          // Do not wipe existing local entitlements on empty query —
-          // user may be offline or plugin may be unavailable briefly.
+          // An empty real Play query means there are no active purchases.
+          // Preview/unsupported results are not authoritative and must not wipe offline state.
+          if (result?.preview || result?.unsupported) return;
+          setVerifiedEntitlements({
+            trainingPro: false,
+            nutritionPro: false,
+            aiCoachPro: false,
+            proExpiresAt: null,
+          });
           return;
         }
         const activated = {

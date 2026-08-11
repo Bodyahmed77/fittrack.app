@@ -9710,6 +9710,9 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
                 ? "استرجاع الاشتراك"
                 : "Restore purchases"}
             </button>
+            <a href="https://play.google.com/store/account/subscriptions?package=com.fittrack.app" target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 10, color: C.sub2, fontSize: 11, textDecoration: "underline", textUnderlineOffset: 3 }}>
+              {ar ? "إدارة أو إلغاء الاشتراك من Google Play" : "Manage or cancel subscription on Google Play"}
+            </a>
           </div>
         )}
       </div>

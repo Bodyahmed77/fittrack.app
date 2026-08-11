@@ -1,0 +1,41 @@
+name: Fix AI lease window
+
+on:
+  push:
+    branches:
+      - fix/fifty-fit-launch-polish
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch lease window
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/ai-coach/index.ts')
+          text=p.read_text(encoding='utf-8')
+          old='''    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 45 });'''
+          new='''    // Worst case is primary timeout + retry jitter + fallback timeout. Keep\n    // the DB lease longer than that window so a slow request can never lose\n    // its slot while it is still using the provider.\n    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 90 });'''
+          if old not in text: raise SystemExit('AI lease call not found')
+          p.write_text(text.replace(old,new,1),encoding='utf-8')
+          PY
+      - name: Validate Edge Function syntax
+        run: |
+          npm ci
+          npm run build
+      - name: Commit and remove workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/ai-coach/index.ts
+          git diff --cached --check
+          git commit -m "fix: extend AI concurrency lease window"
+          git push origin HEAD
+          git rm .github/workflows/fix-ai-lease-window.yml
+          git commit -m "chore: remove temporary AI lease workflow"
+          git push origin HEAD

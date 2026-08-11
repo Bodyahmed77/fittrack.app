@@ -214,7 +214,7 @@ async function scheduleDailyReminder(timeStr) {
     notifications: [
       {
         id: NOTIF_ID_DAILY_REMINDER,
-        title: "FitTrack",
+        title: "Fifty Fit",
         body: "Don't forget today's workout! 💪",
         schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
       },
@@ -238,7 +238,7 @@ async function scheduleSubscriptionExpiryReminder(expiresAtISO) {
     notifications: [
       {
         id: NOTIF_ID_SUB_EXPIRY,
-        title: "FitTrack Pro",
+        title: "Fifty Fit Pro",
         body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
         schedule: { at: fireDate },
       },
@@ -3819,7 +3819,7 @@ function AppLogo({ size = 74 }) {
     >
       <img
         src={logoSrc}
-        alt="FitTrack"
+        alt="Fifty Fit"
         style={{ width: "100%", height: "100%", objectFit: "contain" }}
       />
     </div>
@@ -4801,6 +4801,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const [step, setStep] = useState(0);
+  const [phone, setPhone] = useState(data.account.phone || "");
   const [gender, setGender] = useState("");
   const [age, setAge] = useState("");
   const [height, setHeight] = useState("");
@@ -4836,29 +4837,33 @@ function OnboardingScreen({ data, setData, go, showToast }) {
 
   const [activityLevel, setActivityLevel] = useState("moderate");
   const steps = ar
-    ? ["النوع", "السن", "الطول", "الوزن", "الهدف", "النشاط", "الجدول"]
-    : ["Gender", "Age", "Height", "Weight", "Goal", "Activity", "Schedule"];
+    ? ["رقم الهاتف", "النوع", "السن", "الطول", "الوزن", "الهدف", "النشاط", "الجدول"]
+    : ["Phone", "Gender", "Age", "Height", "Weight", "Goal", "Activity", "Schedule"];
   const total = steps.length;
 
   const next = () => {
     setErr("");
-    if (step === 0 && !gender) {
+    if (step === 0 && (!phone.trim() || phone.trim().replace(/\D/g, "").length < 8)) {
+      setErr(ar ? "اكتب رقم تليفون صحيح" : "Enter a valid phone number");
+      return;
+    }
+    if (step === 1 && !gender) {
       setErr(ar ? "من فضلك اختر نوعك" : "Please select your gender");
       return;
     }
-    if (step === 1 && (!age || age < 13 || age > 100)) {
+    if (step === 2 && (!age || age < 13 || age > 100)) {
       setErr(ar ? "اكتب سن صحيح (13-100)" : "Enter a valid age (13-100)");
       return;
     }
-    if (step === 2 && (!height || height < 100 || height > 250)) {
+    if (step === 3 && (!height || height < 100 || height > 250)) {
       setErr(ar ? "اكتب طول صحيح بالسنتيمتر" : "Enter a valid height in cm");
       return;
     }
-    if (step === 3 && (!weight || weight < 30 || weight > 300)) {
+    if (step === 4 && (!weight || weight < 30 || weight > 300)) {
       setErr(ar ? "اكتب وزن صحيح بالكيلوجرام" : "Enter a valid weight in kg");
       return;
     }
-    if (step === 4 && !goal) {
+    if (step === 5 && !goal) {
       setErr(ar ? "من فضلك اختر هدفك" : "Please choose a goal");
       return;
     }
@@ -4874,6 +4879,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
     const next = clone(data);
     next.account = {
       ...next.account,
+      phone: phone.trim(),
       gender,
       age: Number(age),
       height: Number(height),
@@ -4955,7 +4961,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
       </div>
 
       <div style={{ flex: 1, marginTop: 6 }}>
-        {step === 0 && (
+        {step === 1 && (
           <div>
             <div
               style={{
@@ -4998,7 +5004,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             </div>
           </div>
         )}
-        {step === 1 && (
+        {step === 2 && (
           <div>
             <div
               style={{
@@ -5018,7 +5024,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             />
           </div>
         )}
-        {step === 2 && (
+        {step === 3 && (
           <div>
             <div
               style={{
@@ -5038,7 +5044,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             />
           </div>
         )}
-        {step === 3 && (
+        {step === 4 && (
           <div>
             <div
               style={{
@@ -5058,7 +5064,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             />
           </div>
         )}
-        {step === 4 && (
+        {step === 5 && (
           <div>
             <div
               style={{
@@ -5108,7 +5114,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             </div>
           </div>
         )}
-        {step === 5 && (
+        {step === 6 && (
           <div>
             <div
               style={{
@@ -5199,7 +5205,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
             </div>
           </div>
         )}
-        {step === 6 && (
+        {step === 7 && (
           <div>
             <div
               style={{
@@ -5730,7 +5736,7 @@ function HomeScreen({ data, go }) {
             <Crown size={22} color={C.gold} />
             <div style={{ flex: 1 }}>
               <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>
-                {ar ? "افتح FitTrack Pro" : "Unlock FitTrack Pro"}
+                {ar ? "افتح Fifty Fit Pro" : "Unlock Fifty Fit Pro"}
               </div>
               <div style={{ color: C.sub, fontSize: 11.5 }}>
                 {ar
@@ -9099,7 +9105,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
 
   return (
     <div dir={ar ? "rtl" : "ltr"}>
-      <TopBar title="FitTrack Pro" onBack={back} />
+      <TopBar title="Fifty Fit Pro" onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <div style={{ textAlign: "center", marginBottom: 18 }}>
           <Crown size={30} color={C.gold} />
@@ -9111,7 +9117,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
               marginTop: 8,
             }}
           >
-            {ar ? "استفد أكتر من FitTrack" : "Get more out of FitTrack"}
+            {ar ? "استفد أكتر من FitTrack" : "Get more out of Fifty Fit"}
           </div>
           <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>
             {ar
@@ -10758,7 +10764,7 @@ function RemindersScreen({ data, setData, back, showToast }) {
         notifications: [
           {
             id: 9999,
-            title: "FitTrack",
+            title: "Fifty Fit",
             body: ar
               ? "متنساش تمرين النهاردة! 💪"
               : "Don't forget today's workout! 💪",

@@ -1,4 +1,4 @@
-# FitTrack — Android app project
+# Fifty Fit — Android app project
 
 Real project: React + Vite + Capacitor (Android) + Firebase (Auth + Firestore).
 

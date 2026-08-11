@@ -1,18 +1,13 @@
 // Supabase Edge Function: ai-coach
-// Architecture: Firebase Auth ID token → verify inside function → Gemini
+// Firebase Auth ID token → JWKS verify → atomic usage reserve → Gemini
 //
 // Deploy:
 //   supabase functions deploy ai-coach --no-verify-jwt
 //
-// Secrets:
-//   GEMINI_API_KEY (required)
-// Optional:
-//   FIREBASE_PROJECT_ID (default: fittrack-698fa)
-//   GEMINI_MODEL (default: gemini-3.5-flash-lite)
+// Secrets: GEMINI_API_KEY
+// Optional: FIREBASE_PROJECT_ID, GEMINI_MODEL (default gemini-3.5-flash-lite)
 //
-// Schema: public.ai_usage (uid text, usage_date date, count int) PK (uid, usage_date)
-// Atomic limit: public.reserve_ai_usage(uid, usage_date, limit) → jsonb
-// Chat transcripts are NOT stored. Only daily usage counters persist.
+// Chat transcripts are NOT stored. Only ai_usage counters persist.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
@@ -20,9 +15,9 @@ import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
 const FREE_LIMIT = 3;
 const PRO_LIMIT = 50;
-// gemini-2.0-flash shut down; gemini-2.5-flash returns 404 for new API keys.
-// gemini-3.5-flash-lite is GA (docs: ai.google.dev/gemini-api/docs/models).
 const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.5-flash-lite";
+const GEMINI_TIMEOUT_MS = 25_000;
+const GEMINI_MAX_RETRIES = 1; // one retry only for transient errors
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -38,7 +33,24 @@ function json(status: number, body: Record<string, unknown>) {
   });
 }
 
-/** Verify Firebase Auth ID token via Google securetoken JWKS (not tokeninfo). */
+function log(event: string, extra: Record<string, unknown> = {}) {
+  // Never log tokens, keys, prompts, or full replies.
+  try {
+    console.log("[AI_COACH]", event, JSON.stringify(extra));
+  } catch {
+    console.log("[AI_COACH]", event);
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isTransientGeminiStatus(status: number) {
+  return status === 429 || status === 500 || status === 502 || status === 503 ||
+    status === 504;
+}
+
 async function verifyFirebaseIdToken(idToken: string) {
   const JWKS = jose.createRemoteJWKSet(
     new URL(
@@ -57,6 +69,113 @@ async function verifyFirebaseIdToken(idToken: string) {
   };
 }
 
+/** Call Gemini with timeout + at most one retry on transient HTTP errors. */
+async function callGemini(
+  apiKey: string,
+  prompt: string,
+): Promise<{ ok: true; reply: string } | { ok: false; code: string; status: number }> {
+  let lastStatus = 0;
+
+  for (let attempt = 0; attempt <= GEMINI_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await sleep(400 * attempt);
+      log("gemini_retry", { attempt, model: GEMINI_MODEL });
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
+    try {
+      log("gemini_request", {
+        model: GEMINI_MODEL,
+        attempt,
+        timeoutMs: GEMINI_TIMEOUT_MS,
+      });
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 1024,
+            },
+          }),
+        },
+      );
+
+      lastStatus = geminiRes.status;
+
+      if (!geminiRes.ok) {
+        const errText = await geminiRes.text();
+        let geminiCode = "";
+        try {
+          const parsed = JSON.parse(errText);
+          geminiCode = String(parsed?.error?.status || parsed?.error?.code || "");
+        } catch {
+          /* ignore */
+        }
+        log("gemini_response", {
+          status: geminiRes.status,
+          model: GEMINI_MODEL,
+          code: geminiCode,
+          attempt,
+        });
+
+        if (isTransientGeminiStatus(geminiRes.status) && attempt < GEMINI_MAX_RETRIES) {
+          continue;
+        }
+
+        if (geminiRes.status === 429) {
+          return { ok: false, code: "gemini_rate_limited", status: 429 };
+        }
+        return { ok: false, code: "gemini_failed", status: geminiRes.status };
+      }
+
+      const geminiData = await geminiRes.json();
+      const reply =
+        geminiData?.candidates?.[0]?.content?.parts
+          ?.map((p: { text?: string }) => p?.text || "")
+          .join("")
+          .trim() || "";
+
+      log("gemini_response", {
+        status: 200,
+        model: GEMINI_MODEL,
+        attempt,
+        replyLen: reply.length,
+      });
+
+      if (!reply) {
+        return { ok: false, code: "empty_response", status: 200 };
+      }
+      return { ok: true, reply };
+    } catch (e) {
+      const name = (e as Error)?.name || "";
+      const msg = String((e as Error)?.message || e);
+      const timedOut = name === "AbortError" || /abort/i.test(msg);
+      log("gemini_response", {
+        status: timedOut ? 0 : lastStatus,
+        model: GEMINI_MODEL,
+        attempt,
+        error: timedOut ? "timeout" : "network",
+      });
+      if (timedOut) {
+        return { ok: false, code: "gemini_timeout", status: 504 };
+      }
+      if (attempt < GEMINI_MAX_RETRIES) continue;
+      return { ok: false, code: "busy", status: 503 };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { ok: false, code: "gemini_failed", status: lastStatus || 500 };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -65,10 +184,18 @@ Deno.serve(async (req) => {
     return json(405, { error: "method_not_allowed" });
   }
 
+  const t0 = Date.now();
+  log("request_start", {});
+
   try {
     const authHeader = req.headers.get("Authorization") || "";
     const m = authHeader.match(/^Bearer\s+(.+)$/i);
     if (!m) {
+      log("request_complete", {
+        status: 401,
+        error: "unauthenticated",
+        durationMs: Date.now() - t0,
+      });
       return json(401, {
         error: "unauthenticated",
         message: "Missing Bearer token",
@@ -80,11 +207,14 @@ Deno.serve(async (req) => {
     try {
       const verified = await verifyFirebaseIdToken(idToken);
       uid = verified.uid;
+      log("auth_ok", { uid });
     } catch (e) {
-      console.error(
-        "Firebase token verify failed",
-        String((e as Error)?.message || e).slice(0, 200),
-      );
+      log("request_complete", {
+        status: 401,
+        error: "unauthenticated",
+        durationMs: Date.now() - t0,
+        detail: String((e as Error)?.message || e).slice(0, 80),
+      });
       return json(401, {
         error: "unauthenticated",
         message: "Invalid or expired Firebase ID token",
@@ -101,12 +231,12 @@ Deno.serve(async (req) => {
     const lang = body.lang === "ar" ? "ar" : "en";
     const localDate =
       typeof body.localDate === "string" &&
-      /^\d{4}-\d{2}-\d{2}$/.test(body.localDate as string)
+        /^\d{4}-\d{2}-\d{2}$/.test(body.localDate as string)
         ? (body.localDate as string)
         : new Date().toISOString().slice(0, 10);
+    // Client-supplied flag — SECURITY FOLLOW-UP: verify server-side entitlement later.
     const hasAiPro = !!body.hasAiPro;
     const limit = hasAiPro ? PRO_LIMIT : FREE_LIMIT;
-    // In-request context only (from client React state). Never written to DB.
     const messages = Array.isArray(body.messages)
       ? (body.messages as Array<{ role?: string; content?: string }>).slice(-6)
       : [];
@@ -116,6 +246,11 @@ Deno.serve(async (req) => {
         : messages.filter((x) => x?.role === "user").pop()?.content || "";
 
     if (!userMessage || !String(userMessage).trim()) {
+      log("request_complete", {
+        status: 400,
+        error: "bad_request",
+        durationMs: Date.now() - t0,
+      });
       return json(400, { error: "bad_request", message: "Empty message" });
     }
 
@@ -129,8 +264,7 @@ Deno.serve(async (req) => {
     }
     const sb = createClient(supabaseUrl, serviceKey);
 
-    // Atomic reserve: increments count only if under limit (avoids race).
-    // Persists ONLY uid + usage_date + count — never message content.
+    // Atomic reserve is the ONLY allowed usage path (no non-atomic fallback).
     const { data: reserved, error: reserveErr } = await sb.rpc(
       "reserve_ai_usage",
       {
@@ -141,71 +275,68 @@ Deno.serve(async (req) => {
     );
 
     if (reserveErr) {
-      console.error("ai_usage reserve", {
+      log("usage_reserve_failed", {
         code: reserveErr.code,
-        message: String(reserveErr.message || "").slice(0, 160),
+        message: String(reserveErr.message || "").slice(0, 120),
       });
-      const { data: existing, error: readErr } = await sb
-        .from("ai_usage")
-        .select("count")
-        .eq("uid", uid)
-        .eq("usage_date", localDate)
-        .maybeSingle();
-
-      if (readErr) {
-        console.error("ai_usage read", {
-          code: readErr.code,
-          message: String(readErr.message || "").slice(0, 160),
-        });
-        return json(500, {
-          error: "usage_read_failed",
-          message: "Usage read failed",
-        });
-      }
-
-      const used = (existing as { count?: number } | null)?.count ?? 0;
-      if (used >= limit) {
-        return json(429, {
-          error: "daily_limit",
-          code: "daily_limit",
-          message: "Daily AI message limit reached",
-          date: localDate,
-          used,
-          count: used,
-          limit,
-          remaining: 0,
-          hasPro: hasAiPro,
-        });
-      }
-
-      (body as Record<string, unknown>).__legacyUsage = used;
-    } else {
-      const r = (reserved || {}) as {
-        allowed?: boolean;
-        count?: number;
-        limit?: number;
-        remaining?: number;
-      };
-      if (!r.allowed) {
-        return json(429, {
-          error: "daily_limit",
-          code: "daily_limit",
-          message: "Daily AI message limit reached",
-          date: localDate,
-          used: r.count ?? limit,
-          count: r.count ?? limit,
-          limit,
-          remaining: 0,
-          hasPro: hasAiPro,
-        });
-      }
-      (body as Record<string, unknown>).__reservedCount = r.count ?? 1;
-      (body as Record<string, unknown>).__reservedRemaining =
-        r.remaining ?? Math.max(0, limit - (r.count ?? 1));
+      log("request_complete", {
+        status: 500,
+        error: "usage_read_failed",
+        durationMs: Date.now() - t0,
+      });
+      return json(500, {
+        error: "usage_read_failed",
+        message: "Usage reserve failed",
+      });
     }
+
+    const r = (reserved || {}) as {
+      allowed?: boolean;
+      count?: number;
+      limit?: number;
+      remaining?: number;
+    };
+
+    if (!r.allowed) {
+      log("request_complete", {
+        status: 429,
+        error: "daily_limit",
+        uid,
+        durationMs: Date.now() - t0,
+      });
+      return json(429, {
+        error: "daily_limit",
+        code: "daily_limit",
+        message: "Daily AI message limit reached",
+        date: localDate,
+        used: r.count ?? limit,
+        count: r.count ?? limit,
+        limit,
+        remaining: 0,
+        hasPro: hasAiPro,
+      });
+    }
+
+    const reservedCount = r.count ?? 1;
+    const reservedRemaining = r.remaining ?? Math.max(0, limit - reservedCount);
+    log("usage_reserved", {
+      uid,
+      count: reservedCount,
+      limit,
+      remaining: reservedRemaining,
+    });
 
     const geminiKey = Deno.env.get("GEMINI_API_KEY");
     if (!geminiKey) {
+      await sb.rpc("refund_ai_usage", {
+        p_uid: uid,
+        p_usage_date: localDate,
+      }).catch(() => {});
+      log("request_complete", {
+        status: 500,
+        error: "gemini_not_configured",
+        durationMs: Date.now() - t0,
+      });
       return json(500, {
         error: "gemini_not_configured",
         message: "GEMINI_API_KEY not configured",
@@ -219,8 +350,8 @@ Deno.serve(async (req) => {
 
     const historyText = messages
       .map(
-        (m) =>
-          `${m.role === "assistant" ? "Coach" : "User"}: ${String(m.content || "").slice(0, 800)}`,
+        (msg) =>
+          `${msg.role === "assistant" ? "Coach" : "User"}: ${String(msg.content || "").slice(0, 800)}`,
       )
       .join("\n");
 
@@ -229,111 +360,78 @@ Deno.serve(async (req) => {
         ? JSON.stringify(body.context).slice(0, 1200)
         : "";
 
-    const prompt = `${systemPrompt}\n\nUser context: ${userCtx}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 1500)}\nCoach:`;
+    const prompt =
+      `${systemPrompt}\n\nUser context: ${userCtx}\n\nConversation:\n${historyText}\n\nUser: ${String(userMessage).slice(0, 1500)}\nCoach:`;
 
-    // Simple text generateContent only — no tools, grounding, or multimodal.
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(geminiKey)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 1024,
-          },
-        }),
-      },
-    );
+    const geminiResult = await callGemini(geminiKey, prompt);
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      // Safe diagnostics only — no prompts, keys, or tokens.
-      let geminiCode = "";
-      try {
-        const parsed = JSON.parse(errText);
-        geminiCode = String(parsed?.error?.status || parsed?.error?.code || "");
-      } catch {
-        /* ignore */
-      }
-      console.error("Gemini error", {
-        status: geminiRes.status,
-        model: GEMINI_MODEL,
-        code: geminiCode,
-        message: errText.slice(0, 180),
+    if (!geminiResult.ok) {
+      const { error: refundErr } = await sb.rpc("refund_ai_usage", {
+        p_uid: uid,
+        p_usage_date: localDate,
       });
-      if (geminiRes.status === 429) {
-        return json(429, {
-          error: "quota",
-          message: "Gemini quota exceeded",
+      if (refundErr) {
+        log("usage_refund_failed", {
+          code: refundErr.code,
+          message: String(refundErr.message || "").slice(0, 80),
         });
+      } else {
+        log("usage_refunded", { uid });
       }
-      return json(500, {
-        error: "gemini_failed",
-        message: "AI generation failed",
-        geminiStatus: geminiRes.status,
+
+      const code = geminiResult.code;
+      let status = 500;
+      if (code === "gemini_rate_limited") status = 429;
+      else if (code === "busy") status = 503;
+      else if (code === "gemini_timeout") status = 504;
+      else if (code === "empty_response") status = 500;
+
+      log("request_complete", {
+        status,
+        error: code,
+        durationMs: Date.now() - t0,
         model: GEMINI_MODEL,
       });
-    }
 
-    const geminiData = await geminiRes.json();
-    const reply =
-      geminiData?.candidates?.[0]?.content?.parts
-        ?.map((p: { text?: string }) => p?.text || "")
-        .join("")
-        .trim() || "";
-
-    if (!reply) {
-      return json(500, {
-        error: "empty_response",
-        message: "Empty AI response",
+      return json(status, {
+        error: code,
+        message:
+          code === "gemini_timeout"
+            ? "AI response timed out"
+            : code === "gemini_rate_limited" || code === "busy"
+            ? "AI service busy"
+            : code === "empty_response"
+            ? "Empty AI response"
+            : "AI generation failed",
+        model: GEMINI_MODEL,
       });
     }
 
-    let newCount =
-      typeof (body as Record<string, unknown>).__reservedCount === "number"
-        ? ((body as Record<string, unknown>).__reservedCount as number)
-        : null;
-    let remaining =
-      typeof (body as Record<string, unknown>).__reservedRemaining === "number"
-        ? ((body as Record<string, unknown>).__reservedRemaining as number)
-        : null;
-
-    if (newCount == null) {
-      const used =
-        typeof (body as Record<string, unknown>).__legacyUsage === "number"
-          ? ((body as Record<string, unknown>).__legacyUsage as number)
-          : 0;
-      newCount = used + 1;
-      remaining = Math.max(0, limit - newCount);
-      const { error: writeErr } = await sb.from("ai_usage").upsert(
-        { uid, usage_date: localDate, count: newCount },
-        { onConflict: "uid,usage_date" },
-      );
-      if (writeErr) {
-        console.error("ai_usage write", {
-          code: writeErr.code,
-          message: String(writeErr.message || "").slice(0, 160),
-        });
-      }
-    }
+    log("request_complete", {
+      status: 200,
+      durationMs: Date.now() - t0,
+      model: GEMINI_MODEL,
+      uid,
+    });
 
     return json(200, {
-      reply,
+      reply: geminiResult.reply,
       usage: {
         date: localDate,
-        count: newCount,
-        used: newCount,
+        count: reservedCount,
+        used: reservedCount,
         limit,
-        remaining: remaining ?? Math.max(0, limit - (newCount || 0)),
+        remaining: reservedRemaining,
         hasPro: hasAiPro,
       },
     });
   } catch (e) {
-    console.error(
-      "ai-coach unhandled",
-      String((e as Error)?.message || e).slice(0, 200),
-    );
+    log("request_complete", {
+      status: 500,
+      error: "backend_error",
+      durationMs: Date.now() - t0,
+      detail: String((e as Error)?.message || e).slice(0, 120),
+    });
     return json(500, { error: "backend_error", message: "Internal error" });
   }
 });

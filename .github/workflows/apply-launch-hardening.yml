@@ -4,12 +4,17 @@ on:
   push:
     branches:
       - fix/account-deletion-cleanup
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   patch:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'fix/account-deletion-cleanup'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

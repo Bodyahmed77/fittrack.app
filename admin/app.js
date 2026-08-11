@@ -28,7 +28,7 @@ const EXERCISES = [
   ["chest_fly", "Chest Fly", "فراشة صدر"], ["dips", "Dips", "ديبس"], ["tricep_pushdown", "Tricep Pushdown", "ترايسبس"],
   ["overhead_ext", "Overhead Tricep Extension", "ترايسبس فوق الرأس"], ["push_up", "Push Up", "ضغط"], ["zigzag_tricep_ext", "Zigzag Tricep Extension", "ترايسبس زجزاج"],
   ["lat_pulldown", "Lat Pulldown", "سحب عالي"], ["barbell_row", "T-Bar Row", "تجديف T-Bar"], ["seated_row", "Seated Row", "سحب أرضي"],
-  ["single_arm_seated_row", "Single Arm Seated Row", "سحب أرضي بذراع واحدة"], ["bicep_curl", "Behind Body Bicep Curl", "بايسبس خلف الجسم"], ["hammer_curl", "Hammer Curl", "هامر كيرل"],
+  ["single_arm_seated_row", "Single Arm Seated Row", "سحب أرضي بذراع واحدة"], ["bicep_curl", "Behind Body Bicep Curl", "بايسبس خلف الجسم"], ["behind_body_bicep_curl", "Behind Body Bicep Curl", "بايسبس خلف الجسم"], ["hammer_curl", "Hammer Curl", "هامر كيرل"],
   ["supported_db_curl", "Supported Dumbbell Curl", "بايسبس دمبل مسنود"], ["squat", "Smith Machine Squat", "سكوات سميث"], ["hack_squat", "Hack Squat", "هاك سكوات"],
   ["leg_press", "Leg Press", "ضغط الأرجل"], ["leg_extension", "Leg Extension", "تمديد الأرجل"], ["abduction", "Abduction Machine", "جهاز إبعاد الفخذ"],
   ["reverse_curl", "Cable Reverse Curl", "كيرل عكسي"], ["face_pull", "Face Pull", "فيس بول"], ["lunges", "Bulgarian Split Squat", "سكوات بلغاري"],

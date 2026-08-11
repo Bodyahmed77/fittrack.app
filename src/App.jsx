@@ -8970,7 +8970,17 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       // 2) Register the purchase server-side so the entitlement store
       //    (the authoritative quota source) reflects this subscription.
       //    The app purchase was already acknowledged to Google Play above;
-      //    the server writes the entitlement for the signed-in user only.
+      //    the server independently verifies it against the real Google
+      //    Play Developer API before writing anything (see verify-purchase).
+      //
+      //    IMPORTANT: for the AI Coach plan, the server's entitlement
+      //    table is the ONLY thing the AI quota check reads (see
+      //    ai-coach's lookupEntitlement). If registration fails or Google
+      //    rejects the purchase, the local UI must NOT claim the user is
+      //    Pro — that would show "activated" while the user's next AI
+      //    message still gets the free-tier response, which is confusing
+      //    and looks like a bug. So this branch returns early on failure
+      //    instead of falling through to the optimistic unlock below.
       if (planId === "ai") {
         try {
           await registerServerEntitlement(
@@ -8979,16 +8989,33 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
             result?.result,
           );
         } catch (regErr) {
+          const code = regErr?.code || "";
+          const deniedByGoogle =
+            code === "purchase_not_found" ||
+            code === "product_mismatch" ||
+            code === "purchase_not_active" ||
+            code === "purchase_already_claimed";
           showToast(
-            ar
-              ? "تم الشراء لكن تعذر تسجيل الاشتراك. افتح المحادثة وراسلنا لو الميزة مش شغالة."
-              : "Purchase completed but the subscription could not be registered. Message us in-app if the feature does not activate.",
+            deniedByGoogle
+              ? ar
+                ? "تعذر تفعيل AI Coach Pro — لم يتم التحقق من عملية الشراء. لو تم خصم المبلغ، تواصل معنا."
+                : "AI Coach Pro could not be activated — the purchase could not be verified. If you were charged, please contact support."
+              : ar
+              ? "تم رصد عملية الشراء لكن التفعيل لسه معلق. جرب تفتح المدرب الذكي بعد شوية، أو استخدم 'استعادة المشتريات'."
+              : "Your purchase was detected but activation is still pending. Try opening AI Coach again shortly, or use Restore Purchases.",
             7000,
           );
+          // Do NOT unlock locally — the server did not confirm this
+          // purchase. Stop here so the UI stays consistent with the
+          // actual (unchanged) server-side entitlement.
+          return;
         }
       }
 
       // 3) Unlock entitlements locally (and persist via setData).
+      //    Reached only when there was nothing to verify server-side
+      //    (training/nutrition/both — unchanged flow) or the AI Coach
+      //    server registration above already succeeded.
       const next = clone(data);
       unlockPlans(next, planId);
       next.entitlements.proExpiresAt = null;

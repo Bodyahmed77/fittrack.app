@@ -20,7 +20,7 @@
     "@capacitor/network": "^7.0.4",
     "@capacitor/splash-screen": "^7.0.5",
     "@capacitor/status-bar": "^7.0.6",
-    "capacitor-billing": "^6.0.2",
+    "capacitor-billing": "^8.0.0",
     "firebase": "^11.2.0",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",

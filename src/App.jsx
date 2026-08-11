@@ -3911,7 +3911,7 @@ function SplashScreen() {
           letterSpacing: 0.3,
         }}
       >
-        FitTrack
+        Fifty Fit
       </div>
       <div style={{ color: C.sub, fontSize: 12.5 }}>Loading your progress…</div>
     </div>
@@ -4210,7 +4210,7 @@ function WelcomeScreen({ go }) {
         <AppLogo size={90} />
         <div style={{ textAlign: "center" }}>
           <div style={{ color: C.text, fontSize: 25, fontWeight: 800 }}>
-            FitTrack
+            Fifty Fit
           </div>
           <div
             style={{
@@ -9143,7 +9143,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
               marginTop: 8,
             }}
           >
-            {ar ? "استفد أكتر من FitTrack" : "Get more out of Fifty Fit"}
+            {ar ? "استفد أكتر من Fifty Fit" : "Get more out of Fifty Fit"}
           </div>
           <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>
             {ar
@@ -11299,8 +11299,8 @@ function DeleteAccountScreen({
             </div>
             <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
               {ar
-                ? "هيتم حذف بيانات FitTrack: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
-                : "This permanently deletes your FitTrack data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
+                ? "هيتم حذف بيانات Fifty Fit: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
+                : "This permanently deletes your Fifty Fit data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
             </div>
           </div>
         </Card>
@@ -11731,7 +11731,7 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
             margin: "18px 0",
           }}
         >
-          FitTrack · {ar ? "الإصدار" : "Version"} 1.0.0
+          Fifty Fit · {ar ? "الإصدار" : "Version"} 1.0.0
         </div>
       </div>
     </div>

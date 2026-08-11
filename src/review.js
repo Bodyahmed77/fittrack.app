@@ -5,7 +5,7 @@
 // We only gate *when we ask* so we never spam the user.
 // ============================================================
 
-const REVIEW_STATE_KEY = "50fit-review-state";
+const REVIEW_STATE_KEY = "fifty-fit-review-state";
 const COOLDOWN_MS = 21 * 24 * 60 * 60 * 1000; // 3 weeks
 const MIN_COMPLETED_WORKOUTS = 2;
 

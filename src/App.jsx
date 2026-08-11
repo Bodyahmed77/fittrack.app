@@ -9634,6 +9634,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
 
     let removed = false;
     let nativeMode = false;
+    let KeyboardApi = null;
     const handles = [];
     let vv = null;
     let onVv = null;
@@ -9657,6 +9658,13 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           nativeMode = true;
           try {
             const { Keyboard } = await import("@capacitor/keyboard");
+            KeyboardApi = Keyboard;
+            if (removed) {
+              try {
+                await Keyboard.setResizeMode?.({ mode: "native" });
+              } catch (_) {}
+              return;
+            }
             try {
               if (Keyboard.setResizeMode) {
                 await Keyboard.setResizeMode({ mode: "none" });
@@ -9718,6 +9726,12 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         vv.removeEventListener("resize", onVv);
         vv.removeEventListener("scroll", onVv);
       }
+      // AI temporarily uses ResizeMode=none so the drawer can track the IME
+      // precisely. Always restore the app's normal native resize behavior when
+      // the drawer closes; otherwise the next screen can inherit a stale mode.
+      try {
+        KeyboardApi?.setResizeMode?.({ mode: "native" });
+      } catch (_) {}
       setKeyboardInset(0);
     };
   }, [open]);

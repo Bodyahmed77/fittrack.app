@@ -344,10 +344,6 @@ const DAY_LABELS_AR = {
   Sat: "سبت",
   Sun: "حد",
 };
-const todayIdx = (() => {
-  const js = new Date().getDay();
-  return js === 0 ? 6 : js - 1;
-})();
 const WHATSAPP_NUMBER = "201108178493";
 
 // Local calendar YYYY-MM-DD — never use toISOString() for day keys
@@ -3088,12 +3084,14 @@ function registerFullScreenVideoClose(fn) {
    No gesture overlays, no pointer-events hacks, no preventDefault.
    Exercise Screen only shows a "Watch Short" button; the iframe lives here. */
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
+  const [videoLoaded, setVideoLoaded] = useState(false);
   const isTikTok = /^\d+$/.test(videoId);
   const embedSrc = isTikTok
     ? `https://www.tiktok.com/embed/v2/${videoId}`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {
+    setVideoLoaded(false);
     registerFullScreenVideoClose(() => {
       onClose();
       return true;
@@ -3161,8 +3159,28 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
           background: "#000",
         }}
       >
+        {!videoLoaded && (
+          <div
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "#000",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            {ar ? "جاري تحميل الفيديو…" : "Loading video…"}
+          </div>
+        )}
         <iframe
           src={embedSrc}
+          onLoad={() => setVideoLoaded(true)}
           loading="eager"
           fetchPriority="high"
           title={ar ? "فيديو التمرين" : "Exercise video"}
@@ -3189,6 +3207,22 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!videoId || typeof document === "undefined") return undefined;
+    const isTikTok = /^\d+$/.test(videoId);
+    const href = isTikTok
+      ? `https://www.tiktok.com/embed/v2/${videoId}`
+      : `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0`;
+    const link = document.createElement("link");
+    link.rel = "prefetch";
+    link.as = "document";
+    link.href = href;
+    document.head.appendChild(link);
+    return () => {
+      try { link.remove(); } catch {}
+    };
+  }, [videoId]);
   const close = useCallback(() => setOpen(false), []);
 
   if (!videoId) return null;
@@ -8673,7 +8707,7 @@ function PlansScreen({ data, setData, go, showToast }) {
 function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
-  const [day, setDay] = useState(DAYS[todayIdx]);
+  const [day, setDay] = useState(() => planDayForDate(data, dateKey(0)));
   const plan = PLAN_TEMPLATES[planId];
   const isActive = data.activePlanId === planId;
   const daySchedule = plan.schedule[day];
@@ -9808,7 +9842,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           data,
           lang,
           (() => {
-            const d = DAYS[todayIdx];
+            const d = planDayForDate(data, today);
             const plan =
               PLAN_TEMPLATES[data?.activePlanId] || PLAN_TEMPLATES.beginner;
             const dayMeta = plan.schedule?.[d] || {};
@@ -12237,7 +12271,7 @@ export default function GymApp() {
   const [localLang, setLocalLang] = useState(readStoredLanguage);
   const [screen, setScreen] = useState("home");
   const [params, setParams] = useState({});
-  const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);
+  const [selectedDay, setSelectedDay] = useState(() => planDayForDate(data, dateKey(0)));
   // Calendar ISO for the currently selected strip day. Keeps logs correct when
   // the 7-day window crosses a week boundary (dateForDay alone is week-anchored).
   const [selectedIso, setSelectedIso] = useState(dateKey(0));

@@ -1,23 +1,9 @@
 from pathlib import Path
 p=Path('src/App.jsx'); s=p.read_text(encoding='utf-8')
 first=s.index('function NutritionPlanScreen(')
-second=s.find('function NutritionPlanScreen(', first+1)
-if second < 0: raise SystemExit('second NutritionPlanScreen not found')
-brace=s.index('{',second); depth=0; quote=None; escaped=False; end=None
-for i in range(brace,len(s)):
-    ch=s[i]
-    if quote:
-        if escaped: escaped=False
-        elif ch=='\\': escaped=True
-        elif ch==quote: quote=None
-        continue
-    if ch in ('"',"'",'`'): quote=ch; continue
-    if ch=='{': depth+=1
-    elif ch=='}':
-        depth-=1
-        if depth==0: end=i+1; break
-if end is None: raise SystemExit('NutritionPlanScreen end not found')
-# Corrected compact screen; no nested legacy function remains.
+next_fn=s.find('\nfunction ', first+1)
+if next_fn < 0: raise SystemExit('next top-level function not found')
+# Remove everything from the first NutritionPlanScreen through the next top-level function.
 fn=r'''function NutritionPlanScreen({ data, back }) {
   const { C, lang } = useUI(); const ar = lang === 'ar'; const plan = data.customNutritionPlan; const today = dateKey(0);
   const [log, setLog] = useState(() => data.customNutritionLog || {}); const [saving, setSaving] = useState(false); const [requested, setRequested] = useState(!!data.nutritionPlanRequestedAt);
@@ -32,5 +18,5 @@ fn=r'''function NutritionPlanScreen({ data, back }) {
   return <div dir={ar?'rtl':'ltr'}><TopBar title={ar?'خطتك الغذائية':'Your Nutrition Plan'} onBack={back}/><div style={{padding:'0 18px 28px'}}><Card style={{background:C.greenSoft,border:`1px solid ${C.green}55`,marginBottom:12}}><div style={{color:C.text,fontSize:19,fontWeight:900}}>{ar?(plan.titleAr||'خطتك الغذائية'):(plan.title||'Your Nutrition Plan')}</div><div style={{color:C.sub,fontSize:12,marginTop:5}}>{ar?'خطة مخصصة لك من فريق Fifty Fit':'A plan prepared for you by the Fifty Fit team'}</div><div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginTop:14}}>{[['🔥',ar?'السعرات':'Calories',consumed.kcal,targets.kcal,'kcal'],['💪',ar?'البروتين':'Protein',consumed.protein,targets.protein,'g'],['🍞',ar?'الكارب':'Carbs',consumed.carbs,targets.carbs,'g'],['🥑',ar?'الدهون':'Fat',consumed.fat,targets.fat,'g']].map(([icon,label,value,target,unit])=><div key={label} style={{background:C.card2,borderRadius:12,padding:11}}><div style={{color:C.sub2,fontSize:10,fontWeight:800}}>{icon} {label}</div><div style={{color:C.text,fontSize:16,fontWeight:900,marginTop:3}}>{Math.round(value)}{unit==='kcal'?'':'g'} <span style={{color:C.sub2,fontSize:10}}>/ {target||'—'}{target?(unit==='kcal'?' kcal':'g'):''}</span></div><div style={{height:5,background:C.border,borderRadius:99,marginTop:7,overflow:'hidden'}}><div style={{width:`${pct(value,target)}%`,height:'100%',background:C.green,borderRadius:99,transition:'width .25s ease'}}/></div></div>)}</div></Card><div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8}}>{(plan.days||[]).map((d,i)=><div key={i} style={{minWidth:72,padding:'9px 7px',borderRadius:11,background:i===dayIndex?C.green:C.card2,color:i===dayIndex?C.onAccent:C.sub,textAlign:'center',fontSize:11,fontWeight:800}}>{ar?(d.titleAr||`اليوم ${i+1}`):(d.title||`Day ${i+1}`)}</div>)}</div>{meals.map(meal=>{const items=parseItems(meal.items,meal.id);if(!items.length)return null;return <Card key={meal.id} style={{marginBottom:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><div><div style={{color:C.text,fontWeight:900,fontSize:15}}>{ar?(meal.titleAr||meal.title):meal.title}</div>{meal.note&&<div style={{color:C.sub,fontSize:11,marginTop:3}}>{meal.note}</div>}</div><span style={{color:C.sub2,fontSize:11}}>{items.length} {ar?'عناصر':'items'}</span></div>{items.map(food=>{const done=!!checked[food.id];return <button key={food.id} onClick={()=>toggle(food.id)} style={{width:'100%',display:'flex',alignItems:'center',gap:11,padding:'11px 4px',border:'none',borderTop:`1px solid ${C.border}`,background:'transparent',color:C.text,textAlign:ar?'right':'left'}}><div style={{width:24,height:24,borderRadius:7,border:`1.5px solid ${done?C.green:C.border}`,background:done?C.green:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{done&&<Check size={15} color={C.onAccent} strokeWidth={3}/>}</div><div style={{flex:1,opacity:done?.65:1}}><div style={{fontWeight:800,fontSize:13.5,textDecoration:done?'line-through':'none'}}>{ar?food.nameAr:food.name}</div><div style={{color:C.sub,fontSize:10.5,marginTop:2}}>{food.quantity}{food.kcal?` · ${food.kcal} kcal · P ${food.protein}g · C ${food.carbs}g · F ${food.fat}g`:''}</div></div></button>})}</Card>})}<div style={{color:C.sub2,fontSize:10.5,textAlign:'center',padding:'8px 12px'}}>{ar?'علّم على كل أكلة أكلتها فعلاً — الحساب بيتحدث تلقائيًا.':'Check only the food you actually ate — your daily totals update automatically.'}</div></div></div>;
 }
 '''
-s=s[:first]+fn+s[end:]
+s=s[:first]+fn+s[next_fn:]
 p.write_text(s,encoding='utf-8')

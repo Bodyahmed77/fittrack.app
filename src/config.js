@@ -1,5 +1,5 @@
 // ============================================================
-// FitTrack App — External Configuration
+// Fifty Fit — External Configuration
 // ============================================================
 // Centralize all external assets (images, videos, product IDs)
 // here so they can be updated easily without touching the app logic.
@@ -56,28 +56,29 @@ export const EXERCISE_IMAGES = {
 };
 
 // ------------------------------------------------------------
-// EXERCISE VIDEO IDs (TikTok Shorts / YouTube Shorts)
-// Exercises with a corresponding TikTok video use the TikTok
-// numeric video ID (embedded via https://www.tiktok.com/embed/v2/).
-// The remaining exercises keep their YouTube Shorts video.
+// EXERCISE VIDEO IDs (TikTok embeds / YouTube embeds)
+// Every exercise in the library has a non-empty demo video ID.
+// Numeric IDs are TikTok embeds; non-numeric IDs are YouTube IDs.
+// Where a previous TikTok mapping was clearly for a different
+// movement, use a verified exercise-specific YouTube demonstration.
 // ------------------------------------------------------------
 export const EXERCISE_VIDEOS = {
   bench_press: "7603190204740013313", // Chest press machine
   incline_db_press: "7267987124610239762", // Incline chest press machine
-  chest_fly: "eozdVDA78K0", // YouTube (no TikTok)
-  dips: "2z8JmcrW-As", // YouTube (no TikTok)
-  tricep_pushdown: "7586888221125070094", // Zigzag tricep extension
-  zigzag_tricep_ext: "7586888221125070094", // Zigzag tricep extension
+  chest_fly: "eozdVDA78K0", // YouTube
+  dips: "2z8JmcrW-As", // YouTube
+  tricep_pushdown: "HIKzvHkibWc", // YouTube — standard triceps pushdown
+  zigzag_tricep_ext: "7586888221125070094", // TikTok — zigzag tricep extension
   overhead_ext: "7527210325834206486", // Overhead tricep extension
-  push_up: "IODxDxX7oi4", // YouTube (no TikTok)
+  push_up: "IODxDxX7oi4", // YouTube — proper push-up
   lat_pulldown: "7665886081329532174", // Lat pulldown
   barbell_row: "7532789627212631314", // T-bar row
   seated_row: "7639010632561478934", // Seated row
-  single_arm_seated_row: "7639010632561478934", // Single arm seated row
-  bicep_curl: "7636460964870720788", // Behind body bicep curl
-  behind_body_bicep_curl: "7636460964870720788", // Behind body bicep curl
+  single_arm_seated_row: "SkMJJKd8Bec", // YouTube — single-arm seated cable row
+  bicep_curl: "7636460964870720788", // TikTok — behind-body bicep curl
+  behind_body_bicep_curl: "7636460964870720788", // TikTok — behind-body bicep curl
   hammer_curl: "7623849292461051156", // Hammer curl
-  supported_db_curl: "7636460964870720788", // Supported dumbbell curl
+  supported_db_curl: "ajfOSbSkvNk", // YouTube — chest-supported dumbbell curl
   squat: "7513352117692665094", // Smith machine squat
   hack_squat: "7513352117692665094", // Hack squat
   leg_press: "7545454872586423574", // Leg press
@@ -93,14 +94,14 @@ export const EXERCISE_VIDEOS = {
   rear_delt_fly: "7630410819259387158", // Rear delt fly machine
   shrugs: "7500002250526395653", // Dumb shrugs
   deadlift: "7380964646062263558", // Romanian deadlift
-  pull_up: "eGo4IYlbE5g", // YouTube (no TikTok)
-  plank: "pSHjTRCQxIw", // YouTube (no TikTok)
-  treadmill: "KyXBjRmE-W8", // YouTube (no TikTok)
-  bike: "zSNSNSBN8Og", // YouTube (no TikTok)
+  pull_up: "eGo4IYlbE5g", // YouTube — pull-up
+  plank: "pSHjTRCQxIw", // YouTube — plank
+  treadmill: "KyXBjRmE-W8", // YouTube
+  bike: "zSNSNSBN8Og", // YouTube
   crunches: "7654453038815399171", // Abs rope crunches
-  leg_raise: "hdng3ubkBrI", // YouTube (no TikTok)
-  jump_rope: "FJmRQ5iTXKE", // YouTube (no TikTok)
-  burpees: "dZgVxmf6jkA", // YouTube (no TikTok)
+  leg_raise: "hdng3ubkBrI", // YouTube
+  jump_rope: "FJmRQ5iTXKE", // YouTube
+  burpees: "dZgVxmf6jkA", // YouTube
 };
 
 // ------------------------------------------------------------
@@ -162,7 +163,6 @@ export const SUPABASE_ANON_KEY =
 // Display prices only. Google Play regional pricing is the purchase source
 // of truth — the app must not invent a country via GPS/IP.
 export const AI_COACH_PRICES = {
-  // Egypt Play store users see EGP (configured in Play Console too)
   eg: {
     currency: "EGP",
     currencyLabelAr: "جنيه",
@@ -172,7 +172,6 @@ export const AI_COACH_PRICES = {
     halfyearly: 249,
     yearly: 399,
   },
-  // International / default USD display
   intl: {
     currency: "USD",
     currencyLabelAr: "دولار",
@@ -222,7 +221,6 @@ export const PAYWALL_PLANS = {
   training: {
     title: "Training Pro",
     titleAr: "تدريب برو",
-    // Legacy single-region fallback (Egypt). Prefer PAYWALL_PRICES + Play.
     prices: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
     featuresAr: [
       "تمارين غير محدودة كل يوم",

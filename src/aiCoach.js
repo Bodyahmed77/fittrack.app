@@ -119,23 +119,47 @@ function extractReply(data) {
  * auth-related failure to a single "session expired" string.
  */
 function classifyHttpError(status, data) {
+  const errField = String(data?.error || data?.code || "");
   const msg = String(data?.message || data?.error || "");
+
+  const known = new Set([
+    "daily_limit",
+    "busy",
+    "gemini_rate_limited",
+    "gemini_failed",
+    "gemini_timeout",
+    "gemini_not_configured",
+    "empty_response",
+    "usage_read_failed",
+    "bad_request",
+    "unauthenticated",
+  ]);
+  if (known.has(errField)) {
+    if (errField === "unauthenticated") return "backend_unauthorized";
+    return errField;
+  }
+
   if (status === 401) return "backend_unauthorized";
   if (status === 403) return "forbidden";
   if (status === 429) {
     if (
-      data?.error === "daily_limit" ||
+      errField === "daily_limit" ||
       data?.code === "daily_limit" ||
       /daily.?limit|limit reached|رسائل/i.test(msg)
     ) {
       return "daily_limit";
     }
-    if (/quota|resource.?exhausted|rate.?limit/i.test(msg)) {
-      return "quota";
+    if (/quota|resource.?exhausted|rate.?limit/i.test(msg) || errField === "quota") {
+      return "gemini_rate_limited";
     }
-    return "rate_limit";
+    return "busy";
   }
-  if (status >= 500) return "backend_error";
+  if (status === 503) return "busy";
+  if (status === 504) return "gemini_timeout";
+  if (status >= 500) {
+    if (errField === "gemini_failed") return "gemini_failed";
+    return "backend_error";
+  }
   if (status >= 400) return "bad_request";
   return "backend_error";
 }
@@ -143,9 +167,10 @@ function classifyHttpError(status, data) {
 /**
  * Call Supabase Edge Function ai-coach.
  * Uses Firebase ID token only in Authorization (CORS-safe).
- * Do NOT send custom headers not listed in Access-Control-Allow-Headers —
- * browsers will abort the request and surface it as a network failure.
  */
+// Module-level lock: blocks concurrent generateCoachReply even if UI misses a busy flag.
+let __aiCoachInFlight = false;
+
 export async function generateCoachReply({
   messages,
   lang,
@@ -153,138 +178,141 @@ export async function generateCoachReply({
   localDate,
   hasAiPro,
 }) {
-  const endpoint = resolveEndpoint();
-  if (!endpoint) {
-    const err = new Error("AI endpoint is not configured");
-    err.code = "no_endpoint";
-    diag("[AI_COACH_FINAL_ERROR] code=no_endpoint");
+  if (__aiCoachInFlight) {
+    const err = new Error("Request already in progress");
+    err.code = "busy";
+    diag("[AI_COACH_FINAL_ERROR] code=busy reason=in_flight");
     throw err;
   }
-
-  const user = auth.currentUser;
-  if (!user) {
-    diag("[AI_COACH_AUTH] currentUser=NULL");
-    const err = new Error("Sign in required");
-    err.code = "auth_missing";
-    diag("[AI_COACH_FINAL_ERROR] code=auth_missing");
-    throw err;
-  }
-
-  let idToken;
+  __aiCoachInFlight = true;
   try {
-    // Force-refresh once so a stale cached token is not sent to the backend.
-    idToken = await user.getIdToken(/* forceRefresh */ true);
-    diag(
-      "[AI_COACH_AUTH] token_obtained uid=" +
-        String(user.uid) +
-        " tokenLength=" +
-        String(idToken ? idToken.length : 0),
-    );
-  } catch (e) {
-    diag(
-      "[AI_COACH_AUTH] getIdToken_FAILED " +
-        String(e?.code || "") +
-        " " +
-        String(e?.message || e).slice(0, 120),
-    );
-    const err = new Error("Could not refresh session");
-    err.code = "token_refresh_failed";
-    diag("[AI_COACH_FINAL_ERROR] code=token_refresh_failed");
-    throw err;
-  }
-
-  const recent = (messages || []).slice(-6);
-  const lastUser =
-    [...recent].reverse().find((m) => m && m.role === "user" && m.content) ||
-    null;
-
-  // ONLY headers allowed by Supabase CORS:
-  // authorization, x-client-info, apikey, content-type
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${idToken}`,
-  };
-  const anon = resolveAnonKey();
-  if (anon) headers.apikey = anon;
-
-  const body = {
-    messages: recent,
-    message: lastUser ? String(lastUser.content) : "",
-    lang: lang || "en",
-    localDate: localDate || "",
-    timeZone:
-      typeof Intl !== "undefined" && Intl.DateTimeFormat
-        ? Intl.DateTimeFormat().resolvedOptions().timeZone || ""
-        : "",
-    context: userContext || {},
-    hasAiPro: !!hasAiPro,
-    uid: user.uid,
-  };
-
-  diag("[AI_COACH_HTTP] request_start");
-  let res;
-  try {
-    res = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
-  } catch (e) {
-    diag(
-      "[AI_COACH_HTTP] network_error=" +
-        String(e?.message || e).slice(0, 160),
-    );
-    const err = new Error(e?.message || "Network error");
-    err.code = "network";
-    diag("[AI_COACH_FINAL_ERROR] code=network");
-    throw err;
-  }
-
-  diag("[AI_COACH_HTTP] status=" + String(res.status));
-  if (res.status === 401) {
-    diag("[AI_COACH_HTTP] unauthorized_401");
-  } else if (!res.ok) {
-    diag("[AI_COACH_HTTP] http_error=" + String(res.status));
-  }
-
-  let data = null;
-  try {
-    data = await res.json();
-  } catch (e) {
-    data = null;
-  }
-
-  const usage = normalizeUsage(data, localDate);
-  const code = classifyHttpError(res.status, data);
-
-  if (!res.ok) {
-    const err = new Error(
-      data?.message || data?.error || `HTTP ${res.status}`,
-    );
-    err.code = code;
-    err.status = res.status;
-    if (code === "daily_limit") {
-      err.usage = usage || {
-        date: data?.date || localDate,
-        count: data?.used ?? data?.count ?? 0,
-        used: data?.used ?? data?.count ?? 0,
-        limit: data?.limit,
-        remaining: 0,
-        hasPro: data?.hasPro,
-      };
+    const endpoint = resolveEndpoint();
+    if (!endpoint) {
+      const err = new Error("AI endpoint is not configured");
+      err.code = "no_endpoint";
+      diag("[AI_COACH_FINAL_ERROR] code=no_endpoint");
+      throw err;
     }
-    diag("[AI_COACH_FINAL_ERROR] code=" + code);
-    throw err;
-  }
 
-  const reply = extractReply(data);
-  if (!reply) {
-    const err = new Error("Empty AI response");
-    err.code = "empty_response";
-    diag("[AI_COACH_FINAL_ERROR] code=empty_response");
-    throw err;
-  }
+    const user = auth.currentUser;
+    if (!user) {
+      diag("[AI_COACH_AUTH] currentUser=NULL");
+      const err = new Error("Sign in required");
+      err.code = "auth_missing";
+      diag("[AI_COACH_FINAL_ERROR] code=auth_missing");
+      throw err;
+    }
 
-  diag("[AI_COACH_FINAL_ERROR] code=ok");
-  return { reply: String(reply), usage };
+    let idToken;
+    try {
+      idToken = await user.getIdToken(/* forceRefresh */ true);
+      diag(
+        "[AI_COACH_AUTH] token_obtained uid=" +
+          String(user.uid) +
+          " tokenLength=" +
+          String(idToken ? idToken.length : 0),
+      );
+    } catch (e) {
+      diag(
+        "[AI_COACH_AUTH] getIdToken_FAILED " +
+          String(e?.code || "") +
+          " " +
+          String(e?.message || e).slice(0, 120),
+      );
+      const err = new Error("Could not refresh session");
+      err.code = "token_refresh_failed";
+      diag("[AI_COACH_FINAL_ERROR] code=token_refresh_failed");
+      throw err;
+    }
+
+    const recent = (messages || []).slice(-6);
+    const lastUser =
+      [...recent].reverse().find((m) => m && m.role === "user" && m.content) ||
+      null;
+
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    };
+    const anon = resolveAnonKey();
+    if (anon) headers.apikey = anon;
+
+    const body = {
+      messages: recent,
+      message: lastUser ? String(lastUser.content) : "",
+      lang: lang || "en",
+      localDate: localDate || "",
+      timeZone:
+        typeof Intl !== "undefined" && Intl.DateTimeFormat
+          ? Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+          : "",
+      context: userContext || {},
+      hasAiPro: !!hasAiPro,
+      uid: user.uid,
+    };
+
+    diag("[AI_COACH_HTTP] request_start");
+    let res;
+    try {
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      diag(
+        "[AI_COACH_HTTP] network_error=" +
+          String(e?.message || e).slice(0, 160),
+      );
+      const err = new Error(e?.message || "Network error");
+      err.code = "network";
+      diag("[AI_COACH_FINAL_ERROR] code=network");
+      throw err;
+    }
+
+    diag("[AI_COACH_HTTP] status=" + String(res.status));
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      data = null;
+    }
+
+    const usage = normalizeUsage(data, localDate);
+    const code = classifyHttpError(res.status, data);
+
+    if (!res.ok) {
+      const err = new Error(
+        data?.message || data?.error || `HTTP ${res.status}`,
+      );
+      err.code = code;
+      err.status = res.status;
+      if (code === "daily_limit") {
+        err.usage = usage || {
+          date: data?.date || localDate,
+          count: data?.used ?? data?.count ?? 0,
+          used: data?.used ?? data?.count ?? 0,
+          limit: data?.limit,
+          remaining: 0,
+          hasPro: data?.hasPro,
+        };
+      }
+      diag("[AI_COACH_FINAL_ERROR] code=" + code);
+      throw err;
+    }
+
+    const reply = extractReply(data);
+    if (!reply) {
+      const err = new Error("Empty AI response");
+      err.code = "empty_response";
+      diag("[AI_COACH_FINAL_ERROR] code=empty_response");
+      throw err;
+    }
+
+    diag("[AI_COACH_FINAL_ERROR] code=ok");
+    return { reply: String(reply), usage };
+  } finally {
+    __aiCoachInFlight = false;
+  }
 }

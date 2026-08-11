@@ -31,7 +31,11 @@ service cloud.firestore {
         (
           request.auth.uid == userId &&
           request.resource.data.get("entitlements", {}) ==
-            resource.data.get("entitlements", {})
+            resource.data.get("entitlements", {}) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            "customTrainingPlan",
+            "customNutritionPlan"
+          ])
         )
       );
       // Required for in-app account deletion. The user can delete only their

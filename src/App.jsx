@@ -2570,6 +2570,10 @@ function freshState() {
     bodyWeight: [],
     logs: {},
     meals: {},
+    // External admin-managed plans. These remain separate from billing entitlements;
+    // Firestore rules allow only authorized admins to publish them.
+    customTrainingPlan: null,
+    customNutritionPlan: null,
   };
 }
 
@@ -2668,30 +2672,53 @@ function useAppData(uid) {
 function getMergedExercises(data, day) {
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const base = activePlan.schedule[day].exercises;
+  const customTrainingDay =
+    data.entitlements.trainingPro &&
+    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];
+  const base = customTrainingDay
+    ? (customTrainingDay.exercises || []).map((e) => ({
+        ...EX[e.id],
+        ...e,
+        name: e.name || EX[e.id]?.name || e.id,
+        nameAr: e.nameAr || EX[e.id]?.nameAr || e.name || e.id,
+        startWeight: e.startWeight ?? EX[e.id]?.startWeight ?? 0,
+        vid: e.vid || EX[e.id]?.vid || null,
+        demoImage: e.demoImage || EX[e.id]?.demoImage || null,
+      }))
+    : (activePlan.schedule[day]?.exercises || []);
   const custom = data.customPlan[day] || { added: [], removedIds: [] };
   const removed = new Set(custom.removedIds || []);
   return [...base.filter((e) => !removed.has(e.id)), ...(custom.added || [])];
 }
 function getUsableExercises(data, day) {
-  // Free plan caps the *default* plan exercises only. Custom exercises the
-  // user adds themselves stay available without a Pro paywall.
+  // An admin-published custom Training Pro plan is the active workout source.
+  // Otherwise use the selected built-in plan and preserve the existing free cap.
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const base = activePlan.schedule[day]?.exercises || [];
+  const customTrainingDay =
+    data.entitlements.trainingPro &&
+    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];
+  const base = customTrainingDay
+    ? (customTrainingDay.exercises || []).map((e) => ({
+        ...EX[e.id],
+        ...e,
+        name: e.name || EX[e.id]?.name || e.id,
+        nameAr: e.nameAr || EX[e.id]?.nameAr || e.name || e.id,
+        startWeight: e.startWeight ?? EX[e.id]?.startWeight ?? 0,
+        vid: e.vid || EX[e.id]?.vid || null,
+        demoImage: e.demoImage || EX[e.id]?.demoImage || null,
+      }))
+    : (activePlan.schedule[day]?.exercises || []);
   const custom = data.customPlan[day] || { added: [], removedIds: [] };
   const removed = new Set(custom.removedIds || []);
   const baseVisible = base.filter((e) => !removed.has(e.id));
   const customAdded = custom.added || [];
   const pro = data.entitlements.trainingPro;
-  const freeBase = pro ? baseVisible : baseVisible.slice(0, FREE_EXERCISE_CAP);
-  const lockedCount = pro
+  const freeBase = customTrainingDay || pro ? baseVisible : baseVisible.slice(0, FREE_EXERCISE_CAP);
+  const lockedCount = customTrainingDay || pro
     ? 0
     : Math.max(0, baseVisible.length - FREE_EXERCISE_CAP);
-  return {
-    list: [...freeBase, ...customAdded],
-    lockedCount,
-  };
+  return { list: [...freeBase, ...customAdded], lockedCount };
 }
 
 /* ============================== SHARED UI ============================== */
@@ -6017,9 +6044,11 @@ function WorkoutScreen({
   const ar = lang === "ar";
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const dayTitle = ar
-    ? activePlan.schedule[selectedDay].titleAr
-    : activePlan.schedule[selectedDay].title;
+  const assignedCustomDay =
+    data.entitlements.trainingPro &&
+    data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)];
+  const daySchedule = assignedCustomDay || activePlan.schedule[selectedDay];
+  const dayTitle = ar ? daySchedule.titleAr : daySchedule.title;
   const { list: exercises, lockedCount } = getUsableExercises(
     data,
     selectedDay,
@@ -7909,6 +7938,7 @@ function MealsScreen({ data, setData, back, showToast, go }) {
   const totalKcal = dayKcal(data, today);
   const macros = dayMacros(data, today);
   const plan = data.nutritionPlan;
+  const customNutritionPlan = data.customNutritionPlan;
   const targets = data.dailyTargets;
   const kcalTarget = targets?.kcal || 2000;
   const kcalPct = Math.min(100, Math.round((totalKcal / kcalTarget) * 100));
@@ -8134,7 +8164,41 @@ function MealsScreen({ data, setData, back, showToast, go }) {
           </Card>
         )}
 
-        {pro && plan ? (
+        {pro && customNutritionPlan ? (
+          <Card
+            onClick={() => go("nutritionPlan")}
+            style={{
+              marginTop: 14,
+              background: C.greenSoft,
+              border: `1px solid ${C.green}55`,
+            }}
+          >
+            {(() => {
+              const start = customNutritionPlan.startDate || today;
+              const startMs = new Date(start + "T00:00:00").getTime();
+              const nowMs = new Date(today + "T00:00:00").getTime();
+              const diff = Math.max(0, Math.floor((nowMs - startMs) / 86400000));
+              const dayIndex = Number.isFinite(diff) ? Math.min(6, diff % 7) : 0;
+              const todayPlan = customNutritionPlan.days?.[dayIndex];
+              const hasTargets = todayPlan && (todayPlan.targetKcal || todayPlan.targetProtein || todayPlan.targetCarbs || todayPlan.targetFat);
+              return (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 12, background: C.card2, display: "flex", alignItems: "center", justifyContent: "center" }}>🍽️</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>{ar ? (customNutritionPlan.titleAr || "خطتك الغذائية") : (customNutritionPlan.title || "Your Nutrition Plan")}</div>
+                      <div style={{ color: C.sub, fontSize: 11.5 }}>{ar ? (todayPlan?.titleAr || "خطة اليوم") : (todayPlan?.title || "Today's plan")}</div>
+                    </div>
+                    <ChevronRight size={18} color={C.sub2} style={{ transform: ar ? "scaleX(-1)" : "none" }} />
+                  </div>
+                  <div style={{ color: C.sub, fontSize: 11.5 }}>
+                    {hasTargets ? (ar ? `${todayPlan.targetKcal || "—"} سعرة · بروتين ${todayPlan.targetProtein || "—"}ج · كارب ${todayPlan.targetCarbs || "—"}ج · دهون ${todayPlan.targetFat || "—"}ج` : `${todayPlan.targetKcal || "—"} kcal · P ${todayPlan.targetProtein || "—"}g · C ${todayPlan.targetCarbs || "—"}g · F ${todayPlan.targetFat || "—"}g`) : (ar ? "اضغط لعرض خطة اليوم كاملة" : "Tap to view today's full plan")}
+                  </div>
+                </>
+              );
+            })()}
+          </Card>
+        ) : pro && plan ? (
           <Card
             onClick={markPlanSeen}
             style={{
@@ -8359,6 +8423,55 @@ function MealsScreen({ data, setData, back, showToast, go }) {
         </div>
       </div>
       <div style={{ height: 20 }} />
+    </div>
+  );
+}
+
+function NutritionPlanScreen({ data, back }) {
+  const { C, lang } = useUI();
+  const ar = lang === "ar";
+  const plan = data.customNutritionPlan;
+  const today = dateKey(0);
+  if (!plan) {
+    return (
+      <div dir={ar ? "rtl" : "ltr"}>
+        <TopBar title={ar ? "خطتك الغذائية" : "Your Nutrition Plan"} onBack={back} />
+        <div style={{ padding: "0 18px" }}><Card style={{ textAlign: "center", padding: 30, color: C.sub }}>{ar ? "لم يتم إضافة خطة غذائية مخصصة لحسابك بعد." : "Your personalized nutrition plan has not been published yet."}</Card></div>
+      </div>
+    );
+  }
+  const start = plan.startDate || today;
+  const startMs = new Date(start + "T00:00:00").getTime();
+  const nowMs = new Date(today + "T00:00:00").getTime();
+  const diff = Math.max(0, Math.floor((nowMs - startMs) / 86400000));
+  const dayIndex = Number.isFinite(diff) ? diff % 7 : 0;
+  const day = plan.days?.[dayIndex] || plan.days?.[0];
+  return (
+    <div dir={ar ? "rtl" : "ltr"}>
+      <TopBar title={ar ? "خطتك الغذائية" : "Your Nutrition Plan"} onBack={back} />
+      <div style={{ padding: "0 18px 24px" }}>
+        <Card style={{ background: C.greenSoft, border: `1px solid ${C.green}55`, marginBottom: 12 }}>
+          <div style={{ color: C.text, fontSize: 19, fontWeight: 900 }}>{ar ? (plan.titleAr || "خطتك الغذائية") : (plan.title || "Your Nutrition Plan")}</div>
+          <div style={{ color: C.sub, fontSize: 12, marginTop: 5 }}>{ar ? "خطة مخصصة لك من فريق Fifty Fit" : "A plan prepared for you by the Fifty Fit team"}</div>
+          {(day.targetKcal || day.targetProtein || day.targetCarbs || day.targetFat) && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginTop: 14 }}>
+              {[[ar ? "السعرات" : "Kcal",day.targetKcal],["P",day.targetProtein],["C",day.targetCarbs],["F",day.targetFat]].map(([label,val]) => <div key={label} style={{ background: C.card2, borderRadius: 10, padding: "10px 7px", textAlign: "center" }}><div style={{ color: C.sub2, fontSize: 9, fontWeight: 800 }}>{label}</div><div style={{ color: C.text, fontSize: 14, fontWeight: 900, marginTop: 2 }}>{val || "—"}</div></div>)}
+            </div>
+          )}
+        </Card>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8 }}>
+          {(plan.days || []).map((d,i) => <div key={i} style={{ minWidth: 72, padding: "9px 7px", borderRadius: 11, background: i === dayIndex ? C.green : C.card2, color: i === dayIndex ? C.onAccent : C.sub, textAlign: "center", fontSize: 11, fontWeight: 800 }}>{ar ? (d.titleAr || `اليوم ${i+1}`) : (d.title || `Day ${i+1}`)}</div>)}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {(day.meals || []).map((meal) => (
+            <Card key={meal.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}><div style={{ width: 40, height: 40, borderRadius: 11, background: C.card2, display: "grid", placeItems: "center" }}>🍽️</div><div><div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>{ar ? (meal.titleAr || meal.title) : meal.title}</div><div style={{ color: C.sub2, fontSize: 10 }}>{ar ? "وجبة مخصصة" : "Personalized meal"}</div></div></div>
+              {meal.items && <div style={{ color: C.text, fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{meal.items}</div>}
+              {(ar ? meal.noteAr : meal.note) && <div style={{ marginTop: 9, paddingTop: 9, borderTop: `1px solid ${C.border}`, color: C.sub, fontSize: 11.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{ar ? meal.noteAr : meal.note}</div>}
+            </Card>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -8721,6 +8834,12 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const use = () => {
     const next = clone(data);
     next.activePlanId = planId;
+    // Switching to a Pro plan starts that plan from Day 1 today.
+    if (plan.pro && data.entitlements.trainingPro && !isActive) {
+      next.workoutStartDate = dateKey(0);
+      // A built-in plan selection intentionally replaces an admin custom plan.
+      next.customTrainingPlan = null;
+    }
     setData(next);
     showToast(
       ar
@@ -9016,9 +9135,15 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       }
 
       // 3) Unlock entitlements locally only after server verification.
+      const hadTrainingPro = !!data.entitlements.trainingPro;
       const next = clone(data);
       unlockPlans(next, planId);
       next.entitlements.proExpiresAt = null;
+      // A newly activated Training Pro subscription starts its selected plan
+      // at Day 1 on the actual purchase date, never on the calendar weekday.
+      if (!hadTrainingPro && next.entitlements.trainingPro) {
+        next.workoutStartDate = dateKey(0);
+      }
       if (next.entitlements.trainingPro) {
         const personalizedPlan = buildPersonalizedProPlan(next);
         next.proPlan = personalizedPlan;
@@ -9175,9 +9300,13 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         return;
       }
 
+      const hadTrainingPro = !!data.entitlements.trainingPro;
       const next = clone(data);
       activatedPlans.forEach((p) => unlockPlans(next, p));
       next.entitlements.proExpiresAt = null;
+      if (!hadTrainingPro && next.entitlements.trainingPro) {
+        next.workoutStartDate = dateKey(0);
+      }
       if (next.entitlements.trainingPro) {
         const personalizedPlan = buildPersonalizedProPlan(next);
         next.proPlan = personalizedPlan;
@@ -9581,6 +9710,9 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
                 ? "استرجاع الاشتراك"
                 : "Restore purchases"}
             </button>
+            <a href="https://play.google.com/store/account/subscriptions?package=com.fittrack.app" target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 10, color: C.sub2, fontSize: 11, textDecoration: "underline", textUnderlineOffset: 3 }}>
+              {ar ? "إدارة أو إلغاء الاشتراك من Google Play" : "Manage or cancel subscription on Google Play"}
+            </a>
           </div>
         )}
       </div>
@@ -12672,6 +12804,8 @@ export default function GymApp() {
         go={go}
       />
     );
+  else if (screen === "nutritionPlan")
+    content = <NutritionPlanScreen data={data} back={back} />;
   else if (screen === "foodPicker")
     content = (
       <FoodPickerScreen

@@ -59,26 +59,25 @@ export const EXERCISE_IMAGES = {
 // EXERCISE VIDEO IDs (TikTok embeds / YouTube embeds)
 // Every exercise in the library has a non-empty demo video ID.
 // Numeric IDs are TikTok embeds; non-numeric IDs are YouTube IDs.
-// Where a previous TikTok mapping was clearly for a different
-// movement, use a verified exercise-specific YouTube demonstration.
+// Keep existing TikTok mappings when they are exercise-correct.
 // ------------------------------------------------------------
 export const EXERCISE_VIDEOS = {
   bench_press: "7603190204740013313", // Chest press machine
   incline_db_press: "7267987124610239762", // Incline chest press machine
   chest_fly: "eozdVDA78K0", // YouTube
   dips: "2z8JmcrW-As", // YouTube
-  tricep_pushdown: "HIKzvHkibWc", // YouTube — standard triceps pushdown
+  tricep_pushdown: "7586888221125070094", // TikTok — zigzag tricep extension
   zigzag_tricep_ext: "7586888221125070094", // TikTok — zigzag tricep extension
   overhead_ext: "7527210325834206486", // Overhead tricep extension
   push_up: "IODxDxX7oi4", // YouTube — proper push-up
   lat_pulldown: "7665886081329532174", // Lat pulldown
   barbell_row: "7532789627212631314", // T-bar row
   seated_row: "7639010632561478934", // Seated row
-  single_arm_seated_row: "SkMJJKd8Bec", // YouTube — single-arm seated cable row
+  single_arm_seated_row: "7639010632561478934", // TikTok — single arm seated row
   bicep_curl: "7636460964870720788", // TikTok — behind-body bicep curl
   behind_body_bicep_curl: "7636460964870720788", // TikTok — behind-body bicep curl
   hammer_curl: "7623849292461051156", // Hammer curl
-  supported_db_curl: "ajfOSbSkvNk", // YouTube — chest-supported dumbbell curl
+  supported_db_curl: "7636460964870720788", // TikTok — supported dumbbell curl
   squat: "7513352117692665094", // Smith machine squat
   hack_squat: "7513352117692665094", // Hack squat
   leg_press: "7545454872586423574", // Leg press

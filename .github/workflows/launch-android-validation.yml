@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'scripts/android-validation.trigger'
+      - 'scripts/android-validation.trigger2'
 
 permissions:
   actions: write
@@ -13,6 +14,8 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Dispatch signed Android build on this branch
         env:
           GH_TOKEN: ${{ github.token }}

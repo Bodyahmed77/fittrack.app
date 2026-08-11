@@ -54,6 +54,16 @@ function isPurchased(purchase) {
   );
 }
 
+function extractPurchaseToken(purchase) {
+  if (!purchase || typeof purchase !== "object") return null;
+  const token =
+    purchase.purchaseToken ||
+    purchase.token ||
+    purchase.purchase?.purchaseToken ||
+    purchase.product?.purchaseToken;
+  return typeof token === "string" && token ? token : null;
+}
+
 // Query the Google Play Console for the current SKU details so the
 // paywall can show the real price from the store, not a hardcoded one.
 export async function queryProducts(durationId = "monthly") {
@@ -147,13 +157,16 @@ export async function purchase(planId, durationId) {
 }
 
 // Restore any previously purchased (and still active) subscriptions.
-// Iterates every configured product ID so "both_pro" and the individual
-// plans are all considered. Returns the list of restored plan IDs.
+// Returns plan keys PLUS the underlying purchase records (token + productId)
+// so the caller can run server-side Google Play verification before unlocking.
+// Client-side presence of a purchase must NEVER be treated as authoritative
+// entitlement on its own.
 export async function restorePurchases() {
   const billing = await getPlugin();
-  if (!billing) return { restoredPlans: [], preview: true };
+  if (!billing) return { restoredPlans: [], purchases: [], preview: true };
 
   const restoredPlans = [];
+  const purchasesOut = [];
   try {
     // Query all active purchases for our subscription products.
     let purchases = [];
@@ -167,9 +180,9 @@ export async function restorePurchases() {
 
     // Only purchase records can grant entitlements. Product-detail queries
     // describe catalog items and must never be treated as purchases.
-    const activeIds = (Array.isArray(purchases) ? purchases : [])
-      .filter(isPurchased)
-      .flatMap(purchaseProducts);
+    const activePurchases = (Array.isArray(purchases) ? purchases : []).filter(
+      isPurchased,
+    );
 
     if (
       typeof billing.queryPurchases !== "function" &&
@@ -177,24 +190,44 @@ export async function restorePurchases() {
     ) {
       return {
         restoredPlans: [],
+        purchases: [],
         preview: false,
         unsupported: true,
         error: new Error("Active Google Play purchase queries are unavailable"),
       };
     }
 
-    // Map product IDs back to plan keys (training / nutrition / both).
+    // Map product IDs back to plan keys (training / nutrition / both / ai).
     const idToPlan = {};
     Object.entries(BILLING_PRODUCTS).forEach(([plan, pid]) => {
       idToPlan[pid] = plan;
     });
-    activeIds.forEach((id) => {
-      const plan = idToPlan[id];
-      if (plan && !restoredPlans.includes(plan)) restoredPlans.push(plan);
+
+    activePurchases.forEach((purchase) => {
+      const productIds = purchaseProducts(purchase);
+      const token = extractPurchaseToken(purchase);
+      productIds.forEach((id) => {
+        const plan = idToPlan[id];
+        if (plan && !restoredPlans.includes(plan)) restoredPlans.push(plan);
+        if (plan && token) {
+          purchasesOut.push({
+            planId: plan,
+            productId: id,
+            purchaseToken: token,
+            // Shape expected by registerServerEntitlement / extractToken
+            result: purchase,
+          });
+        }
+      });
     });
 
-    return { restoredPlans, preview: false, verified: true };
+    return {
+      restoredPlans,
+      purchases: purchasesOut,
+      preview: false,
+      verified: true,
+    };
   } catch (e) {
-    return { restoredPlans, preview: false, error: e };
+    return { restoredPlans, purchases: purchasesOut, preview: false, error: e };
   }
 }

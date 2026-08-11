@@ -25,7 +25,7 @@ export const PRIVACY_POLICY_SECTIONS = [
   },
   {
     title: "2. Information We Collect",
-    body: "We handle the following categories of information to provide and improve the App:\n\n• Account Information: name, email address, Google sign-in information, and a phone number required to create and maintain your account and to support custom-plan communication.\n\n• Personal & Fitness Data: age, gender, height, weight, fitness goals, activity level, and preferred workout days that you provide.\n\n• Workout History: exercises completed, weights, repetitions, sets, and training dates.\n\n• Weight Logs: body-weight entries and their dates.\n\n• Nutrition Data: foods you log and your daily calorie and macro targets.\n\n• Subscription Status: active Pro entitlements and expiration information needed to provide paid features.\n\n• AI Coach Requests: information from your current Fifty Fit context and your message that is sent to Google's Gemini API to generate an answer. FitTrack does not store a chat-history database. If you report an AI answer, the reported answer snippet and your report reason are stored in Supabase so we can review safety and quality issues.\n\n• Device & Usage Data: limited technical information needed to operate and troubleshoot the App.",
+    body: "We handle the following categories of information to provide and improve the App:\n\n• Account Information: name, email address, Google sign-in information, and a phone number required to create and maintain your account and to support custom-plan communication.\n\n• Personal & Fitness Data: age, gender, height, weight, fitness goals, activity level, and preferred workout days that you provide.\n\n• Workout History: exercises completed, weights, repetitions, sets, and training dates.\n\n• Weight Logs: body-weight entries and their dates.\n\n• Nutrition Data: foods you log and your daily calorie and macro targets.\n\n• Subscription Status: active Pro entitlements and expiration information needed to provide paid features.\n\n• AI Coach Requests: information from your current Fifty Fit context and your message that is sent to Google's Gemini API to generate an answer. Fifty Fit does not store a chat-history database. If you report an AI answer, the reported answer snippet and your report reason are stored in Supabase so we can review safety and quality issues.\n\n• Device & Usage Data: limited technical information needed to operate and troubleshoot the App.",
   },
   {
     title: "3. How We Use Your Information",
@@ -37,15 +37,15 @@ export const PRIVACY_POLICY_SECTIONS = [
   },
   {
     title: "5. AI Coach & Google Gemini",
-    body: "AI Coach sends the information necessary to answer your request to Google's Gemini API. FitTrack does not store conversations in a chat-history table or permanent chat log. Google's handling of Gemini API prompts, responses, abuse-monitoring logs, and related technical data is governed by Google's applicable Gemini API terms and policies. We do not use Google Search or Maps grounding in AI Coach.",
+    body: "AI Coach sends the information necessary to answer your request to Google's Gemini API. Fifty Fit does not store conversations in a chat-history table or permanent chat log. Google's handling of Gemini API prompts, responses, abuse-monitoring logs, and related technical data is governed by Google's applicable Gemini API terms and policies. We do not use Google Search or Maps grounding in AI Coach.",
   },
   {
     title: "6. Payments & Subscriptions",
-    body: "Pro subscriptions are processed through Google Play Billing. FitTrack does not collect or store your payment card details. Google Play manages payment processing and subscription management. You can manage or cancel a Google Play subscription through Google Play's subscription center. Deleting your FitTrack account does not automatically cancel a Google Play subscription.",
+    body: "Pro subscriptions are processed through Google Play Billing. Fifty Fit does not collect or store your payment card details. Google Play manages payment processing and subscription management. You can manage or cancel a Google Play subscription through Google Play's subscription center. Deleting your Fifty Fit account does not automatically cancel a Google Play subscription.",
   },
   {
     title: "7. Notifications",
-    body: "With your permission, FitTrack may schedule local workout reminders on your device. These notifications are generated locally and are not a separate server-side messaging history.",
+    body: "With your permission, Fifty Fit may schedule local workout reminders on your device. These notifications are generated locally and are not a separate server-side messaging history.",
   },
   {
     title: "8. Data Sharing & Third Parties",
@@ -53,7 +53,7 @@ export const PRIVACY_POLICY_SECTIONS = [
   },
   {
     title: "9. Analytics & Crash Reporting",
-    body: "FitTrack does not currently use a separate third-party analytics or crash-reporting SDK that stores a personal analytics profile. If this changes, this policy will be updated to describe the relevant data handling.",
+    body: "Fifty Fit does not currently use a separate third-party analytics or crash-reporting SDK that stores a personal analytics profile. If this changes, this policy will be updated to describe the relevant data handling.",
   },
   {
     title: "10. Your Rights & Account Deletion",
@@ -76,11 +76,11 @@ export const PRIVACY_POLICY_SECTIONS = [
 export const TERMS_SECTIONS = [
   {
     title: "1. Acceptance of Terms",
-    body: 'By downloading, accessing, or using FitTrack (the "App"), you agree to these Terms of Service. If you do not agree, please do not use the App.',
+    body: 'By downloading, accessing, or using Fifty Fit (the "App"), you agree to these Terms of Service. If you do not agree, please do not use the App.',
   },
   {
     title: "2. Use of the App",
-    body: "FitTrack provides fitness tracking, workout plans, nutrition information, and an AI Coach for general informational and educational purposes. The App is not medical advice, diagnosis, or treatment. AI Coach is for general fitness and nutrition guidance only and should not be used for diagnosis, treatment, or emergency decisions. Consult a qualified health professional before starting an exercise or nutrition program, especially if you have a medical condition.",
+    body: "Fifty Fit provides fitness tracking, workout plans, nutrition information, and an AI Coach for general informational and educational purposes. The App is not medical advice, diagnosis, or treatment. AI Coach is for general fitness and nutrition guidance only and should not be used for diagnosis, treatment, or emergency decisions. Consult a qualified health professional before starting an exercise or nutrition program, especially if you have a medical condition.",
   },
   {
     title: "3. Accounts",
@@ -92,7 +92,7 @@ export const TERMS_SECTIONS = [
   },
   {
     title: "5. Intellectual Property",
-    body: "FitTrack's original app content, illustrations, text, graphics, and design are protected by applicable intellectual property laws. Third-party names, services, and media remain the property of their respective owners.",
+    body: "Fifty Fit's original app content, illustrations, text, graphics, and design are protected by applicable intellectual property laws. Third-party names, services, and media remain the property of their respective owners.",
   },
   {
     title: "6. Limitation of Liability",
@@ -100,7 +100,7 @@ export const TERMS_SECTIONS = [
   },
   {
     title: "7. Termination",
-    body: "You may stop using FitTrack and request account deletion at any time. We may suspend access for abuse, fraud, or material violations of these Terms.",
+    body: "You may stop using Fifty Fit and request account deletion at any time. We may suspend access for abuse, fraud, or material violations of these Terms.",
   },
   {
     title: "8. Contact",

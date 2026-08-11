@@ -1,1 +1,0 @@
-Temporary launch-hardening branch; this file can be removed after the App.jsx patch workflow completes.

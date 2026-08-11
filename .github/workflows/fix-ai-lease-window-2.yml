@@ -1,0 +1,39 @@
+name: Retry AI lease window
+
+on:
+  push:
+    branches:
+      - fix/fifty-fit-launch-polish
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch and push latest branch
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('supabase/functions/ai-coach/index.ts')
+          text=p.read_text(encoding='utf-8')
+          old='''    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 45 });'''
+          new='''    // Keep the DB lease longer than the worst-case primary + fallback provider window.\n    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 90 });'''
+          if old not in text: raise SystemExit('lease marker missing')
+          p.write_text(text.replace(old,new,1),encoding='utf-8')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add supabase/functions/ai-coach/index.ts
+          git diff --cached --check
+          git commit -m "fix: extend AI concurrency lease window"
+          git fetch origin fix/fifty-fit-launch-polish
+          git rebase origin/fix/fifty-fit-launch-polish
+          git push origin HEAD:fix/fifty-fit-launch-polish
+          git rm .github/workflows/fix-ai-lease-window.yml .github/workflows/fix-ai-lease-window-2.yml
+          git commit -m "chore: remove temporary AI lease workflows"
+          git fetch origin fix/fifty-fit-launch-polish
+          git rebase origin/fix/fifty-fit-launch-polish
+          git push origin HEAD:fix/fifty-fit-launch-polish

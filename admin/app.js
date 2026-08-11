@@ -126,41 +126,21 @@ async function isAdmin(user) {
 }
 
 async function getRecentCustomers() {
-  const snap = await getDocs(query(collection(db, "users"), limit(50)));
+  const snap = await getDocs(query(collection(db, "users"), limit(250)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
-async function searchCustomer(term) {
-  const q = term.trim();
-  if (!q) return getRecentCustomers();
-  if (/^[A-Za-z0-9_-]{20,}$/.test(q)) {
-    const s = await getDoc(doc(db, "users", q)); return s.exists() ? [{ id: s.id, ...s.data() }] : [];
-  }
-  const fields = ["account.email", "account.phone"];
-  const results = [];
-  for (const field of fields) {
-    const snap = await getDocs(query(collection(db, "users"), where(field, "==", q), limit(20)));
-    snap.docs.forEach((d) => { if (!results.some((x) => x.id === d.id)) results.push({ id: d.id, ...d.data() }); });
-  }
-  return results;
-}
-
-function customerRow(u) {
-  const a = u.account || {}, e = u.entitlements || {};
-  const badges = [e.trainingPro && "Training Pro", e.nutritionPro && "Nutrition Pro", e.aiCoachPro && "AI Coach"].filter(Boolean);
-  return `<button class="customer-row" data-user-id="${esc(u.id)}"><div class="avatar">${esc((a.name || "?").slice(0,1).toUpperCase())}</div><div class="customer-main"><b>${esc(a.name || "Unnamed user")}</b><span>${esc(a.email || "No email")} · ${esc(a.phone || "No phone")}</span></div><div class="badges">${badges.length ? badges.map((x) => `<span class="badge">${x}</span>`).join("") : `<span class="muted">Free</span>`}</div></button>`;
-}
-
-async function renderCustomers(customers = null) {
-  shell(`<div class="page-head"><div><span class="eyebrow">CONTROL CENTER</span><h1>Customers</h1><p class="muted">View subscriptions and deliver custom plans directly into Fifty Fit.</p></div><div class="search"><input id="customer-search" placeholder="Email, phone or user ID"/><button id="search-btn">Search</button></div></div><div id="customer-list" class="customer-list"><div class="loading">Loading customers…</div></div>`);
-  const list = document.getElementById("customer-list");
-  const load = async (items = null) => {
-    list.innerHTML = `<div class="loading">Loading…</div>`;
-    try { const rows = items || await getRecentCustomers(); list.innerHTML = rows.length ? rows.map(customerRow).join("") : `<div class="empty">No customers found.</div>`; document.querySelectorAll("[data-user-id]").forEach((b) => b.onclick = () => openCustomer(b.dataset.userId)); }
-    catch (e) { list.innerHTML = `<div class="error">Could not load customers. Check Firestore rules.</div>`; }
-  };
-  await load(customers);
-  document.getElementById("search-btn").onclick = async () => load(await searchCustomer(document.getElementById("customer-search").value));
-  document.getElementById("customer-search").onkeydown = (e) => { if (e.key === "Enter") document.getElementById("search-btn").click(); };
+function customerIsSubscribed(u) { const e=u.entitlements||{}; return !!(e.trainingPro||e.nutritionPro||e.aiCoachPro||e.everythingPro||e.bothPro); }
+function customerMatches(u, term) { const q=term.trim().toLowerCase(); if(!q)return true; const a=u.account||{}; return [a.name,a.email,a.phone,u.id].some(v=>String(v||"").toLowerCase().includes(q)); }
+function customerHasPlanRequest(u) { return !!u.nutritionPlanRequestedAt || !!u.trainingPlanRequestedAt; }
+function customerPlanStatus(u) { const e=u.entitlements||{}; return [e.trainingPro&&"Training Pro",e.nutritionPro&&"Nutrition Pro",e.aiCoachPro&&"AI Coach"].filter(Boolean); }
+function sortCustomers(rows,mode) { const c=[...rows]; if(mode==='subscribed')return c.sort((a,b)=>Number(customerIsSubscribed(b))-Number(customerIsSubscribed(a))); if(mode==='unsubscribed')return c.sort((a,b)=>Number(customerIsSubscribed(a))-Number(customerIsSubscribed(b))); if(mode==='training')return c.sort((a,b)=>Number(b.entitlements?.trainingPro)-Number(a.entitlements?.trainingPro)); if(mode==='nutrition')return c.sort((a,b)=>Number(b.entitlements?.nutritionPro)-Number(a.entitlements?.nutritionPro)); if(mode==='ai')return c.sort((a,b)=>Number(b.entitlements?.aiCoachPro)-Number(a.entitlements?.aiCoachPro)); if(mode==='requests')return c.sort((a,b)=>Number(customerHasPlanRequest(b))-Number(customerHasPlanRequest(a))); return c.sort((a,b)=>String(a.account?.name||'').localeCompare(String(b.account?.name||''))); }
+function customerRow(u) { const a=u.account||{}, badges=customerPlanStatus(u), request=customerHasPlanRequest(u); return `<button class="customer-row ${request?'attention':''}" data-user-id="${esc(u.id)}"><div class="avatar">${esc((a.name||'?').slice(0,1).toUpperCase())}</div><div class="customer-main"><b>${esc(a.name||'Unnamed user')}</b><span>${esc(a.email||'No email')} · ${esc(a.phone||'No phone')}</span>${request?`<small class="request-flag">${u.nutritionPlanRequestedAt?'🍽️ Nutrition plan requested':'🏋️ Training plan requested'}</small>`:''}</div><div class="badges">${badges.length?badges.map(x=>`<span class="badge">${x}</span>`).join(''):`<span class="muted">Free</span>`}</div></button>`; }
+async function searchCustomer(term) { const q=term.trim(); if(!q)return getRecentCustomers(); if(/^[A-Za-z0-9_-]{20,}$/.test(q)){const s=await getDoc(doc(db,'users',q));return s.exists()?[{id:s.id,...s.data()}]:[];} const out=[]; for(const field of ['account.email','account.phone']){const snap=await getDocs(query(collection(db,'users'),where(field,'==',q),limit(20)));snap.docs.forEach(d=>{if(!out.some(x=>x.id===d.id))out.push({id:d.id,...d.data()});});} return out.length?out:(await getRecentCustomers()).filter(u=>customerMatches(u,q)); }
+async function renderCustomers(customers=null) {
+  shell(`<div class="page-head"><div><span class="eyebrow">CONTROL CENTER</span><h1>Customers</h1><p class="muted">Manage subscriptions and deliver custom plans directly into Fifty Fit.</p></div><div class="search"><input id="customer-search" placeholder="Search name, email, phone or user ID" autocomplete="off" /></div></div><div class="toolbar"><select id="customer-filter"><option value="all">All customers</option><option value="subscribed">Subscribed</option><option value="unsubscribed">Not subscribed</option><option value="training">Training Pro</option><option value="nutrition">Nutrition Pro</option><option value="ai">AI Coach Pro</option><option value="requests">Plan requests first</option></select><button id="refresh-customers" class="secondary">Refresh</button><span id="customer-notice" class="notice-inline"></span></div><div id="customer-list" class="customer-list"><div class="loading">Loading customers…</div></div>`);
+  const list=document.getElementById('customer-list'), search=document.getElementById('customer-search'), filter=document.getElementById('customer-filter'), notice=document.getElementById('customer-notice'); let rows=customers||await getRecentCustomers();
+  const render=()=>{let f=rows.filter(u=>customerMatches(u,search.value)); if(filter.value==='subscribed')f=f.filter(customerIsSubscribed); if(filter.value==='unsubscribed')f=f.filter(u=>!customerIsSubscribed(u)); if(filter.value==='training')f=f.filter(u=>!!u.entitlements?.trainingPro); if(filter.value==='nutrition')f=f.filter(u=>!!u.entitlements?.nutritionPro); if(filter.value==='ai')f=f.filter(u=>!!u.entitlements?.aiCoachPro); f=sortCustomers(f,filter.value); const requests=rows.filter(customerHasPlanRequest).length; list.innerHTML=f.length?f.map(customerRow).join(''):`<div class="empty">No customers match this filter.</div>`; document.querySelectorAll('[data-user-id]').forEach(b=>b.onclick=()=>openCustomer(b.dataset.userId)); notice.textContent=requests?`🔔 ${requests} plan request${requests===1?'':'s'} need attention`:'';};
+  render(); search.oninput=render; filter.onchange=render; const refresh=async()=>{rows=await getRecentCustomers();render();}; document.getElementById('refresh-customers').onclick=refresh; setInterval(()=>refresh().catch(()=>{}),30000);
 }
 
 async function openCustomer(uid) {

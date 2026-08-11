@@ -4961,6 +4961,32 @@ function OnboardingScreen({ data, setData, go, showToast }) {
       </div>
 
       <div style={{ flex: 1, marginTop: 6 }}>
+        {step === 0 && (
+          <div>
+            <div
+              style={{
+                color: C.text,
+                fontSize: 21,
+                fontWeight: 800,
+                marginBottom: 8,
+              }}
+            >
+              {ar ? "رقم تليفونك إيه؟" : "What's your phone number?"}
+            </div>
+            <div style={{ color: C.sub, fontSize: 12, marginBottom: 16, lineHeight: 1.5 }}>
+              {ar
+                ? "هنستخدمه للتواصل معاك بخصوص الخطط المخصصة والدعم عند الحاجة."
+                : "We'll use it for custom-plan communication and support when needed."}
+            </div>
+            <TextField
+              icon={Phone}
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder={ar ? "رقم التليفون" : "Phone number"}
+            />
+          </div>
+        )}
         {step === 1 && (
           <div>
             <div

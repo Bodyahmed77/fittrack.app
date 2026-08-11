@@ -7,6 +7,7 @@ on:
       - 'scripts/apply-launch-hardening.trigger'
       - 'scripts/final-launch-cleanup.py'
       - 'scripts/final-launch-cleanup.trigger'
+      - 'scripts/lockfile-refresh.trigger'
 
 permissions:
   contents: write
@@ -21,12 +22,14 @@ jobs:
         run: python3 scripts/apply-launch-hardening.py
       - name: Apply final cleanup
         run: python3 scripts/final-launch-cleanup.py
+      - name: Refresh npm lockfile
+        run: npm install --package-lock-only --ignore-scripts
       - name: Commit patch
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/App.jsx src/config.js src/privacy.js src/aiCoach.js src/aiReport.js capacitor.config.json docs supabase/functions/ai-coach/index.ts supabase/functions/ai-report/index.ts supabase/migrations/20260811210000_ai_runtime_guard_and_reports.sql
+          git add package-lock.json src/App.jsx src/config.js src/privacy.js src/aiCoach.js src/aiReport.js capacitor.config.json docs supabase/functions/ai-coach/index.ts supabase/functions/ai-report/index.ts supabase/migrations/20260811210000_ai_runtime_guard_and_reports.sql
           git diff --cached --quiet && exit 0
-          git commit -m 'fix: final launch hardening and cleanup'
+          git commit -m 'fix: refresh dependencies and final launch hardening'
           git push

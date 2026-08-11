@@ -8967,25 +8967,19 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         return;
       }
 
-      // 2) Register the purchase server-side so the entitlement store
-      //    (the authoritative quota source) reflects this subscription.
-      //    The app purchase was already acknowledged to Google Play above;
-      //    the server independently verifies it against the real Google
-      //    Play Developer API before writing anything (see verify-purchase).
-      //
-      //    IMPORTANT: for the AI Coach plan, the server's entitlement
-      //    table is the ONLY thing the AI quota check reads (see
-      //    ai-coach's lookupEntitlement). If registration fails or Google
-      //    rejects the purchase, the local UI must NOT claim the user is
-      //    Pro — that would show "activated" while the user's next AI
-      //    message still gets the free-tier response, which is confusing
-      //    and looks like a bug. So this branch returns early on failure
-      //    instead of falling through to the optimistic unlock below.
-      if (planId === "ai") {
+      // 2) Register EVERY paid plan server-side. The client is never the
+      //    source of truth for entitlements. verify-purchase independently
+      //    checks the purchaseToken against the Google Play Developer API
+      //    (subscriptionsv2.get) and only then writes entitlements.
+      //    If verification or registration fails, do NOT unlock the UI —
+      //    that would claim "Pro activated" while the server has no row.
+      {
+        const productKey =
+          BILLING_PRODUCTS[planId] || result?.productId || planId;
         try {
           await registerServerEntitlement(
-            BILLING_PRODUCTS.ai,
-            result?.productId || BILLING_PRODUCTS.ai,
+            productKey,
+            result?.productId || productKey,
             result?.result,
           );
         } catch (regErr) {
@@ -8998,24 +8992,19 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
           showToast(
             deniedByGoogle
               ? ar
-                ? "تعذر تفعيل AI Coach Pro — لم يتم التحقق من عملية الشراء. لو تم خصم المبلغ، تواصل معنا."
-                : "AI Coach Pro could not be activated — the purchase could not be verified. If you were charged, please contact support."
+                ? "تم استلام عملية الشراء ولكن لم يتم تفعيل الاشتراك بعد. حاول مرة أخرى أو استخدم استعادة المشتريات. إذا تم خصم المبلغ ولم يتم التفعيل، تواصل مع الدعم."
+                : "Purchase received but the subscription was not activated. Try again or use Restore Purchases. If you were charged and still not activated, contact support."
               : ar
-              ? "تم رصد عملية الشراء لكن التفعيل لسه معلق. جرب تفتح المدرب الذكي بعد شوية، أو استخدم 'استعادة المشتريات'."
-              : "Your purchase was detected but activation is still pending. Try opening AI Coach again shortly, or use Restore Purchases.",
-            7000,
+              ? "تم استلام عملية الشراء ولكن لم يتم تفعيل الاشتراك بعد. حاول مرة أخرى أو استخدم استعادة المشتريات. إذا تم خصم المبلغ ولم يتم التفعيل، تواصل مع الدعم."
+              : "Purchase received but the subscription was not activated. Try again or use Restore Purchases. If you were charged and still not activated, contact support.",
+            8000,
           );
-          // Do NOT unlock locally — the server did not confirm this
-          // purchase. Stop here so the UI stays consistent with the
-          // actual (unchanged) server-side entitlement.
+          // Do NOT unlock locally — server did not confirm.
           return;
         }
       }
 
-      // 3) Unlock entitlements locally (and persist via setData).
-      //    Reached only when there was nothing to verify server-side
-      //    (training/nutrition/both — unchanged flow) or the AI Coach
-      //    server registration above already succeeded.
+      // 3) Unlock entitlements locally only after server verification.
       const next = clone(data);
       unlockPlans(next, planId);
       next.entitlements.proExpiresAt = null;
@@ -9059,10 +9048,16 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         });
       } else if (planId === "nutrition" || planId === "both") {
         setSuccessModal({
-          title: ar ? "تم تفعيل اشتراكك!" : "Subscription activated!",
+          title: ar
+            ? planId === "nutrition"
+              ? "تم تفعيل Nutrition Pro بنجاح ✅"
+              : "تم تفعيل اشتراكك بنجاح ✅"
+            : planId === "nutrition"
+            ? "Nutrition Pro activated successfully ✅"
+            : "Subscription activated successfully ✅",
           message: ar
-            ? "خطتك الغذائية المخصصة جاهزة داخل التطبيق — هتلاقيها في تبويب الخطة الغذائية. احتجت مساعدة، كلمنا على واتساب في أي وقت."
-            : "Your personalized nutrition plan is ready inside the app — find it in the Nutrition Plan tab. Need help anytime, chat with us on WhatsApp.",
+            ? "خطة الأكل الخاصة بك أصبحت متاحة داخل التطبيق — هتلاقيها في تبويب الخطة الغذائية. احتجت مساعدة، كلمنا على واتساب في أي وقت."
+            : "Your meal plan is now available inside the app — find it in the Nutrition Plan tab. Need help anytime, chat with us on WhatsApp.",
           cta: ar ? "شوف الخطة الغذائية" : "View nutrition plan",
           onCta: () => {
             setSuccessModal(null);
@@ -9101,9 +9096,10 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
     try {
       const res = await billingRestore().catch(() => ({
         restoredPlans: [],
+        purchases: [],
         preview: true,
       }));
-      const restored = res?.restoredPlans || [];
+      const purchaseRecords = res?.purchases || [];
       if (res?.unsupported) {
         showToast(
           ar
@@ -9112,7 +9108,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         );
         return;
       }
-      if (restored.length === 0 && !res?.preview) {
+      if (purchaseRecords.length === 0 && !res?.preview) {
         showToast(
           ar
             ? "مفيش اشتراكات سابقة نستردّها"
@@ -9120,29 +9116,75 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         );
         return;
       }
-      // Grant the restored entitlements locally.
-      const next = clone(data);
-      restored.forEach((p) => unlockPlans(next, p));
-      if (restored.length > 0) {
-        next.entitlements.proExpiresAt = null;
-        if (next.entitlements.trainingPro) {
-          const personalizedPlan = buildPersonalizedProPlan(next);
-          next.proPlan = personalizedPlan;
-          next.activePlanId = personalizedPlan.workoutPlanId;
-        }
-        await setData(next);
-        showToast(
-          ar
-            ? "تم استرجاع اشتراكك بنجاح!"
-            : "Your subscription was restored successfully!",
-        );
-      } else if (res?.preview) {
+      if (res?.preview && purchaseRecords.length === 0) {
         showToast(
           ar
             ? "الفوترة غير متاحة خارج تطبيق Android"
             : "Billing is unavailable outside the Android app",
         );
+        return;
       }
+
+      // Server-verify each purchase token. Client presence alone never unlocks.
+      const activatedPlans = [];
+      let anyServerError = false;
+      for (const rec of purchaseRecords) {
+        try {
+          await registerServerEntitlement(
+            rec.productId,
+            rec.productId,
+            rec.result,
+          );
+          if (rec.planId && !activatedPlans.includes(rec.planId)) {
+            activatedPlans.push(rec.planId);
+          }
+        } catch (regErr) {
+          anyServerError = true;
+          console.warn("restore verify failed", rec?.productId, regErr?.code);
+        }
+      }
+
+      if (activatedPlans.length === 0) {
+        showToast(
+          anyServerError
+            ? ar
+              ? "تم استلام عملية الشراء ولكن لم يتم تفعيل الاشتراك بعد. حاول مرة أخرى أو استخدم استعادة المشتريات. إذا تم خصم المبلغ ولم يتم التفعيل، تواصل مع الدعم."
+              : "Purchase received but the subscription was not activated. Try again or use Restore Purchases. If you were charged and still not activated, contact support."
+            : ar
+            ? "مفيش اشتراكات سابقة نستردّها"
+            : "No previous subscriptions to restore",
+          8000,
+        );
+        return;
+      }
+
+      const next = clone(data);
+      activatedPlans.forEach((p) => unlockPlans(next, p));
+      next.entitlements.proExpiresAt = null;
+      if (next.entitlements.trainingPro) {
+        const personalizedPlan = buildPersonalizedProPlan(next);
+        next.proPlan = personalizedPlan;
+        next.activePlanId = personalizedPlan.workoutPlanId;
+      }
+      if (next.entitlements.nutritionPro) {
+        const personalizedPlan = buildPersonalizedProPlan(next);
+        next.nutritionPlan = {
+          ...(next.nutritionPlan || {}),
+          unread: true,
+          generatedAt: dateKey(0),
+          title: ar ? "خطة برو غذائية جاهزة" : "Pro nutrition plan is ready",
+          titleAr: ar ? "خطة برو غذائية جاهزة" : "Pro nutrition plan is ready",
+          summary: ar
+            ? `خطة مبنية على هدفك (${personalizedPlan.nutritionFocus})`
+            : `Plan tailored to your goal (${personalizedPlan.nutritionFocus})`,
+        };
+      }
+      await setData(next);
+      showToast(
+        ar
+          ? "تم استرجاع اشتراكك بنجاح!"
+          : "Your subscription was restored successfully!",
+      );
     } catch (e) {
       showToast(
         ar
@@ -11991,28 +12033,53 @@ export default function GymApp() {
   useEffect(() => {
     if (!firebaseUser || !loaded) return undefined;
     let cancelled = false;
-    billingRestore()
-      .then((result) => {
+    // On sign-in: query Play purchases, then server-verify each token.
+    // Never grant Pro from client-side purchase presence alone.
+    (async () => {
+      try {
+        const result = await billingRestore();
         if (cancelled) return;
-        const restored = result?.restoredPlans || [];
-        setVerifiedEntitlements({
-          trainingPro: restored.includes("training") || restored.includes("both"),
-          nutritionPro:
-            restored.includes("nutrition") || restored.includes("both"),
-          aiCoachPro: restored.includes("ai"),
-          proExpiresAt: null,
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setVerifiedEntitlements({
-            trainingPro: false,
-            nutritionPro: false,
-            aiCoachPro: false,
-            proExpiresAt: null,
-          });
+        const records = result?.purchases || [];
+        if (!records.length) {
+          // Do not wipe existing local entitlements on empty query —
+          // user may be offline or plugin may be unavailable briefly.
+          return;
         }
-      });
+        const activated = {
+          trainingPro: false,
+          nutritionPro: false,
+          aiCoachPro: false,
+          proExpiresAt: null,
+        };
+        for (const rec of records) {
+          try {
+            await registerServerEntitlement(
+              rec.productId,
+              rec.productId,
+              rec.result,
+            );
+            if (rec.planId === "training" || rec.planId === "both") {
+              activated.trainingPro = true;
+            }
+            if (rec.planId === "nutrition" || rec.planId === "both") {
+              activated.nutritionPro = true;
+            }
+            if (rec.planId === "ai") {
+              activated.aiCoachPro = true;
+            }
+          } catch (e) {
+            console.warn("login restore verify failed", rec?.productId, e?.code);
+          }
+        }
+        if (cancelled) return;
+        if (activated.trainingPro || activated.nutritionPro || activated.aiCoachPro) {
+          setVerifiedEntitlements(activated);
+        }
+      } catch (e) {
+        // Keep current local UI state; do not force-clear on restore failure.
+        console.warn("login billing restore failed", e);
+      }
+    })();
     return () => {
       cancelled = true;
     };

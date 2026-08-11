@@ -1,0 +1,340 @@
+name: Launch hardening patch
+
+on:
+  push:
+    paths:
+      - ".github/workflows/launch-hardening.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply launch hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # ---------------- App.jsx ----------------
+          p = Path('src/App.jsx')
+          s = p.read_text()
+
+          # Google Play generative-AI policy: add an in-app report/flag affordance.
+          s = s.replace('  CheckCircle,\n} from "lucide-react";', '  CheckCircle,\n  Flag,\n} from "lucide-react";', 1)
+
+          # Fitness app is not child-directed; do not accept under-13 accounts.
+          old_age = '''if (step === 1 && (!age || age < 10 || age > 100)) {\n      setErr(ar ? "اكتب سن صحيح (10-100)" : "Enter a valid age (10-100)");'''
+          new_age = '''if (step === 1 && (!age || age < 13 || age > 100)) {\n      setErr(ar ? "اكتب سن صحيح (13-100)" : "Enter a valid age (13-100)");'''
+          if old_age not in s:
+              raise SystemExit('age validation pattern not found')
+          s = s.replace(old_age, new_age, 1)
+
+          # Phone is not necessary to create/use the account. Remove the mandatory
+          # Google-phone gate; keep the optional phone field in profile state intact.
+          google_gate = '''    const isGoogle = (firebaseUser?.providerData || []).some(\n      (p) => p?.providerId === "google.com",\n    );\n    const hasPhone = !!(data?.account?.phone || "").trim();\n    if (isGoogle && !hasPhone) {\n      setPhase("googlePhone");\n      return;\n    }\n    setPhase("onboarding");'''
+          if google_gate not in s:
+              raise SystemExit('google phone gate not found')
+          s = s.replace(google_gate, '    setPhase("onboarding");', 1)
+          s = s.replace('}, [firebaseUser, loaded, localLang, savedLanguage, data.onboarded, data?.account?.phone]); // eslint-disable-line', '}, [firebaseUser, loaded, localLang, savedLanguage, data.onboarded]); // eslint-disable-line', 1)
+
+          # Remove the now-unused mandatory phone screen component.
+          s, n = re.subn(r'\nfunction GooglePhoneScreen\([\s\S]*?\n\}\n\nfunction OnboardingScreen\(', '\nfunction OnboardingScreen(', s, count=1)
+          if n != 1:
+              raise SystemExit(f'GooglePhoneScreen removal count={n}')
+          # Remove its route branch.
+          s, n = re.subn(r'\n  else if \(phase === "googlePhone"\)\n    authScreen = \([\s\S]*?\n    \);\n', '\n', s, count=1)
+          if n != 1:
+              raise SystemExit(f'googlePhone route removal count={n}')
+          s = s.replace('return; // onboarding/googlePhone/language: no natural "back" target, ignore', 'return; // onboarding/language: no natural "back" target, ignore', 1)
+
+          # Add AI report state.
+          marker = '  const [input, setInput] = useState("");\n  const [busy, setBusy] = useState(false);'
+          replacement = '''  const [input, setInput] = useState("");\n  const [busy, setBusy] = useState(false);\n  const [reportTarget, setReportTarget] = useState(null);\n  const [reportReason, setReportReason] = useState("");\n  const [reportBusy, setReportBusy] = useState(false);'''
+          if marker not in s:
+              raise SystemExit('AI state marker not found')
+          s = s.replace(marker, replacement, 1)
+
+          # Reset report state on drawer open.
+          marker = '''      setMessages([]);\n      setInput("");\n      setBusy(false);\n      setKeyboardInset(0);'''
+          replacement = '''      setMessages([]);\n      setInput("");\n      setBusy(false);\n      setReportTarget(null);\n      setReportReason("");\n      setReportBusy(false);\n      setKeyboardInset(0);'''
+          if marker not in s:
+              raise SystemExit('AI reset marker not found')
+          s = s.replace(marker, replacement, 1)
+
+          # Add report submission handler before send().
+          marker = '  const send = async () => {'
+          handler = '''  const submitAiReport = async () => {\n    if (!reportTarget || reportBusy) return;\n    const reason = reportReason.trim();\n    if (!reason) {\n      showToast(ar ? "اكتب سبب البلاغ" : "Please describe the issue");\n      return;\n    }\n    setReportBusy(true);\n    try {\n      const { reportAiContent } = await import("./aiReport");\n      await reportAiContent({\n        response: String(reportTarget.content || "").slice(0, 2000),\n        reason: reason.slice(0, 500),\n        lang: ar ? "ar" : "en",\n      });\n      setReportTarget(null);\n      setReportReason("");\n      showToast(ar ? "تم إرسال البلاغ، شكرًا لمساعدتنا." : "Report sent. Thanks for helping us improve.");\n    } catch (e) {\n      showToast(ar ? "تعذر إرسال البلاغ. حاول مرة أخرى." : "Could not send the report. Please try again.");\n    } finally {\n      setReportBusy(false);\n    }\n  };\n\n  const send = async () => {'''
+          if marker not in s:
+              raise SystemExit('send marker not found')
+          s = s.replace(marker, handler, 1)
+
+          # Replace message rendering with report affordance for assistant messages.
+          old_messages = '''          {messages.map((m, i) => (\n            <div\n              key={i}\n              style={{\n                alignSelf: m.role === "user" ? "flex-end" : "flex-start",\n                maxWidth: "92%",\n                background: m.role === "user" ? C.green : C.card2,\n                color: m.role === "user" ? "#04140a" : C.text,\n                padding: "10px 12px",\n                borderRadius: 14,\n                fontSize: 13.5,\n                lineHeight: 1.45,\n                whiteSpace: "pre-wrap",\n              }}\n            >\n              {m.content}\n            </div>\n          ))}'''
+          new_messages = '''          {messages.map((m, i) =>\n            m.role === "assistant" ? (\n              <div key={i} style={{ alignSelf: "flex-start", maxWidth: "92%" }}>\n                <div\n                  style={{\n                    background: C.card2,\n                    color: C.text,\n                    padding: "10px 12px",\n                    borderRadius: 14,\n                    fontSize: 13.5,\n                    lineHeight: 1.45,\n                    whiteSpace: "pre-wrap",\n                  }}\n                >\n                  {m.content}\n                </div>\n                <button\n                  type="button"\n                  onClick={() => {\n                    setReportTarget({ index: i, content: m.content });\n                    setReportReason("");\n                  }}\n                  style={{\n                    marginTop: 4,\n                    padding: "3px 6px",\n                    border: "none",\n                    background: "transparent",\n                    color: C.sub2,\n                    fontSize: 10.5,\n                    cursor: "pointer",\n                    display: "inline-flex",\n                    alignItems: "center",\n                    gap: 4,\n                  }}\n                >\n                  <Flag size={11} />\n                  {ar ? "الإبلاغ عن إجابة" : "Report answer"}\n                </button>\n              </div>\n            ) : (\n              <div\n                key={i}\n                style={{\n                  alignSelf: "flex-end",\n                  maxWidth: "92%",\n                  background: C.green,\n                  color: "#04140a",\n                  padding: "10px 12px",\n                  borderRadius: 14,\n                  fontSize: 13.5,\n                  lineHeight: 1.45,\n                  whiteSpace: "pre-wrap",\n                }}\n              >\n                {m.content}\n              </div>\n            ),\n          )}'''
+          if old_messages not in s:
+              raise SystemExit('AI message rendering pattern not found')
+          s = s.replace(old_messages, new_messages, 1)
+
+          # Insert an in-app report dialog before the input bar.
+          marker = '''        <div\n          ref={inputBarRef}\n          style={{'''
+          modal = '''        {reportTarget && (\n          <div\n            style={{\n              position: "absolute",\n              inset: 0,\n              zIndex: 20,\n              background: "rgba(0,0,0,0.55)",\n              display: "flex",\n              alignItems: "center",\n              justifyContent: "center",\n              padding: 18,\n            }}\n            onClick={() => !reportBusy && setReportTarget(null)}\n          >\n            <div\n              dir={ar ? "rtl" : "ltr"}\n              onClick={(e) => e.stopPropagation()}\n              style={{\n                width: "100%",\n                maxWidth: 330,\n                background: C.card,\n                border: `1px solid ${C.border}`,\n                borderRadius: 16,\n                padding: 16,\n              }}\n            >\n              <div style={{ color: C.text, fontWeight: 800, fontSize: 15, marginBottom: 6 }}>\n                {ar ? "الإبلاغ عن إجابة AI" : "Report an AI answer"}\n              </div>\n              <div style={{ color: C.sub, fontSize: 11.5, lineHeight: 1.5, marginBottom: 10 }}>\n                {ar ? "ساعدنا نراجع الإجابة ونحسن الأمان والجودة." : "Tell us what was wrong so we can review and improve safety and quality."}\n              </div>\n              <textarea\n                value={reportReason}\n                onChange={(e) => setReportReason(e.target.value)}\n                maxLength={500}\n                rows={4}\n                placeholder={ar ? "إيه المشكلة في الإجابة؟" : "What was wrong with this answer?"}\n                style={{\n                  width: "100%",\n                  boxSizing: "border-box",\n                  resize: "none",\n                  background: C.card2,\n                  color: C.text,\n                  border: `1px solid ${C.border}`,\n                  borderRadius: 12,\n                  padding: "10px 12px",\n                  outline: "none",\n                  fontSize: 12.5,\n                  lineHeight: 1.45,\n                }}\n              />\n              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>\n                <button\n                  type="button"\n                  disabled={reportBusy}\n                  onClick={() => setReportTarget(null)}\n                  style={{ flex: 1, padding: "10px 12px", borderRadius: 11, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontWeight: 700, cursor: "pointer" }}\n                >\n                  {ar ? "إلغاء" : "Cancel"}\n                </button>\n                <button\n                  type="button"\n                  disabled={reportBusy || !reportReason.trim()}\n                  onClick={submitAiReport}\n                  style={{ flex: 1, padding: "10px 12px", borderRadius: 11, border: "none", background: C.green, color: C.onAccent, fontWeight: 800, cursor: reportBusy ? "wait" : "pointer", opacity: reportBusy || !reportReason.trim() ? 0.5 : 1 }}\n                >\n                  {reportBusy ? (ar ? "جاري الإرسال…" : "Sending…") : (ar ? "إرسال البلاغ" : "Send report")}\n                </button>\n              </div>\n            </div>\n          </div>\n        )}\n\n        <div\n          ref={inputBarRef}\n          style={{'''
+          if marker not in s:
+              raise SystemExit('AI input bar marker not found')
+          s = s.replace(marker, modal, 1)
+
+          # Keep the report dialog contained inside the drawer.
+          s = s.replace('          display: "flex",\n          flexDirection: "column",\n          boxShadow: "0 0 40px rgba(0,0,0,0.35)",', '          display: "flex",\n          flexDirection: "column",\n          position: "absolute",\n          boxShadow: "0 0 40px rgba(0,0,0,0.35)",', 1)
+
+          p.write_text(s)
+
+          # ---------------- config.js ----------------
+          p = Path('src/config.js')
+          s = p.read_text()
+          marker = '''export const AI_COACH_ENDPOINT =\n  "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/ai-coach";'''
+          replacement = '''export const AI_COACH_ENDPOINT =\n  "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/ai-coach";\n\nexport const AI_REPORT_ENDPOINT =\n  (typeof import.meta !== "undefined" &&\n    import.meta.env &&\n    import.meta.env.VITE_AI_REPORT_ENDPOINT) ||\n  (AI_COACH_ENDPOINT || "").replace(\n    "/functions/v1/ai-coach",\n    "/functions/v1/ai-report",\n  );'''
+          if marker not in s:
+              raise SystemExit('AI endpoint marker not found')
+          s = s.replace(marker, replacement, 1)
+          p.write_text(s)
+
+          # ---------------- capacitor.config.json ----------------
+          p = Path('capacitor.config.json')
+          s = p.read_text().replace('"appName": "Fifty Fit"', '"appName": "FitTrack"', 1)
+          p.write_text(s)
+
+          # ---------------- privacy.js ----------------
+          p = Path('src/privacy.js')
+          s = p.read_text()
+          s = s.replace('Fifty Fit', 'FitTrack')
+          s = s.replace('Fifty Fit', 'FitTrack')
+          s = s.replace('Fifty Fit', 'FitTrack')
+          s = s.replace('AI Coach Requests: information from your current FitTrack context and your message that is sent to Google\'s Gemini API to generate an answer. FitTrack does not store a chat-history database.', 'AI Coach Requests: information from your current FitTrack context and your message that is sent to Google\'s Gemini API to generate an answer. FitTrack does not store a chat-history database. If you report an AI answer, the reported answer snippet and your report reason are stored in Supabase so we can review safety and quality issues.')
+          s = s.replace('The App is not medical advice, diagnosis, or treatment.', 'The App is not medical advice, diagnosis, or treatment. AI Coach is for general fitness and nutrition guidance only and should not be used for diagnosis, treatment, or emergency decisions.')
+          p.write_text(s)
+
+          # ---------------- aiReport.js ----------------
+          Path('src/aiReport.js').write_text(r'''import { AI_REPORT_ENDPOINT, SUPABASE_ANON_KEY } from "./config";
+import { auth } from "./firebase";
+
+export async function reportAiContent({ response, reason, lang }) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in required");
+  const token = await user.getIdToken(true);
+  if (!AI_REPORT_ENDPOINT) throw new Error("AI report endpoint is not configured");
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+  if (SUPABASE_ANON_KEY) headers.apikey = SUPABASE_ANON_KEY;
+  const res = await fetch(AI_REPORT_ENDPOINT, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      response: String(response || "").slice(0, 2000),
+      reason: String(reason || "").slice(0, 500),
+      lang: lang === "ar" ? "ar" : "en",
+    }),
+  });
+  if (!res.ok) throw new Error(`AI report failed: ${res.status}`);
+  return res.json();
+}
+''')
+
+          # ---------------- ai-report Edge Function ----------------
+          Path('supabase/functions/ai-report').mkdir(parents=True, exist_ok=True)
+          Path('supabase/functions/ai-report/index.ts').write_text(r'''import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
+
+const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+function json(status: number, body: Record<string, unknown>) {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+async function verifyFirebaseIdToken(idToken: string) {
+  const JWKS = jose.createRemoteJWKSet(new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"));
+  const { payload } = await jose.jwtVerify(idToken, JWKS, {
+    issuer: `https://securetoken.google.com/${PROJECT_ID}`,
+    audience: PROJECT_ID,
+  });
+  const uid = payload.sub || payload.user_id;
+  if (!uid) throw new Error("No uid in token");
+  return String(uid);
+}
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
+  const authHeader = req.headers.get("Authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return json(401, { error: "unauthenticated" });
+  let uid: string;
+  try { uid = await verifyFirebaseIdToken(match[1].trim()); }
+  catch { return json(401, { error: "unauthenticated" }); }
+
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { return json(400, { error: "bad_request" }); }
+  const response = typeof body.response === "string" ? body.response.trim().slice(0, 2000) : "";
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
+  const lang = body.lang === "ar" ? "ar" : "en";
+  if (!response || !reason) return json(400, { error: "bad_request", message: "Response and reason are required" });
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) return json(500, { error: "backend_error" });
+  const sb = createClient(supabaseUrl, serviceKey);
+  const { error } = await sb.from("ai_reports").insert({ uid, response_text: response, reason, lang });
+  if (error) return json(500, { error: "backend_error" });
+  return json(200, { ok: true });
+});
+''')
+
+          # ---------------- migration: global AI slots + reports ----------------
+          Path('supabase/migrations/20260811210000_ai_runtime_guard_and_reports.sql').write_text(r'''create table if not exists public.ai_runtime_slots (
+  slot_id smallint primary key,
+  lease_until timestamptz not null default to_timestamp(0)
+);
+
+insert into public.ai_runtime_slots (slot_id)
+select gs from generate_series(1, 4) as gs
+on conflict (slot_id) do nothing;
+
+alter table public.ai_runtime_slots enable row level security;
+revoke all on public.ai_runtime_slots from public, anon, authenticated;
+
+create or replace function public.try_acquire_ai_slot(p_lease_seconds integer default 45)
+returns smallint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_slot smallint;
+  v_lease integer := greatest(15, least(coalesce(p_lease_seconds, 45), 90));
+begin
+  select slot_id into v_slot
+  from public.ai_runtime_slots
+  where lease_until <= now()
+  order by slot_id
+  for update skip locked
+  limit 1;
+
+  if v_slot is null then
+    return 0;
+  end if;
+
+  update public.ai_runtime_slots
+  set lease_until = now() + make_interval(secs => v_lease)
+  where slot_id = v_slot;
+
+  return v_slot;
+end;
+$$;
+
+create or replace function public.release_ai_slot(p_slot_id smallint)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.ai_runtime_slots
+  set lease_until = to_timestamp(0)
+  where slot_id = p_slot_id;
+  return found;
+end;
+$$;
+
+revoke all on function public.try_acquire_ai_slot(integer) from public, anon, authenticated;
+revoke all on function public.release_ai_slot(smallint) from public, anon, authenticated;
+grant execute on function public.try_acquire_ai_slot(integer) to service_role;
+grant execute on function public.release_ai_slot(smallint) to service_role;
+
+auto analyze public.ai_runtime_slots;
+
+create table if not exists public.ai_reports (
+  id uuid primary key default gen_random_uuid(),
+  uid text not null,
+  response_text text not null check (char_length(response_text) between 1 and 2000),
+  reason text not null check (char_length(reason) between 1 and 500),
+  lang text not null default 'en' check (lang in ('ar', 'en')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists ai_reports_created_at_idx on public.ai_reports (created_at desc);
+create index if not exists ai_reports_uid_idx on public.ai_reports (uid);
+alter table public.ai_reports enable row level security;
+revoke all on public.ai_reports from public, anon, authenticated;
+''')
+
+          # ---------------- AI Coach server hardening ----------------
+          p = Path('supabase/functions/ai-coach/index.ts')
+          s = p.read_text()
+
+          # Add global DB-backed slot state; local isolate guard remains as a second safety layer.
+          marker = '''    const sb = createClient(supabaseUrl, serviceKey);\n\n    // ---- SERVER-SIDE entitlement (not client-provided).'''
+          replacement = '''    const sb = createClient(supabaseUrl, serviceKey);\n\n    // Global DB-backed concurrency gate. Four slots across all Edge isolates\n    // keep provider pressure bounded even when Supabase scales horizontally.\n    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 45 });\n    const slotId = Number(aiSlot || 0);\n    if (aiSlotErr || !slotId) {\n      log("request_complete", { status: 503, error: "provider_overloaded", durationMs: Date.now() - t0 });\n      return json(503, {\n        error: "provider_overloaded",\n        message: "AI service is busy right now — please try again shortly",\n      });\n    }\n\n    try {\n      // ---- SERVER-SIDE entitlement (not client-provided).'''
+          if marker not in s:
+              raise SystemExit('AI slot insertion marker not found')
+          s = s.replace(marker, replacement, 1)
+
+          # We inserted an inner try; release the slot in a dedicated finally before the existing outer finally.
+          old_tail = '''  } catch (e) {\n    log("request_complete", {\n      status: 500,\n      error: "backend_error",\n      durationMs: Date.now() - t0,\n      detail: String((e as Error)?.message || e).slice(0, 120),\n    });\n    return json(500, { error: "backend_error", message: "Internal error" });\n  } finally {\n    releaseConcurrencySlot();\n  }\n});'''
+          new_tail = '''      } catch (e) {\n        log("request_complete", {\n          status: 500,\n          error: "backend_error",\n          durationMs: Date.now() - t0,\n          detail: String((e as Error)?.message || e).slice(0, 120),\n        });\n        return json(500, { error: "backend_error", message: "Internal error" });\n      } finally {\n        await asRpc(sb).rpc("release_ai_slot", { p_slot_id: slotId }).catch(() => {});\n      }\n    } finally {\n      releaseConcurrencySlot();\n    }\n});'''
+          if old_tail not in s:
+              raise SystemExit('AI tail pattern not found')
+          s = s.replace(old_tail, new_tail, 1)
+
+          # Explicit safety filters for a consumer fitness assistant.
+          safety_marker = '''            generationConfig: { maxOutputTokens: 1024 },'''
+          safety_replacement = '''            generationConfig: { maxOutputTokens: 1024 },\n            safetySettings: [\n              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },\n              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },\n              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },\n              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },\n            ],'''
+          if safety_marker not in s:
+              raise SystemExit('Gemini safety marker not found')
+          s = s.replace(safety_marker, safety_replacement, 1)
+
+          # Detect Gemini safety blocks instead of returning an empty generic answer.
+          old_reply = '''      const geminiData = await geminiRes.json();\n      const reply =\n        geminiData?.candidates?.[0]?.content?.parts\n          ?.map((p: { text?: string }) => p?.text || "")\n          .join("")\n          .trim() || "";'''
+          new_reply = '''      const geminiData = await geminiRes.json();\n      if (geminiData?.promptFeedback?.blockReason || geminiData?.candidates?.[0]?.finishReason === "SAFETY") {\n        return { ok: false, code: "gemini_safety_blocked", status: 400, model } as const;\n      }\n      const reply =\n        geminiData?.candidates?.[0]?.content?.parts\n          ?.map((p: { text?: string }) => p?.text || "")\n          .join("")\n          .trim() || "";'''
+          if old_reply not in s:
+              raise SystemExit('Gemini response marker not found')
+          s = s.replace(old_reply, new_reply, 1)
+
+          # Keep provider safety blocks from triggering fallback retries.
+          s = s.replace('if (primary.status >= 400 && primary.status < 500 && primary.status !== 429) {', 'if (primary.status >= 400 && primary.status < 500 && primary.status !== 429) {', 1)
+          p.write_text(s)
+
+          # Make the client error classifier aware of safety blocks without exposing provider internals.
+          p = Path('src/aiCoach.js')
+          s = p.read_text()
+          s = s.replace('    "gemini_not_configured",\n    "empty_response",', '    "gemini_not_configured",\n    "gemini_safety_blocked",\n    "empty_response",', 1)
+          s = s.replace('  if (status === 503) return errField === "provider_overloaded" ? errField : "busy";', '  if (status === 503) return errField === "provider_overloaded" ? errField : "busy";\n  if (errField === "gemini_safety_blocked") return "gemini_safety_blocked";', 1)
+          p.write_text(s)
+
+          # ---------------- account deletion web page branding ----------------
+          p = Path('docs/account-deletion.html')
+          if p.exists():
+              s = p.read_text().replace('Fifty Fit', 'FitTrack')
+              p.write_text(s)
+
+          # ---------------- lock the temporary workflow after this run ----------------
+          wf = Path('.github/workflows/launch-hardening.yml')
+          w = wf.read_text()
+          w = w.replace('on:\n  push:\n    paths:\n      - ".github/workflows/launch-hardening.yml"', 'on:\n  workflow_dispatch:', 1)
+          wf.write_text(w)
+          PY
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/App.jsx src/config.js src/privacy.js src/aiCoach.js src/aiReport.js capacitor.config.json docs/account-deletion.html supabase/functions/ai-coach/index.ts supabase/functions/ai-report/index.ts supabase/migrations/20260811210000_ai_runtime_guard_and_reports.sql .github/workflows/launch-hardening.yml
+          git commit -m "fix: harden AI safety, privacy and Play readiness"
+          git push

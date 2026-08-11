@@ -185,6 +185,7 @@ import {
 } from "./config";
 import {
   purchase as billingPurchase,
+  queryProducts as billingQueryProducts,
   restorePurchases as billingRestore,
 } from "./billing";
 import { registerServerEntitlement } from "./registerPurchase";
@@ -8832,6 +8833,28 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
   const [selectedDuration, setSelectedDuration] = useState("monthly");
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [storeProducts, setStoreProducts] = useState([]);
+
+  // Launch policy: expose only a real monthly subscription until the native
+  // billing bridge supports selecting Google Play base-plan offer tokens.
+  // This prevents the UI from showing four prices that all purchase the same
+  // underlying product/base plan. Longer periods can be enabled later without
+  // changing the entitlement model.
+  const availableDurations = DURATIONS.filter((d) => d.id === "monthly");
+
+  useEffect(() => {
+    let alive = true;
+    billingQueryProducts("monthly")
+      .then((result) => {
+        if (alive) setStoreProducts(Array.isArray(result?.products) ? result.products : []);
+      })
+      .catch(() => {
+        if (alive) setStoreProducts([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedPlan]);
   // Success modal — replaces the toast-only confirmation so the user
   // explicitly acknowledges a completed purchase (nutrition modal explains
   // that the personalized plan is inside the app; AI plan explains quota).
@@ -8849,7 +8872,15 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       : "intl";
   const regionPrices = PAYWALL_PRICES[region] || PAYWALL_PRICES.intl;
   const planPrice = regionPrices[selectedPlan] || plan?.prices || {};
-  const displayPrice = planPrice[selectedDuration] ?? price;
+  const storeProduct = storeProducts.find(
+    (p) => p?.productId === BILLING_PRODUCTS[selectedPlan],
+  );
+  const storePrice =
+    storeProduct?.price ||
+    storeProduct?.formattedPrice ||
+    storeProduct?.priceString ||
+    null;
+  const displayPrice = storePrice || planPrice[selectedDuration] || price;
   const currency = ar ? regionPrices.currencyLabelAr : regionPrices.currencyLabelEn;
   const durationLabel = ar ? duration?.label : duration?.labelEn;
   const selectedPlanActive =
@@ -9188,7 +9219,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
             marginBottom: 16,
           }}
         >
-          {DURATIONS.map((d) => (
+          {availableDurations.map((d) => (
             <button
               key={d.id}
               onClick={() => setSelectedDuration(d.id)}
@@ -9316,6 +9347,19 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
                 </span>
               </div>
             ))}
+          </div>
+          <div
+            style={{
+              color: C.sub,
+              fontSize: 11.5,
+              textAlign: "center",
+              lineHeight: 1.5,
+              margin: "2px 8px 10px",
+            }}
+          >
+            {ar
+              ? "اشتراك شهري يتجدد تلقائيًا حتى الإلغاء من Google Play."
+              : "Monthly subscription. Renews automatically until canceled in Google Play."}
           </div>
           <GreenButton
             onClick={() => purchase(selectedPlan, selectedDuration)}

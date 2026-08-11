@@ -12,3 +12,4 @@ keystore_base64.txt
 .env.*
 functions/.env
 *.local
+supabase/.temp/

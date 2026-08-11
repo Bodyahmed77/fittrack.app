@@ -203,6 +203,12 @@ async function callGeminiModel(
           body: JSON.stringify({
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: { maxOutputTokens: 1024 },
+            safetySettings: [
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            ],
           }),
         },
       );
@@ -227,6 +233,9 @@ async function callGeminiModel(
         return { ok: false, code: "gemini_failed", status: geminiRes.status, model };
       }
       const geminiData = await geminiRes.json();
+      if (geminiData?.promptFeedback?.blockReason || geminiData?.candidates?.[0]?.finishReason === "SAFETY") {
+        return { ok: false, code: "gemini_safety_blocked", status: 400, model } as const;
+      }
       const reply =
         geminiData?.candidates?.[0]?.content?.parts
           ?.map((p: { text?: string }) => p?.text || "")
@@ -367,7 +376,16 @@ Deno.serve(async (req) => {
     }
     const sb = createClient(supabaseUrl, serviceKey);
 
-    // ---- SERVER-SIDE entitlement (not client-provided).
+    // Global DB-backed concurrency gate: four provider calls maximum across all Edge isolates.
+    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 45 });
+    const slotId = Number(aiSlot || 0);
+    if (aiSlotErr || !slotId) {
+      log("request_complete", { status: 503, error: "provider_overloaded", durationMs: Date.now() - t0 });
+      return json(503, { error: "provider_overloaded", message: "AI service is busy right now — please try again shortly" });
+    }
+
+    try {
+      // ---- SERVER-SIDE entitlement (not client-provided).
     const hasAiPro = await lookupEntitlement(sb, uid);
     const limit = hasAiPro ? PRO_LIMIT : FREE_LIMIT;
 
@@ -508,15 +526,18 @@ Assist the user using ONLY the current FitTrack context provided below.
         hasPro: hasAiPro,
       },
     });
-  } catch (e) {
-    log("request_complete", {
-      status: 500,
-      error: "backend_error",
-      durationMs: Date.now() - t0,
-      detail: String((e as Error)?.message || e).slice(0, 120),
-    });
-    return json(500, { error: "backend_error", message: "Internal error" });
-  } finally {
-    releaseConcurrencySlot();
-  }
+      } catch (e) {
+        log("request_complete", {
+          status: 500,
+          error: "backend_error",
+          durationMs: Date.now() - t0,
+          detail: String((e as Error)?.message || e).slice(0, 120),
+        });
+        return json(500, { error: "backend_error", message: "Internal error" });
+      } finally {
+        await asRpc(sb).rpc("release_ai_slot", { p_slot_id: slotId }).catch(() => {});
+      }
+    } finally {
+      releaseConcurrencySlot();
+    }
 });

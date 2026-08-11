@@ -59,14 +59,7 @@ function resolveAnonKey() {
   return SUPABASE_ANON_KEY || "";
 }
 
-function diag(...args) {
-  try {
-    // eslint-disable-next-line no-console
-    console.log(...args);
-  } catch (_) {
-    /* ignore */
-  }
-}
+function diag() {}
 
 function normalizeUsage(data, fallbackDate) {
   if (!data || typeof data !== "object") return null;
@@ -130,6 +123,7 @@ function classifyHttpError(status, data) {
     "gemini_failed",
     "gemini_timeout",
     "gemini_not_configured",
+    "gemini_safety_blocked",
     "empty_response",
     "usage_read_failed",
     "bad_request",

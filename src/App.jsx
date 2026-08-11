@@ -344,10 +344,6 @@ const DAY_LABELS_AR = {
   Sat: "سبت",
   Sun: "حد",
 };
-const todayIdx = (() => {
-  const js = new Date().getDay();
-  return js === 0 ? 6 : js - 1;
-})();
 const WHATSAPP_NUMBER = "201108178493";
 
 // Local calendar YYYY-MM-DD — never use toISOString() for day keys
@@ -582,6 +578,19 @@ function weekdayOf(iso) {
   return DAYS[js === 0 ? 6 : js - 1];
 }
 
+// Map a calendar date to the user's position in the active plan. A new user
+// always starts on Day 1 (the plan's Mon slot) on their first program date,
+// regardless of the weekday they created the account.
+function planDayForDate(data, iso = dateKey(0)) {
+  const start = data?.workoutStartDate;
+  if (!start || iso < start) return weekdayOf(iso);
+  const startMs = new Date(start + "T00:00:00").getTime();
+  const targetMs = new Date(iso + "T00:00:00").getTime();
+  const diff = Math.floor((targetMs - startMs) / 86400000);
+  if (!Number.isFinite(diff) || diff < 0) return weekdayOf(iso);
+  return DAYS[diff % DAYS.length];
+}
+
 // A day counts as trained when every exercise the user can actually open that
 // day has been logged on the target calendar date.
 function isDayCompleted(data, dayName, targetDate = dateForDay(dayName)) {
@@ -603,9 +612,10 @@ function isDayCompleted(data, dayName, targetDate = dateForDay(dayName)) {
 // 5) Future → pending (never red)
 // 6) Past scheduled + incomplete → missed (red)
 function dayStatus(data, dayName, targetDate = dateForDay(dayName)) {
-  const exercises = getUsableExercises(data, dayName).list;
+  const planDay = planDayForDate(data, targetDate);
+  const exercises = getUsableExercises(data, planDay).list;
   if (exercises.length === 0) return "rest";
-  if (isDayCompleted(data, dayName, targetDate)) return "done";
+  if (isDayCompleted(data, planDay, targetDate)) return "done";
   // Days before the user started the program were never theirs to miss.
   if (!data.workoutStartDate || targetDate < data.workoutStartDate)
     return "pending";
@@ -622,13 +632,15 @@ function dayStatus(data, dayName, targetDate = dateForDay(dayName)) {
 // not yet completed, otherwise the next scheduled training day (rest days are
 // skipped, never treated as missed workouts).
 function activeTrainingDay(data) {
+  const today = dateKey(0);
   for (let offset = 0; offset < DAYS.length; offset += 1) {
-    const day = DAYS[(todayIdx + offset) % DAYS.length];
+    const iso = addDays(today, offset);
+    const day = planDayForDate(data, iso);
     if (getUsableExercises(data, day).list.length === 0) continue;
-    if (offset === 0 && isDayCompleted(data, day)) continue;
+    if (offset === 0 && isDayCompleted(data, day, iso)) continue;
     return day;
   }
-  return DAYS[todayIdx];
+  return planDayForDate(data, today);
 }
 
 // C.green is the app's monochrome accent (white in dark mode, black in light
@@ -3072,12 +3084,14 @@ function registerFullScreenVideoClose(fn) {
    No gesture overlays, no pointer-events hacks, no preventDefault.
    Exercise Screen only shows a "Watch Short" button; the iframe lives here. */
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
+  const [videoLoaded, setVideoLoaded] = useState(false);
   const isTikTok = /^\d+$/.test(videoId);
   const embedSrc = isTikTok
-    ? `https://www.tiktok.com/embed/v2/${videoId}`
+    ? `https://www.tiktok.com/player/v1/${videoId}?controls=1&autoplay=0&description=0&music_info=0&rel=0`
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {
+    setVideoLoaded(false);
     registerFullScreenVideoClose(() => {
       onClose();
       return true;
@@ -3145,11 +3159,33 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
           background: "#000",
         }}
       >
+        {!videoLoaded && (
+          <div
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "#000",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            {ar ? "جاري تحميل الفيديو…" : "Loading video…"}
+          </div>
+        )}
         <iframe
           src={embedSrc}
+          onLoad={() => setVideoLoaded(true)}
+          loading="eager"
+          fetchPriority="high"
           title={ar ? "فيديو التمرين" : "Exercise video"}
           sandbox="allow-scripts allow-same-origin allow-presentation"
-          referrerPolicy="no-referrer"
+          referrerPolicy="strict-origin-when-cross-origin"
           style={{
             position: "absolute",
             inset: 0,
@@ -3171,6 +3207,22 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!videoId || typeof document === "undefined") return undefined;
+    const isTikTok = /^\d+$/.test(videoId);
+    const href = isTikTok
+      ? `https://www.tiktok.com/player/v1/${videoId}?controls=1&autoplay=0&description=0&music_info=0&rel=0`
+      : `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0`;
+    const link = document.createElement("link");
+    link.rel = "prefetch";
+    link.as = "document";
+    link.href = href;
+    document.head.appendChild(link);
+    return () => {
+      try { link.remove(); } catch {}
+    };
+  }, [videoId]);
   const close = useCallback(() => setOpen(false), []);
 
   if (!videoId) return null;
@@ -5319,7 +5371,7 @@ function HomeScreen({ data, go }) {
     ? Number((currentWeight - monthAgo.weight).toFixed(1))
     : 0;
 
-  const dayName = DAYS[todayIdx];
+  const dayName = planDayForDate(data, dateKey(0));
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
   const dayTitle = ar
@@ -5979,7 +6031,7 @@ function WorkoutScreen({
     const iso = dateKey(0);
     if (selectedIso !== iso) {
       setSelectedIso(iso);
-      setSelectedDay(weekdayOf(iso));
+      setSelectedDay(planDayForDate(data, iso));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -6052,10 +6104,11 @@ function WorkoutScreen({
           {Array.from({ length: 7 }, (_, i) => {
             const offset = i - 2; // [today-2 ... today+4]
             const iso = dateKey(offset);
-            const d = weekdayOf(iso);
+            const calendarDay = weekdayOf(iso);
+            const d = planDayForDate(data, iso);
             const isSelected = iso === selectedDate;
             const isToday = offset === 0;
-            const isActiveDay = d === activeDay && iso === dateForDay(activeDay);
+            const isActiveDay = d === activeDay && iso >= (data.workoutStartDate || iso);
             const status = dayStatus(data, d, iso);
             const isDone = status === "done";
             const isMissed = status === "missed";
@@ -6122,7 +6175,7 @@ function WorkoutScreen({
                     fontWeight: 600,
                   }}
                 >
-                  {ar ? DAY_LABELS_AR[d] : d}
+                  {ar ? DAY_LABELS_AR[calendarDay] : calendarDay}
                 </span>
                 <span
                   style={{
@@ -8654,7 +8707,7 @@ function PlansScreen({ data, setData, go, showToast }) {
 function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
-  const [day, setDay] = useState(DAYS[todayIdx]);
+  const [day, setDay] = useState(() => planDayForDate(data, dateKey(0)));
   const plan = PLAN_TEMPLATES[planId];
   const isActive = data.activePlanId === planId;
   const daySchedule = plan.schedule[day];
@@ -9581,7 +9634,10 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
 
     let removed = false;
     let nativeMode = false;
+    let KeyboardApi = null;
     const handles = [];
+    let vv = null;
+    let onVv = null;
 
     const setInset = (px) => {
       if (removed) return;
@@ -9602,6 +9658,13 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           nativeMode = true;
           try {
             const { Keyboard } = await import("@capacitor/keyboard");
+            KeyboardApi = Keyboard;
+            if (removed) {
+              try {
+                await Keyboard.setResizeMode?.({ mode: "native" });
+              } catch (_) {}
+              return;
+            }
             try {
               if (Keyboard.setResizeMode) {
                 await Keyboard.setResizeMode({ mode: "none" });
@@ -9634,9 +9697,9 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         /* not running in a Capacitor build → web mode */
       }
       // Web mode: visualViewport only.
-      const vv = window.visualViewport;
+      vv = window.visualViewport;
       let base = vv ? vv.height : window.innerHeight;
-      const onVv = () => {
+      onVv = () => {
         if (!vv || removed || nativeMode) return;
         const covered = Math.max(
           0,
@@ -9663,6 +9726,12 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         vv.removeEventListener("resize", onVv);
         vv.removeEventListener("scroll", onVv);
       }
+      // AI temporarily uses ResizeMode=none so the drawer can track the IME
+      // precisely. Always restore the app's normal native resize behavior when
+      // the drawer closes; otherwise the next screen can inherit a stale mode.
+      try {
+        KeyboardApi?.setResizeMode?.({ mode: "native" });
+      } catch (_) {}
       setKeyboardInset(0);
     };
   }, [open]);
@@ -9787,7 +9856,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           data,
           lang,
           (() => {
-            const d = DAYS[todayIdx];
+            const d = planDayForDate(data, today);
             const plan =
               PLAN_TEMPLATES[data?.activePlanId] || PLAN_TEMPLATES.beginner;
             const dayMeta = plan.schedule?.[d] || {};
@@ -9889,8 +9958,8 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           background: C.bg,
           display: "flex",
           flexDirection: "column",
-          position: "absolute",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
+          overscrollBehavior: "contain",
           transition: "bottom 0.12s ease-out",
           ...panelSide,
         }}
@@ -10160,10 +10229,11 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
             display: "flex",
             gap: 8,
             // Panel bottom already accounts for keyboardInset; keep safe-area only.
-            padding: "10px 12px calc(12px + env(safe-area-inset-bottom))",
+            padding: keyboardInset > 0 ? "10px 12px 6px" : "10px 12px max(8px, env(safe-area-inset-bottom))",
             borderTop: `1px solid ${C.border}`,
             background: C.bg,
             flexShrink: 0,
+            minHeight: keyboardInset > 0 ? 58 : 62,
           }}
         >
           <input
@@ -12214,7 +12284,7 @@ export default function GymApp() {
   const [localLang, setLocalLang] = useState(readStoredLanguage);
   const [screen, setScreen] = useState("home");
   const [params, setParams] = useState({});
-  const [selectedDay, setSelectedDay] = useState(DAYS[todayIdx]);
+  const [selectedDay, setSelectedDay] = useState(() => planDayForDate(data, dateKey(0)));
   // Calendar ISO for the currently selected strip day. Keeps logs correct when
   // the 7-day window crosses a week boundary (dateForDay alone is week-anchored).
   const [selectedIso, setSelectedIso] = useState(dateKey(0));
@@ -12336,7 +12406,7 @@ export default function GymApp() {
     if (s === "workout") {
       const todayIso = dateKey(0);
       setSelectedIso(todayIso);
-      setSelectedDay(weekdayOf(todayIso));
+      setSelectedDay(planDayForDate(data, todayIso));
     }
     setNavHistory((h) => [...h, { screen, params }]);
     setScreen(s);
@@ -12363,7 +12433,7 @@ export default function GymApp() {
       // Always open Workout on today's REAL local calendar date.
       const todayIso = dateKey(0);
       setSelectedIso(todayIso);
-      setSelectedDay(weekdayOf(todayIso));
+      setSelectedDay(planDayForDate(data, todayIso));
     }
   };
 

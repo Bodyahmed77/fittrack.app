@@ -382,7 +382,8 @@ Deno.serve(async (req) => {
     const sb = createClient(supabaseUrl, serviceKey);
 
     // Global DB-backed concurrency gate: four provider calls maximum across all Edge isolates.
-    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 45 });
+    // Keep the DB lease longer than the worst-case primary + fallback provider window.
+    const { data: aiSlot, error: aiSlotErr } = await asRpc(sb).rpc("try_acquire_ai_slot", { p_lease_seconds: 90 });
     const slotId = Number(aiSlot || 0);
     if (aiSlotErr || !slotId) {
       log("request_complete", { status: 503, error: "provider_overloaded", durationMs: Date.now() - t0 });

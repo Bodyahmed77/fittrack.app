@@ -1,0 +1,52 @@
+name: Fix Pro plan switching
+
+on:
+  push:
+    branches:
+      - fix/fifty-fit-launch-polish
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Patch Pro switch and admin assignment date
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('src/App.jsx')
+          text=p.read_text(encoding='utf-8')
+          old='''  const use = () => {\n    const next = clone(data);\n    next.activePlanId = planId;\n    setData(next);'''
+          new='''  const use = () => {\n    const next = clone(data);\n    next.activePlanId = planId;\n    // Switching to a Pro plan starts that plan from Day 1 today.\n    if (plan.pro && data.entitlements.trainingPro && !isActive) {\n      next.workoutStartDate = dateKey(0);\n      // A built-in plan selection intentionally replaces an admin custom plan.\n      next.customTrainingPlan = null;\n    }\n    setData(next);'''
+          if old not in text: raise SystemExit('PlanDetail use marker missing')
+          text=text.replace(old,new,1)
+          p.write_text(text,encoding='utf-8')
+
+          p=Path('admin/app.js')
+          text=p.read_text(encoding='utf-8')
+          old='''  await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload }, { merge: true });'''
+          new='''  await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload, workoutStartDate: payload.startDate }, { merge: true });'''
+          if old not in text: raise SystemExit('admin training save marker missing')
+          p.write_text(text.replace(old,new,1),encoding='utf-8')
+          PY
+      - name: Validate web build
+        run: |
+          npm ci
+          npm run build
+      - name: Commit and remove workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx admin/app.js
+          git diff --cached --check
+          git commit -m "fix: restart Pro plans from Day 1 on switch"
+          git push origin HEAD:fix/fifty-fit-launch-polish
+          git rm .github/workflows/fix-pro-plan-switch.yml
+          git commit -m "chore: remove temporary Pro switch workflow"
+          git push origin HEAD:fix/fifty-fit-launch-polish

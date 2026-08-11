@@ -198,6 +198,7 @@ import {
   generateCoachReply,
 } from "./aiCoach";
 import { APP_INFO, PRIVACY_POLICY_SECTIONS, TERMS_SECTIONS } from "./privacy";
+import { deleteAccountServerData } from "./deleteAccount";
 
 // Fixed notification IDs so we can reliably cancel/replace them later.
 const NOTIF_ID_DAILY_REMINDER = 1001;
@@ -11185,6 +11186,7 @@ function DeleteAccountScreen({
 
       // Delete the application document only after recent authentication
       // succeeds, so a failed account deletion does not orphan user data.
+      await deleteAccountServerData();
       if (firebaseUser?.uid) {
         await deleteDoc(doc(db, "users", firebaseUser.uid));
       }
@@ -11299,7 +11301,7 @@ function DeleteAccountScreen({
 function SettingsScreen({ data, setData, back, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
-  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro;
+  const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;
   const setTheme = (mode) => {
     const next = clone(data);
     next.settings.theme = mode;

@@ -344,10 +344,9 @@ Deno.serve(async (req) => {
 
     // ---- Input validation
     const lang = body.lang === "ar" ? "ar" : "en";
-    const localDate =
-      typeof body.localDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.localDate as string)
-        ? (body.localDate as string)
-        : new Date().toISOString().slice(0, 10);
+    // Quota bucket is server UTC, matching the PostgreSQL RPC's current_date.
+    // The client-supplied localDate remains intentionally ignored.
+    const localDate = new Date().toISOString().slice(0, 10);
     const messages = Array.isArray(body.messages)
       ? (body.messages as Array<{ role?: string; content?: string }>).slice(-6)
       : [];

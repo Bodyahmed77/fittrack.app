@@ -214,7 +214,7 @@ async function scheduleDailyReminder(timeStr) {
     notifications: [
       {
         id: NOTIF_ID_DAILY_REMINDER,
-        title: "Fifty",
+        title: "FitTrack",
         body: "Don't forget today's workout! 💪",
         schedule: { on: { hour, minute }, repeats: true, allowWhileIdle: true },
       },
@@ -238,7 +238,7 @@ async function scheduleSubscriptionExpiryReminder(expiresAtISO) {
     notifications: [
       {
         id: NOTIF_ID_SUB_EXPIRY,
-        title: "Fifty Pro",
+        title: "FitTrack Pro",
         body: "Your Pro subscription ends in 5 days — renew to keep your plan and full history.",
         schedule: { at: fireDate },
       },
@@ -3819,7 +3819,7 @@ function AppLogo({ size = 74 }) {
     >
       <img
         src={logoSrc}
-        alt="Fifty"
+        alt="FitTrack"
         style={{ width: "100%", height: "100%", objectFit: "contain" }}
       />
     </div>
@@ -5730,7 +5730,7 @@ function HomeScreen({ data, go }) {
             <Crown size={22} color={C.gold} />
             <div style={{ flex: 1 }}>
               <div style={{ color: C.text, fontWeight: 700, fontSize: 13.5 }}>
-                {ar ? "افتح Fifty Fit Pro" : "Unlock Fifty Fit Pro"}
+                {ar ? "افتح FitTrack Pro" : "Unlock FitTrack Pro"}
               </div>
               <div style={{ color: C.sub, fontSize: 11.5 }}>
                 {ar
@@ -9093,7 +9093,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
 
   return (
     <div dir={ar ? "rtl" : "ltr"}>
-      <TopBar title="Fifty Fit Pro" onBack={back} />
+      <TopBar title="FitTrack Pro" onBack={back} />
       <div style={{ padding: "0 18px" }}>
         <div style={{ textAlign: "center", marginBottom: 18 }}>
           <Crown size={30} color={C.gold} />
@@ -9105,7 +9105,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
               marginTop: 8,
             }}
           >
-            {ar ? "استفد أكتر من Fifty Fit" : "Get more out of Fifty Fit"}
+            {ar ? "استفد أكتر من FitTrack" : "Get more out of FitTrack"}
           </div>
           <div style={{ color: C.sub, fontSize: 12.5, marginTop: 4 }}>
             {ar
@@ -10752,7 +10752,7 @@ function RemindersScreen({ data, setData, back, showToast }) {
         notifications: [
           {
             id: 9999,
-            title: "Fifty Fit",
+            title: "FitTrack",
             body: ar
               ? "متنساش تمرين النهاردة! 💪"
               : "Don't forget today's workout! 💪",
@@ -11261,8 +11261,8 @@ function DeleteAccountScreen({
             </div>
             <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>
               {ar
-                ? "هيتم حذف بيانات Fifty Fit: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
-                : "This permanently deletes your Fifty Fit data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
+                ? "هيتم حذف بيانات FitTrack: التمارين، الوزن، والوجبات. حذف الحساب لا يلغي اشتراك Google Play؛ ألغِه من Google Play."
+                : "This permanently deletes your FitTrack data: workouts, weight, and meals. Deleting your account does not cancel Google Play subscriptions; cancel them through Google Play."}
             </div>
           </div>
         </Card>
@@ -11693,7 +11693,7 @@ function SettingsScreen({ data, setData, back, go, showToast }) {
             margin: "18px 0",
           }}
         >
-          Fifty Fit · {ar ? "الإصدار" : "Version"} 1.0.0
+          FitTrack · {ar ? "الإصدار" : "Version"} 1.0.0
         </div>
       </div>
     </div>

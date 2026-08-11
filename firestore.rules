@@ -24,7 +24,8 @@ service cloud.firestore {
       allow create: if request.auth != null &&
         request.auth.uid == userId &&
         request.resource.data.get("entitlements", {}).get("trainingPro", false) == false &&
-        request.resource.data.get("entitlements", {}).get("nutritionPro", false) == false;
+        request.resource.data.get("entitlements", {}).get("nutritionPro", false) == false &&
+        request.resource.data.get("entitlements", {}).get("aiCoachPro", false) == false;
       allow update: if request.auth != null && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
         (

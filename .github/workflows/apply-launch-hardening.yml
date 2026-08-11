@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'scripts/apply-launch-hardening.py'
+      - 'scripts/apply-launch-hardening.trigger'
 
 permissions:
   contents: write

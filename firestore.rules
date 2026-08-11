@@ -34,6 +34,12 @@ service cloud.firestore {
             resource.data.get("entitlements", {})
         )
       );
+      // Required for in-app account deletion. The user can delete only their
+      // own Firestore profile; admins may delete any user document.
+      allow delete: if request.auth != null && (
+        request.auth.uid == userId ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
   }
 }

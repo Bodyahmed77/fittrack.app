@@ -1,0 +1,20 @@
+name: Fix Google signup phone step
+
+on:
+  push:
+    branches: [fix/play-readiness-p0-p1]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 scripts/insert-google-phone-step.py
+      - run: npm ci
+      - run: npm run build

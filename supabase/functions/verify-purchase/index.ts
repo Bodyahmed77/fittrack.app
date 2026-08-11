@@ -352,49 +352,57 @@ Deno.serve(async (req) => {
   const sb = createClient(supabaseUrl, serviceKey);
 
   try {
-    // claim_purchase_token enforces one-uid-per-token at the DB layer
-    // (unique constraint) — see migration. This is the mitigation for the
-    // "same real token replayed by a second account" gap noted above,
-    // since this plugin version cannot bind a purchase to a uid at
-    // purchase time on Google's side.
-    const { data: claim, error: claimErr } = await sb.rpc("claim_purchase_token", {
-      p_uid: uid,
-      p_purchase_token: purchaseToken,
-    });
-    if (claimErr) {
-      log("token_claim_failed", { uid, code: claimErr.code });
-      return json(500, { error: "entitlement_write_failed", message: "Could not activate subscription" });
+    // Atomic claim + grant in one DB transaction (see migration
+    // claim_and_grant_entitlements). If any entitlement write fails, the
+    // token claim is rolled back too — no orphaned claims, no partial
+    // both_pro grants.
+    const expiresAt = verification.expiryTime; // null for non-expiring/lifetime-style; present for subs
+    const { data: grant, error: grantErr } = await sb.rpc(
+      "claim_and_grant_entitlements",
+      {
+        p_uid: uid,
+        p_purchase_token: purchaseToken,
+        p_product_keys: [...grantedKeys],
+        p_expires_at: expiresAt,
+      },
+    );
+    if (grantErr) {
+      log("claim_and_grant_failed", { uid, code: grantErr.code });
+      return json(500, {
+        error: "entitlement_write_failed",
+        message: "Could not activate subscription",
+      });
     }
-    const claimed = !!(claim as { claimed?: boolean } | null)?.claimed;
-    if (!claimed) {
+    const grantRow = (grant || {}) as {
+      ok?: boolean;
+      claimed?: boolean;
+      error?: string;
+      activated?: string[];
+    };
+    if (!grantRow.ok) {
       // Token already claimed by a DIFFERENT uid — reject, do not grant.
       log("token_already_claimed_by_other_uid", { uid, productId });
       return json(409, {
         error: "purchase_already_claimed",
-        message: "This purchase has already been activated on a different account.",
+        message:
+          "This purchase has already been activated on a different account.",
       });
     }
 
-    const expiresAt = verification.expiryTime; // null for non-expiring/lifetime-style; present for subs
-    for (const key of grantedKeys) {
-      const { error } = await sb.rpc("set_entitlement", {
-        p_uid: uid,
-        p_product_key: key,
-        p_activate: true,
-        p_purchase_token: purchaseToken,
-        p_expires_at: expiresAt,
-      });
-      if (error) {
-        log("set_entitlement_failed", { key, code: error.code });
-        return json(500, { error: "entitlement_write_failed", message: "Could not activate subscription" });
-      }
-    }
+    const activated = Array.isArray(grantRow.activated)
+      ? grantRow.activated
+      : [...grantedKeys];
 
-    log("purchase_verified_and_granted", { uid, productId, state: verification.state });
+    log("purchase_verified_and_granted", {
+      uid,
+      productId,
+      state: verification.state,
+      activated,
+    });
     return json(200, {
       ok: true,
       productId,
-      activated: grantedKeys,
+      activated,
       subscriptionState: verification.state,
       expiresAt,
     });

@@ -78,6 +78,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   deleteDoc,
   onSnapshot,
   collection,
@@ -2592,12 +2593,14 @@ function useFirebaseSession() {
 
 function useAppData(uid) {
   const [data, setDataRaw] = useState(freshState());
+  const [notifications, setNotifications] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const verifiedEntitlementsRef = useRef(null);
 
   useEffect(() => {
     if (!uid) {
       setLoaded(false);
+      setNotifications([]);
       verifiedEntitlementsRef.current = null;
       return;
     }
@@ -2633,6 +2636,11 @@ function useAppData(uid) {
     const notificationsRef = collection(db, "users", uid, "notifications");
     const notificationSessionStartedAt = Date.now();
     const unsubNotifications = onSnapshot(notificationsRef, (notificationSnap) => {
+      const history = notificationSnap.docs
+        .map((snap) => ({ id: snap.id, ...snap.data() }))
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      setNotifications(history);
+
       notificationSnap.docChanges().forEach((change) => {
         if (change.type !== "added") return;
         const n = change.doc.data() || {};
@@ -2683,7 +2691,7 @@ function useAppData(uid) {
     [uid],
   );
 
-  return { data, setData, setVerifiedEntitlements, loaded };
+  return { data, setData, setVerifiedEntitlements, loaded, notifications };
 }
 
 /* ============================== EXERCISE MERGE HELPERS ============================== */
@@ -3231,7 +3239,6 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
           loading="eager"
           fetchPriority="high"
           title={ar ? "فيديو التمرين" : "Exercise video"}
-          sandbox="allow-scripts allow-same-origin allow-presentation"
           referrerPolicy="strict-origin-when-cross-origin"
           style={{
             position: "absolute",
@@ -5486,7 +5493,7 @@ function HomeScreen({ data, go }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <IconBtn onClick={() => go("reminders")}>
+          <IconBtn onClick={() => go("notifications")}>
             <Bell size={17} color={C.text} />
           </IconBtn>
           <div onClick={() => go("profile")} style={{ cursor: "pointer" }}>
@@ -8351,7 +8358,16 @@ function MealsScreen({ data, setData, back, showToast, go }) {
             }}
           >
             {(() => {
-              const start = customNutritionPlan.startDate || today;
+              if (!customNutritionPlan) {
+              return (
+                <div style={{ color: C.sub, fontSize: 12.5, lineHeight: 1.6 }}>
+                  {ar
+                    ? "خطة الأكل المخصصة لسه بتتجهز. لما الأدمن ينشرها هتظهر هنا."
+                    : "Your personalized nutrition plan is being prepared. It will appear here once published."}
+                </div>
+              );
+            }
+            const start = customNutritionPlan.startDate || today;
               const startMs = new Date(start + "T00:00:00").getTime();
               const nowMs = new Date(today + "T00:00:00").getTime();
               const diff = Math.max(0, Math.floor((nowMs - startMs) / 86400000));
@@ -8963,7 +8979,7 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const [day, setDay] = useState(() => planDayForDate(data, dateKey(0)));
-  const plan = PLAN_TEMPLATES[planId];
+  const plan = PLAN_TEMPLATES[planId] || PLAN_TEMPLATES.beginner;
   const isActive = data.activePlanId === planId;
   const daySchedule = plan.schedule[day];
   // Free accounts preview the same four exercises they can actually train.
@@ -9148,17 +9164,17 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [storeProducts, setStoreProducts] = useState([]);
+  const planIds = ["training", "nutrition", "both", "ai"];
 
-  // Launch policy: expose only a real monthly subscription until the native
   // billing bridge supports selecting Google Play base-plan offer tokens.
   // This prevents the UI from showing four prices that all purchase the same
   // underlying product/base plan. Longer periods can be enabled later without
   // changing the entitlement model.
-  const availableDurations = DURATIONS.filter((d) => d.id === "monthly");
+  const availableDurations = DURATIONS;
 
   useEffect(() => {
     let alive = true;
-    billingQueryProducts("monthly")
+    billingQueryProducts()
       .then((result) => {
         if (alive) setStoreProducts(Array.isArray(result?.products) ? result.products : []);
       })
@@ -9186,8 +9202,12 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       : "intl";
   const regionPrices = PAYWALL_PRICES[region] || PAYWALL_PRICES.intl;
   const planPrice = regionPrices[selectedPlan] || plan?.prices || {};
+  const selectedProductId =
+    typeof BILLING_PRODUCTS[selectedPlan] === "string"
+      ? BILLING_PRODUCTS[selectedPlan]
+      : BILLING_PRODUCTS[selectedPlan]?.[selectedDuration];
   const storeProduct = storeProducts.find(
-    (p) => p?.productId === BILLING_PRODUCTS[selectedPlan],
+    (p) => p?.productId === selectedProductId,
   );
   const storePrice =
     storeProduct?.price ||
@@ -9879,7 +9899,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   const [reportTarget, setReportTarget] = useState(null);
   const [reportReason, setReportReason] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
-  const [keyboardInset, setKeyboardInset] = useState(0);
+  const keyboardInset = 0;
   const listRef = useRef(null);
   const inputBarRef = useRef(null);
 
@@ -9892,122 +9912,14 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
       setReportTarget(null);
       setReportReason("");
       setReportBusy(false);
-      setKeyboardInset(0);
+      
     }
   }, [open]);
 
-  // Single keyboard system: @capacitor/keyboard height on Android (works with
-  // Cap 7 edge-to-edge). visualViewport is web-only fallback. Pure visualViewport
-  // previously reported 0 because layout+visual heights shrink together.
   useEffect(() => {
-    if (!open) {
-      setKeyboardInset(0);
-      return undefined;
-    }
-    if (typeof window === "undefined") return undefined;
-
-    let removed = false;
-    let nativeMode = false;
-    let KeyboardApi = null;
-    const handles = [];
-    let vv = null;
-    let onVv = null;
-
-    const setInset = (px) => {
-      if (removed) return;
-      const n = Math.max(0, Math.round(Number(px) || 0));
-      setKeyboardInset(n > 40 ? n : 0);
-    };
-
-    // Exclusive source-of-truth selection:
-    // - Native Android: ONLY @capacitor/keyboard heights. visualViewport is
-    //   deliberately skipped there because its resize events fire from the
-    //   same Android keyboard and previously raced the Capacitor values,
-    //   leaving a large stale gap below the input bar.
-    // - Web: visualViewport fallback only (keyboard plugin unavailable).
-    (async () => {
-      try {
-        const { Capacitor } = await import("@capacitor/core");
-        if (Capacitor.isNativePlatform()) {
-          nativeMode = true;
-          try {
-            const { Keyboard } = await import("@capacitor/keyboard");
-            KeyboardApi = Keyboard;
-            if (removed) {
-              try {
-                await Keyboard.setResizeMode?.({ mode: "native" });
-              } catch (_) {}
-              return;
-            }
-            try {
-              if (Keyboard.setResizeMode) {
-                await Keyboard.setResizeMode({ mode: "none" });
-              }
-            } catch (_) {
-              /* ignore */
-            }
-            handles.push(
-              await Keyboard.addListener("keyboardWillShow", (info) => {
-                setInset(info?.keyboardHeight ?? 0);
-              }),
-            );
-            handles.push(
-              await Keyboard.addListener("keyboardDidShow", (info) => {
-                setInset(info?.keyboardHeight ?? 0);
-              }),
-            );
-            handles.push(
-              await Keyboard.addListener("keyboardWillHide", () => setInset(0)),
-            );
-            handles.push(
-              await Keyboard.addListener("keyboardDidHide", () => setInset(0)),
-            );
-          } catch (e) {
-            console.warn("[AICoach] Keyboard plugin unavailable", e);
-          }
-          return;
-        }
-      } catch (_) {
-        /* not running in a Capacitor build → web mode */
-      }
-      // Web mode: visualViewport only.
-      vv = window.visualViewport;
-      let base = vv ? vv.height : window.innerHeight;
-      onVv = () => {
-        if (!vv || removed || nativeMode) return;
-        const covered = Math.max(
-          0,
-          Math.round(base - vv.height - (vv.offsetTop || 0)),
-        );
-        setInset(covered);
-      };
-      if (vv) {
-        vv.addEventListener("resize", onVv);
-        vv.addEventListener("scroll", onVv);
-      }
-    })();
-
-    return () => {
-      removed = true;
-      handles.forEach((h) => {
-        try {
-          h?.remove?.();
-        } catch (_) {
-          /* ignore */
-        }
-      });
-      if (vv) {
-        vv.removeEventListener("resize", onVv);
-        vv.removeEventListener("scroll", onVv);
-      }
-      // AI temporarily uses ResizeMode=none so the drawer can track the IME
-      // precisely. Always restore the app's normal native resize behavior when
-      // the drawer closes; otherwise the next screen can inherit a stale mode.
-      try {
-        KeyboardApi?.setResizeMode?.({ mode: "native" });
-      } catch (_) {}
-      setKeyboardInset(0);
-    };
+    try {
+      import("@capacitor/keyboard").then(({ Keyboard }) => Keyboard.setResizeMode?.({ mode: "native" })).catch(() => {});
+    } catch {}
   }, [open]);
 
   useEffect(() => {
@@ -10227,14 +10139,14 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           position: "absolute",
           top: 0,
           // Lift entire drawer above the soft keyboard (dynamic inset).
-          bottom: keyboardInset,
+          bottom: 0,
           width: "min(360px, 92vw)",
           background: C.bg,
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
           overscrollBehavior: "contain",
-          transition: "bottom 0.12s ease-out",
+          transition: "none",
           ...panelSide,
         }}
       >
@@ -10503,11 +10415,11 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
             display: "flex",
             gap: 8,
             // Panel bottom already accounts for keyboardInset; keep safe-area only.
-            padding: keyboardInset > 0 ? "10px 12px 6px" : "10px 12px max(8px, env(safe-area-inset-bottom))",
+            padding: "10px 12px 0",
             borderTop: `1px solid ${C.border}`,
             background: C.bg,
             flexShrink: 0,
-            minHeight: keyboardInset > 0 ? 58 : 62,
+            minHeight: 58,
           }}
         >
           <input
@@ -11121,6 +11033,73 @@ function MeasurementsScreen({ data, back, go }) {
         </GreenButton>
       </div>
       <div style={{ height: 20 }} />
+    </div>
+  );
+}
+
+/* ============================== NOTIFICATION HISTORY ============================== */
+function NotificationsScreen({ back }) {
+  const { C, lang } = useUI();
+  const ar = lang === "ar";
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      setRows([]);
+      setLoading(false);
+      return undefined;
+    }
+    const ref = collection(db, "users", uid, "notifications");
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!alive) return;
+      const next = snap.docs
+        .map((snapDoc) => ({ id: snapDoc.id, ...snapDoc.data() }))
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      setRows(next);
+      setLoading(false);
+    }, () => {
+      if (alive) setLoading(false);
+    });
+    return () => { alive = false; unsub(); };
+  }, []);
+
+  const markRead = async (notification) => {
+    if (!notification?.id || notification.read || !auth.currentUser?.uid) return;
+    try {
+      await updateDoc(doc(db, "users", auth.currentUser.uid, "notifications", notification.id), { read: true });
+    } catch {}
+  };
+
+  return (
+    <div dir={ar ? "rtl" : "ltr"}>
+      <TopBar title={ar ? "الإشعارات" : "Notifications"} onBack={back} />
+      <div style={{ padding: "0 18px 24px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {loading ? (
+          <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>{ar ? "جاري تحميل الإشعارات…" : "Loading notifications…"}</Card>
+        ) : !rows.length ? (
+          <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>{ar ? "مفيش إشعارات جديدة دلوقتي." : "No notifications yet."}</Card>
+        ) : rows.map((n) => {
+          const created = new Date(String(n.createdAt || ""));
+          const when = Number.isFinite(created.getTime())
+            ? created.toLocaleString(ar ? "ar-EG" : "en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+            : "";
+          return (
+            <Card key={n.id} onClick={() => markRead(n)} style={{ border: n.read ? `1px solid ${C.border}` : `1px solid ${C.green}`, background: n.read ? C.card : C.greenSoft }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>{ar ? (n.titleAr || n.title) : (n.titleEn || n.title)}</div>
+                  <div style={{ color: C.sub, fontSize: 12.5, lineHeight: 1.55, marginTop: 5 }}>{ar ? (n.bodyAr || n.body) : (n.bodyEn || n.body)}</div>
+                  <div style={{ color: C.sub2, fontSize: 10.5, marginTop: 8 }}>{when}</div>
+                </div>
+                {!n.read && <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, marginTop: 5, flexShrink: 0 }} />}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -13009,6 +12988,8 @@ export default function GymApp() {
     );
   else if (screen === "measurements")
     content = <MeasurementsScreen data={data} back={back} go={go} />;
+  else if (screen === "notifications")
+    content = <NotificationsScreen back={back} />;
   else if (screen === "reminders")
     content = (
       <RemindersScreen

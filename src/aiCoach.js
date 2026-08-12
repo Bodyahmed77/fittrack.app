@@ -22,83 +22,35 @@ export function aiUsageToday(data, todayISO) {
   const hasPro = !!data?.entitlements?.aiCoachPro;
   const limit = aiDailyLimit(hasPro);
   const usage = data?.aiUsage || {};
-  const used =
-    usage.date === todayISO && Number.isFinite(Number(usage.count))
-      ? Number(usage.count)
-      : 0;
-  return {
-    used,
-    limit,
-    remaining: Math.max(0, limit - used),
-    date: todayISO,
-    hasPro,
-  };
+  const used = usage.date === todayISO && Number.isFinite(Number(usage.count)) ? Number(usage.count) : 0;
+  return { used, limit, remaining: Math.max(0, limit - used), date: todayISO, hasPro };
 }
 
 function resolveEndpoint() {
-  if (typeof window !== "undefined" && window.__FIFTYFIT_AI_ENDPOINT__) {
-    return String(window.__FIFTYFIT_AI_ENDPOINT__);
-  }
-  try {
-    if (import.meta?.env?.VITE_AI_ENDPOINT) {
-      return String(import.meta.env.VITE_AI_ENDPOINT);
-    }
-  } catch (e) {}
+  if (typeof window !== "undefined" && window.__FIFTYFIT_AI_ENDPOINT__) return String(window.__FIFTYFIT_AI_ENDPOINT__);
+  try { if (import.meta?.env?.VITE_AI_ENDPOINT) return String(import.meta.env.VITE_AI_ENDPOINT); } catch {}
   return AI_COACH_ENDPOINT || "";
 }
-
 function resolveAnonKey() {
-  if (typeof window !== "undefined" && window.__FIFTYFIT_SUPABASE_ANON_KEY__) {
-    return String(window.__FIFTYFIT_SUPABASE_ANON_KEY__);
-  }
-  try {
-    if (import.meta?.env?.VITE_SUPABASE_ANON_KEY) {
-      return String(import.meta.env.VITE_SUPABASE_ANON_KEY);
-    }
-  } catch (e) {}
+  if (typeof window !== "undefined" && window.__FIFTYFIT_SUPABASE_ANON_KEY__) return String(window.__FIFTYFIT_SUPABASE_ANON_KEY__);
+  try { if (import.meta?.env?.VITE_SUPABASE_ANON_KEY) return String(import.meta.env.VITE_SUPABASE_ANON_KEY); } catch {}
   return SUPABASE_ANON_KEY || "";
 }
-
-function diag(...args) {
-  if (import.meta?.env?.DEV) console.log(...args);
-}
+function diag(...args) { if (import.meta?.env?.DEV) console.log(...args); }
 
 function normalizeUsage(data, fallbackDate) {
   if (!data || typeof data !== "object") return null;
-  if (data.usage && typeof data.usage === "object") {
-    const u = data.usage;
-    return {
-      date: u.date || data.date || fallbackDate,
-      count: u.count ?? u.used ?? null,
-      used: u.used ?? u.count ?? null,
-      limit: u.limit ?? data.limit ?? null,
-      remaining:
-        u.remaining != null
-          ? u.remaining
-          : data.remaining != null
-            ? data.remaining
-            : null,
-      hasPro: u.hasPro ?? data.hasPro,
-    };
-  }
-  if (
-    data.remaining != null ||
-    data.limit != null ||
-    data.used != null ||
-    data.count != null
-  ) {
-    return {
-      date: data.date || fallbackDate,
-      count: data.count ?? data.used ?? null,
-      used: data.used ?? data.count ?? null,
-      limit: data.limit ?? null,
-      remaining: data.remaining != null ? data.remaining : null,
-      hasPro: data.hasPro,
-    };
-  }
-  return null;
+  const u = data.usage && typeof data.usage === "object" ? data.usage : data;
+  if (u.remaining == null && u.limit == null && u.used == null && u.count == null) return null;
+  return {
+    date: u.date || fallbackDate,
+    count: u.count ?? u.used ?? null,
+    used: u.used ?? u.count ?? null,
+    limit: u.limit ?? null,
+    remaining: u.remaining ?? null,
+    hasPro: u.hasPro,
+  };
 }
-
 function extractReply(data) {
   if (!data || typeof data !== "object") return "";
   if (typeof data.reply === "string") return data.reply;
@@ -108,129 +60,34 @@ function extractReply(data) {
   if (typeof data.content === "string") return data.content;
   return "";
 }
-
-/**
- * Classify HTTP errors with distinct codes so the UI does not map every
- * auth-related failure to a single "session expired" string.
- */
 function classifyHttpError(status, data) {
-  const errField = String(data?.error || data?.code || "");
-  const msg = String(data?.message || data?.error || "");
-
-  const known = new Set([
-    "daily_limit",
-    "busy",
-    "provider_overloaded",
-    "gemini_rate_limited",
-    "gemini_failed",
-    "gemini_timeout",
-    "gemini_not_configured",
-    "gemini_safety_blocked",
-    "empty_response",
-    "usage_read_failed",
-    "bad_request",
-    "unauthenticated",
-  ]);
-  if (known.has(errField)) {
-    if (errField === "unauthenticated") return "backend_unauthorized";
-    return errField;
-  }
-
+  const code = String(data?.error || data?.code || "");
+  if (code) return code === "unauthenticated" ? "backend_unauthorized" : code;
   if (status === 401) return "backend_unauthorized";
   if (status === 403) return "forbidden";
-  if (status === 429) {
-    if (
-      errField === "daily_limit" ||
-      data?.code === "daily_limit" ||
-      /daily.?limit|limit reached|رسائل/i.test(msg)
-    ) {
-      return "daily_limit";
-    }
-    if (/quota|resource.?exhausted|rate.?limit/i.test(msg) || errField === "quota") {
-      return "gemini_rate_limited";
-    }
-    return "busy";
-  }
-  if (status === 503) return errField === "provider_overloaded" ? errField : "busy";
+  if (status === 429) return "busy";
+  if (status === 503) return "busy";
   if (status === 504) return "gemini_timeout";
-  if (status >= 500) {
-    if (errField === "gemini_failed") return "gemini_failed";
-    return "backend_error";
-  }
+  if (status >= 500) return "backend_error";
   if (status >= 400) return "bad_request";
   return "backend_error";
 }
 
-/**
- * Call Supabase Edge Function ai-coach.
- * Uses Firebase ID token only in Authorization (CORS-safe).
- */
-// Module-level lock: blocks concurrent generateCoachReply even if UI misses a busy flag.
 let __aiCoachInFlight = false;
 
-export async function generateCoachReply({
-  messages,
-  lang,
-  userContext,
-  localDate,
-  hasAiPro,
-}) {
-  if (__aiCoachInFlight) {
-    const err = new Error("Request already in progress");
-    err.code = "busy";
-    diag("[AI_COACH_FINAL_ERROR] code=busy reason=in_flight");
-    throw err;
-  }
+export async function generateCoachReply({ messages, lang, userContext, localDate, hasAiPro }) {
+  if (__aiCoachInFlight) { const e = new Error("Request already in progress"); e.code = "busy"; throw e; }
   __aiCoachInFlight = true;
   try {
     const endpoint = resolveEndpoint();
-    if (!endpoint) {
-      const err = new Error("AI endpoint is not configured");
-      err.code = "no_endpoint";
-      diag("[AI_COACH_FINAL_ERROR] code=no_endpoint");
-      throw err;
-    }
-
+    if (!endpoint) { const e = new Error("AI endpoint is not configured"); e.code = "no_endpoint"; throw e; }
     const user = auth.currentUser;
-    if (!user) {
-      diag("[AI_COACH_AUTH] currentUser=NULL");
-      const err = new Error("Sign in required");
-      err.code = "auth_missing";
-      diag("[AI_COACH_FINAL_ERROR] code=auth_missing");
-      throw err;
-    }
+    if (!user) { const e = new Error("Sign in required"); e.code = "auth_missing"; throw e; }
 
-    let idToken;
-    try {
-      idToken = await user.getIdToken(/* forceRefresh */ true);
-      diag(
-        "[AI_COACH_AUTH] token_obtained uid=" +
-          String(user.uid) +
-          " tokenLength=" +
-          String(idToken ? idToken.length : 0),
-      );
-    } catch (e) {
-      diag(
-        "[AI_COACH_AUTH] getIdToken_FAILED " +
-          String(e?.code || "") +
-          " " +
-          String(e?.message || e).slice(0, 120),
-      );
-      const err = new Error("Could not refresh session");
-      err.code = "token_refresh_failed";
-      diag("[AI_COACH_FINAL_ERROR] code=token_refresh_failed");
-      throw err;
-    }
-
+    const idToken = await user.getIdToken(true);
     const recent = (messages || []).slice(-6);
-    const lastUser =
-      [...recent].reverse().find((m) => m && m.role === "user" && m.content) ||
-      null;
-
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    };
+    const lastUser = [...recent].reverse().find((m) => m?.role === "user" && m.content);
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` };
     const anon = resolveAnonKey();
     if (anon) headers.apikey = anon;
 
@@ -242,73 +99,33 @@ export async function generateCoachReply({
       context: userContext || {},
     };
 
-    diag("[AI_COACH_HTTP] request_start");
     let res;
     try {
-      // Retry only bounded server overload. The server does not consume quota
-      // before granting a global AI slot, so these retries cannot burn messages.
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        res = await fetch(endpoint, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-        });
-        if (res.status !== 503 || attempt === 2) break;
-        await new Promise((resolve) => setTimeout(resolve, 900 + Math.random() * 900 * (attempt + 1)));
+      // One short retry only for transient backend overload. No client retry storm.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+        if (res.status !== 503 || attempt === 1) break;
+        await new Promise((resolve) => setTimeout(resolve, 900));
       }
     } catch (e) {
-      diag(
-        "[AI_COACH_HTTP] network_error=" +
-          String(e?.message || e).slice(0, 160),
-      );
-      const err = new Error(e?.message || "Network error");
-      err.code = "network";
-      diag("[AI_COACH_FINAL_ERROR] code=network");
-      throw err;
+      const err = new Error(e?.message || "Network error"); err.code = "network"; throw err;
     }
-
-    diag("[AI_COACH_HTTP] status=" + String(res.status));
 
     let data = null;
-    try {
-      data = await res.json();
-    } catch (e) {
-      data = null;
-    }
-
+    try { data = await res.json(); } catch {}
     const usage = normalizeUsage(data, localDate);
-    const code = classifyHttpError(res.status, data);
-
     if (!res.ok) {
-      const err = new Error(
-        data?.message || data?.error || `HTTP ${res.status}`,
-      );
-      err.code = code;
+      const err = new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      err.code = classifyHttpError(res.status, data);
       err.status = res.status;
-      if (code === "daily_limit") {
-        err.usage = usage || {
-          date: data?.date || localDate,
-          count: data?.used ?? data?.count ?? 0,
-          used: data?.used ?? data?.count ?? 0,
-          limit: data?.limit,
-          remaining: 0,
-          hasPro: data?.hasPro,
-        };
-      }
-      diag("[AI_COACH_FINAL_ERROR] code=" + code);
+      if (err.code === "daily_limit") err.usage = usage;
+      diag("[AI_COACH_FINAL_ERROR]", err.code, res.status);
       throw err;
     }
 
     const reply = extractReply(data);
-    if (!reply) {
-      const err = new Error("Empty AI response");
-      err.code = "empty_response";
-      diag("[AI_COACH_FINAL_ERROR] code=empty_response");
-      throw err;
-    }
-
-    diag("[AI_COACH_FINAL_ERROR] code=ok");
-    return { reply: String(reply), usage };
+    if (!reply) { const e = new Error("Empty AI response"); e.code = "empty_response"; throw e; }
+    return { reply, usage };
   } finally {
     __aiCoachInFlight = false;
   }

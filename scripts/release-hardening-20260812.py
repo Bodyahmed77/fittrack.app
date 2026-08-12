@@ -21,39 +21,38 @@ s = require_once(s, '      setLoaded(false);\n      verifiedEntitlementsRef.curr
 s = require_once(s, '  return { data, setData, setVerifiedEntitlements, loaded };', '  return { data, setData, setVerifiedEntitlements, loaded, notifications };', 'useAppData return')
 
 # Paywall: define all plan IDs and expose all four durations.
-s = require_once(s, '  const [storeProducts, setStoreProducts] = useState([]);\n\n  // Launch policy: expose only a real monthly subscription until the native', '  const [storeProducts, setStoreProducts] = useState([]);\n  const planIds = ["training", "nutrition", "both", "ai"];\n\n', 'planIds declaration')
+s = require_once(s, '  const [storeProducts, setStoreProducts] = useState([]);\n\n  // Launch policy: expose only a real monthly subscription until the native\n', '  const [storeProducts, setStoreProducts] = useState([]);\n  const planIds = ["training", "nutrition", "both", "ai"];\n\n', 'planIds declaration')
 s = require_once(s, '  const availableDurations = DURATIONS.filter((d) => d.id === "monthly");', '  const availableDurations = DURATIONS;', 'monthly-only duration filter')
 s = require_once(s, '    billingQueryProducts("monthly")', '    billingQueryProducts()', 'billing product query')
 s = require_once(s, '  const storeProduct = storeProducts.find(\n    (p) => p?.productId === BILLING_PRODUCTS[selectedPlan],\n  );', '  const selectedProductId =\n    typeof BILLING_PRODUCTS[selectedPlan] === "string"\n      ? BILLING_PRODUCTS[selectedPlan]\n      : BILLING_PRODUCTS[selectedPlan]?.[selectedDuration];\n  const storeProduct = storeProducts.find(\n    (p) => p?.productId === selectedProductId,\n  );', 'store product lookup')
 
+# Nutrition null safety.
 pattern = re.compile(r'(\{\(\(\) => \{\n\s*)const start = customNutritionPlan\.startDate \|\| today;', re.M)
 replacement = r'''\1if (!customNutritionPlan) {\n              return (\n                <div style={{ color: C.sub, fontSize: 12.5, lineHeight: 1.6 }}>\n                  {ar\n                    ? "خطة الأكل المخصصة لسه بتتجهز. لما الأدمن ينشرها هتظهر هنا."\n                    : "Your personalized nutrition plan is being prepared. It will appear here once published."}\n                </div>\n              );\n            }\n            const start = customNutritionPlan.startDate || today;'''
 if not pattern.search(s):
     raise SystemExit('nutrition null safety injection point not found')
 s = pattern.sub(replacement, s, count=1)
 
-# AI keyboard: single native resize policy, zero manual inset.
+# Keyboard: the screenshots show the manual inset is the cause of the gap. Use Android native resize only.
 start = s.find('function AICoachDrawer(')
 if start < 0: raise SystemExit('AICoachDrawer not found')
 end = s.find('function AICoachSideTab(', start)
 if end < 0: raise SystemExit('AICoachSideTab not found')
 segment = s[start:end]
-segment, n1 = re.subn(r'\s*const \[keyboardInset, setInset\] = useState\(0\);', '\n  const keyboardInset = 0;', segment, count=1)
-if n1 != 1: raise SystemExit(f'keyboardInset state replacements: {n1}')
-keyboard_effect = re.compile(r'\n  useEffect\(\(\) => \{[\s\S]*?Keyboard\.setResizeMode[\s\S]*?\}, \[\]\);', re.M)
-segment, n2 = keyboard_effect.subn('', segment, count=1)
-if n2 != 1: raise SystemExit(f'keyboard effect replacements: {n2}')
+segment = re.sub(r'\s*const \[keyboardInset, setKeyboardInset\] = useState\(0\);', '\n  const keyboardInset = 0;', segment, count=1)
+segment = segment.replace('setKeyboardInset(0);', '')
+segment, n_effect = re.subn(r'\n  // Single keyboard system:[\s\S]*?\n  }, \[open\]\);', '\n  useEffect(() => {\n    try {\n      import("@capacitor/keyboard").then(({ Keyboard }) => Keyboard.setResizeMode?.({ mode: "native" })).catch(() => {});\n    } catch {}\n  }, [open]);', segment, count=1)
+if n_effect != 1: raise SystemExit(f'keyboard system effect replacement: {n_effect}')
 segment = segment.replace('bottom: keyboardInset,', 'bottom: 0,')
 segment = segment.replace('transition: "bottom 0.12s ease-out",', 'transition: "none",')
 segment = segment.replace('padding: keyboardInset > 0 ? "10px 12px 6px" : "10px 12px max(8px, env(safe-area-inset-bottom))",', 'padding: "10px 12px 0",')
 segment = segment.replace('minHeight: keyboardInset > 0 ? 58 : 62,', 'minHeight: 58,')
-segment = segment.replace('          // Lift entire drawer above the soft keyboard (dynamic inset).\n', '')
 s = s[:start] + segment + s[end:]
 
-# TikTok iframe: keep full-screen viewer but remove sandbox restrictions that can break TikTok pages.
+# TikTok fullscreen WebView compatibility: remove iframe sandbox restrictions.
 s = s.replace('          sandbox="allow-scripts allow-same-origin allow-presentation"\n', '')
 
-# Notification history screen reads the live Firestore subcollection directly.
+# Notification history screen reads Firestore directly and supports read/unread state.
 marker = '/* ============================== REMINDERS ============================== */'
 idx = s.find(marker)
 if idx < 0: raise SystemExit('Reminders marker not found')
@@ -130,8 +129,7 @@ s = s[:idx] + notification_component + s[idx:]
 route_marker = '  else if (screen === "reminders")'
 route_idx = s.find(route_marker)
 if route_idx < 0: raise SystemExit('reminders route not found')
-route_insert = '  else if (screen === "notifications")\n    content = <NotificationsScreen back={back} />;\n'
-s = s[:route_idx] + route_insert + s[route_idx:]
+s = s[:route_idx] + '  else if (screen === "notifications")\n    content = <NotificationsScreen back={back} />;\n' + s[route_idx:]
 
 home_start = s.find('function HomeScreen(')
 home_end = s.find('function greeting(', home_start)
@@ -139,7 +137,11 @@ if home_start < 0 or home_end < 0: raise SystemExit('HomeScreen bounds not found
 home = s[home_start:home_end]
 old_bell = '<IconBtn onClick={() => go("reminders")}>\n            <Bell size={17} color={C.text} />\n          </IconBtn>'
 new_bell = '<IconBtn onClick={() => go("notifications")}>\n            <Bell size={17} color={C.text} />\n          </IconBtn>'
-home2 = require_once(home, old_bell, new_bell, 'home bell route')
+s = s[:home_start] + require_once(home, old_bell, new_bell, 'home bell route') if False else s
+# The line above is intentionally bypassed; perform a normal local replacement within Home.
+home2 = home.replace(old_bell, new_bell, 1)
+if home2 == home:
+    raise SystemExit('home bell route not found')
 s = s[:home_start] + home2 + s[home_end:]
 
 needle = 'const plan = PLAN_TEMPLATES[planId];'
@@ -147,7 +149,6 @@ if needle in s:
     s = s.replace(needle, 'const plan = PLAN_TEMPLATES[planId] || PLAN_TEMPLATES.beginner;', 1)
 path.write_text(s, encoding='utf-8')
 
-# aiCoach.js: keep native resize only; no manual keyboard inset listeners.
 path = Path('src/aiCoach.js')
 a = path.read_text(encoding='utf-8')
 a = re.sub(r'export async function ensureNativeKeyboardResize\(\)[\s\S]*?\n\}\n', 'export async function ensureNativeKeyboardResize() {\n  try {\n    const { Keyboard } = await import("@capacitor/keyboard");\n    await Keyboard.setResizeMode?.({ mode: "native" });\n  } catch {}\n}\n', a, count=1)

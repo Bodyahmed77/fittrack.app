@@ -190,6 +190,7 @@ async function saveTraining() {
   if (!currentCustomer.entitlements?.trainingPro) return alert("Training Pro is not active for this customer.");
   const payload = { ...normalizeTraining(planDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
   await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload, workoutStartDate: payload.startDate }, { merge: true });
+  await setDoc(doc(db,"users",currentCustomer.id,"notifications",`training-plan-${Date.now()}`), { type: "training_plan_ready", title: "Your training plan is ready", body: "Your personalized training plan has been published.", createdAt: new Date().toISOString(), read: false }, { merge: false });
   currentCustomer.customTrainingPlan = payload;
   planDraft = normalizeTraining(payload);
   alert("Training plan published. The customer will see it in the app.");
@@ -217,6 +218,7 @@ async function saveNutrition() {
   if (!currentCustomer.entitlements?.nutritionPro) return alert("Nutrition Pro is not active for this customer.");
   const payload = { ...normalizeNutrition(nutritionDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
   await setDoc(doc(db,"users",currentCustomer.id), { customNutritionPlan: payload }, { merge: true });
+  await setDoc(doc(db,"users",currentCustomer.id,"notifications",`nutrition-plan-${Date.now()}`), { type: "nutrition_plan_ready", title: "Your nutrition plan is ready", body: "Your personalized nutrition plan has been published.", createdAt: new Date().toISOString(), read: false }, { merge: false });
   currentCustomer.customNutritionPlan = payload;
   nutritionDraft = normalizeNutrition(payload);
   alert("Nutrition plan published. The customer will see it in the app.");

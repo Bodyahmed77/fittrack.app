@@ -2619,6 +2619,8 @@ function useAppData(uid) {
             ...(verifiedEntitlementsRef.current || {}),
           },
           customPlan: parsed.customPlan || {},
+          customTrainingPlan: parsed.customTrainingPlan || null,
+          customNutritionPlan: parsed.customNutritionPlan || null,
         };
         setDataRaw(merged);
         setLoaded(true);
@@ -2628,7 +2630,23 @@ function useAppData(uid) {
         setLoaded(true);
       },
     );
-    return unsub;
+    const notificationsRef = collection(db, "users", uid, "notifications");
+    const notificationSessionStartedAt = Date.now();
+    const unsubNotifications = onSnapshot(notificationsRef, (notificationSnap) => {
+      notificationSnap.docChanges().forEach((change) => {
+        if (change.type !== "added") return;
+        const n = change.doc.data() || {};
+        const createdAtMs = Date.parse(String(n.createdAt || ""));
+        if (!Number.isFinite(createdAtMs) || createdAtMs < notificationSessionStartedAt - 2000) return;
+        LocalNotifications.schedule({ notifications: [{
+          id: Math.floor(Math.random() * 900000000) + 100000000,
+          title: n.title || "Fifty Fit",
+          body: n.body || "You have a new update.",
+          schedule: { at: new Date(Date.now() + 300) },
+        }] }).catch(() => {});
+      });
+    });
+    return () => { unsub(); unsubNotifications(); };
   }, [uid]);
 
   const setVerifiedEntitlements = useCallback((entitlements) => {
@@ -3117,7 +3135,7 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const looksTikTok = /tiktok\.com/i.test(String(videoId || "")) || /^\d+$/.test(String(videoId || ""));
   const isTikTok = looksTikTok;
   const embedSrc = isTikTok
-    ? (resolvedTikTokId ? `https://www.tiktok.com/player/v1/${resolvedTikTokId}?controls=1&autoplay=0&description=0&music_info=0&rel=0` : "about:blank")
+    ? String(videoId || "")
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {

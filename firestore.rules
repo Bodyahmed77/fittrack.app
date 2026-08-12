@@ -47,5 +47,11 @@ service cloud.firestore {
         request.auth.uid == userId || isAdmin()
       );
     }
+
+    match /users/{userId}/notifications/{notificationId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      allow create: if isAdmin();
+      allow update, delete: if request.auth != null && request.auth.uid == userId;
+    }
   }
 }

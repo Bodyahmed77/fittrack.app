@@ -29,7 +29,7 @@
       ]
     },
     "Keyboard": {
-      "resize": "none",
+      "resize": "native",
       "resizeOnFullScreen": false
     }
   }

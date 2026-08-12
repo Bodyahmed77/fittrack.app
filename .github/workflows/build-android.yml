@@ -137,11 +137,22 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          ./gradlew assembleRelease bundleRelease \
-            -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \
-            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          last_rc=1
+          for attempt in 1 2 3; do
+            echo "Gradle release build attempt ${attempt}/3"
+            if ./gradlew assembleRelease bundleRelease \
+              -Pandroid.injected.signing.store.file=$(pwd)/app/release.keystore \
+              -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"; then
+              last_rc=0
+              break
+            fi
+            last_rc=$?
+            echo "Gradle build attempt ${attempt} failed (rc=${last_rc}). Retrying after a short delay..."
+            sleep $((attempt * 5))
+          done
+          exit "$last_rc"
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4

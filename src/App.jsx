@@ -3112,13 +3112,24 @@ function registerFullScreenVideoClose(fn) {
    Exercise Screen only shows a "Watch Short" button; the iframe lives here. */
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const isTikTok = /^\d+$/.test(videoId);
+  const [resolvedTikTokId, setResolvedTikTokId] = useState(() => extractTikTokVideoId(videoId));
+  const [videoResolveError, setVideoResolveError] = useState(false);
+  const looksTikTok = /tiktok\.com/i.test(String(videoId || "")) || /^\d+$/.test(String(videoId || ""));
+  const isTikTok = looksTikTok;
   const embedSrc = isTikTok
-    ? `https://www.tiktok.com/player/v1/${videoId}?controls=1&autoplay=0&description=0&music_info=0&rel=0`
+    ? (resolvedTikTokId ? `https://www.tiktok.com/player/v1/${resolvedTikTokId}?controls=1&autoplay=0&description=0&music_info=0&rel=0` : "about:blank")
     : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {
+    let cancelled = false;
     setVideoLoaded(false);
+    setVideoResolveError(false);
+    setResolvedTikTokId(extractTikTokVideoId(videoId));
+    if (looksTikTok && !extractTikTokVideoId(videoId)) {
+      resolveTikTokVideoId(videoId)
+        .then((id) => { if (!cancelled) setResolvedTikTokId(id); })
+        .catch(() => { if (!cancelled) setVideoResolveError(true); });
+    }
     registerFullScreenVideoClose(() => {
       onClose();
       return true;
@@ -3205,6 +3216,11 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
             {ar ? "جاري تحميل الفيديو…" : "Loading video…"}
           </div>
         )}
+        {videoResolveError && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 2, display: "grid", placeItems: "center", padding: 24, textAlign: "center", background: C.card2, color: C.sub, fontSize: 13 }}>
+            {ar ? "تعذر تحميل فيديو TikTok" : "Could not load the TikTok video"}
+          </div>
+        )}
         <iframe
           src={embedSrc}
           onLoad={() => setVideoLoaded(true)}
@@ -3226,6 +3242,26 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
       </div>
     </div>
   );
+}
+
+function extractTikTokVideoId(value) {
+  if (!value) return "";
+  const raw = String(value).trim();
+  if (/^\d+$/.test(raw)) return raw;
+  const match = raw.match(/\/video\/(\d+)/);
+  return match ? match[1] : "";
+}
+
+async function resolveTikTokVideoId(value) {
+  const direct = extractTikTokVideoId(value);
+  if (direct) return direct;
+  if (!/tiktok\.com/i.test(String(value || ""))) return "";
+  const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(value)}`);
+  if (!response.ok) throw new Error(`TikTok oEmbed ${response.status}`);
+  const payload = await response.json();
+  const html = String(payload?.html || "");
+  const id = html.match(/data-video-id=["'](\d+)["']/i)?.[1];
+  return id || "";
 }
 
 // In-app exercise video entry — button only on the Exercise Screen.
@@ -6626,6 +6662,125 @@ function WorkoutScreen({
   );
 }
 
+function CardioExerciseView({
+  data,
+  setData,
+  back,
+  exerciseId,
+  logDate,
+  ex,
+  ar,
+  C,
+  showToast,
+  awardXp,
+}) {
+  const DURATION_SECONDS = 15 * 60;
+  const existingLog = data.logs[logDate]?.[exerciseId] || null;
+  const [now, setNow] = useState(() => Date.now());
+  const [startedAt, setStartedAt] = useState(() => {
+    const value = Number(existingLog?.cardioStartedAt || 0);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+  const remaining = Math.max(0, DURATION_SECONDS - elapsed);
+  const completed = !!existingLog?.finished || remaining === 0;
+  const running = !!startedAt && !completed;
+
+  useEffect(() => {
+    if (!startedAt || completed) return undefined;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [startedAt, completed]);
+
+  const persist = useCallback((finished, cardioStartedAt = startedAt) => {
+    const next = clone(data);
+    if (!next.logs[logDate]) next.logs[logDate] = {};
+    next.logs[logDate][exerciseId] = {
+      sets: [{ weight: 0, reps: "15 min", done: finished }],
+      finished,
+      cardioStartedAt: cardioStartedAt || null,
+      cardioCompletedAt: finished ? Date.now() : null,
+    };
+    setData(next);
+  }, [data, exerciseId, logDate, setData, startedAt]);
+
+  const finish = useCallback((reason) => {
+    if (saving) return;
+    setSaving(true);
+    persist(true, startedAt || Date.now());
+    try { awardXp(35); } catch {}
+    showToast(
+      reason === "timer"
+        ? (ar ? "خلصت الـ15 دقيقة! 💪" : "15 minutes complete! 💪")
+        : (ar ? "تم حفظ الكارديو!" : "Cardio saved!"),
+    );
+    back();
+  }, [ar, awardXp, back, persist, saving, showToast, startedAt]);
+
+  useEffect(() => {
+    if (startedAt && remaining === 0 && !existingLog?.finished) finish("timer");
+  }, [existingLog?.finished, finish, remaining, startedAt]);
+
+  const start = () => {
+    if (running || completed) return;
+    const value = Date.now();
+    setStartedAt(value);
+    persist(false, value);
+    setNow(value);
+  };
+
+  const skip = () => finish("skip");
+  const mm = String(Math.floor(remaining / 60)).padStart(2, "0");
+  const ss = String(remaining % 60).padStart(2, "0");
+  const progress = Math.min(1, elapsed / DURATION_SECONDS);
+
+  return (
+    <div dir={ar ? "rtl" : "ltr"}>
+      <TopBar title={ar ? ex.nameAr || ex.name : ex.name} onBack={back} />
+      <div style={{ padding: "0 18px 24px" }}>
+        <Card style={{ marginBottom: 14, overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 64, height: 64, borderRadius: 16, background: C.card2, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Target size={28} color={C.green} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: C.sub, fontSize: 12 }}>{ar ? "المدة" : "Duration"}</div>
+              <div style={{ color: C.text, fontWeight: 800, fontSize: 18 }}>{ar ? "15 دقيقة" : "15 minutes"}</div>
+              <div style={{ color: C.sub, fontSize: 11.5, marginTop: 3 }}>{ar ? "كارديو بدون مجموعات أو عدات" : "Time-based cardio — no sets or reps"}</div>
+            </div>
+          </div>
+        </Card>
+
+        <VideoPlayer videoId={ex.vid} ar={ar} />
+
+        <Card style={{ marginTop: 14, textAlign: "center", padding: "24px 18px" }}>
+          <div style={{ color: C.sub, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+            {completed ? (ar ? "تم الإنجاز" : "Completed") : running ? (ar ? "الوقت المتبقي" : "Time remaining") : (ar ? "جاهز؟" : "Ready?")}
+          </div>
+          <div style={{ fontSize: 52, lineHeight: 1, fontWeight: 900, letterSpacing: 1.5, color: completed ? C.positive : C.text, fontVariantNumeric: "tabular-nums" }}>
+            {completed ? "15:00" : `${mm}:${ss}`}
+          </div>
+          <div style={{ height: 7, background: C.card2, borderRadius: 99, marginTop: 18, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${completed ? 100 : progress * 100}%`, background: C.positive, borderRadius: 99, transition: "width .25s linear" }} />
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+            {!running && !completed && <GreenButton onClick={start} style={{ flex: 1 }}>{ar ? "ابدأ 15 دقيقة" : "Start 15 min"}</GreenButton>}
+            {running && <GreenButton onClick={skip} style={{ flex: 1 }}>{ar ? "إنهاء الآن" : "Finish now"}</GreenButton>}
+            {completed && <GreenButton onClick={back} style={{ flex: 1 }}>{ar ? "تم" : "Done"}</GreenButton>}
+          </div>
+          {!completed && (
+            <button onClick={skip} disabled={saving} style={{ marginTop: 12, width: "100%", padding: "11px 0", borderRadius: 12, border: `1px dashed ${C.border}`, background: "transparent", color: C.sub, fontWeight: 700, fontSize: 12.5, cursor: saving ? "default" : "pointer" }}>
+              {ar ? "تخطي المؤقت وإنهاء الكارديو" : "Skip timer & finish cardio"}
+            </button>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 /* ============================== EXERCISE DETAIL SCREEN ============================== */
 function ExerciseScreen({
   data,
@@ -6660,6 +6815,24 @@ function ExerciseScreen({
   // Start Workout can resume the next incomplete exercise for that day.
   // Prefer the explicit ISO from navigation (handles week-boundary taps).
   const logDate = logDateIso || dateForDay(day);
+
+  const isCardio = ["treadmill", "bike", "jump_rope", "burpees"].includes(ex.id);
+  if (isCardio) {
+    return (
+      <CardioExerciseView
+        data={data}
+        setData={setData}
+        back={back}
+        exerciseId={exerciseId}
+        logDate={logDate}
+        ex={ex}
+        ar={ar}
+        C={C}
+        showToast={showToast}
+        awardXp={awardXp}
+      />
+    );
+  }
 
   const existingLog = data.logs[logDate]?.[exerciseId];
   const sets = existingLog?.sets?.length

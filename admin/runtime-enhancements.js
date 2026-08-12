@@ -1,3 +1,4 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-auth.js";
 import {
   getFirestore,
@@ -9,8 +10,9 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.2.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
-const auth = getAuth();
-const db = getFirestore();
+const firebaseApp = initializeApp(firebaseConfig, "FiftyFitAdminEnhancements");
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
 const SUPABASE_PROJECT = "zemqiedqcujevyewfpld";
 const SUPABASE_FUNCTION = `https://${SUPABASE_PROJECT}.supabase.co/functions/v1/admin-entitlements`;
 

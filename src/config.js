@@ -95,12 +95,12 @@ export const EXERCISE_VIDEOS = {
   deadlift: "7380964646062263558", // Romanian deadlift
   pull_up: "eGo4IYlbE5g", // YouTube — pull-up
   plank: "pSHjTRCQxIw", // YouTube — plank
-  treadmill: "KyXBjRmE-W8", // YouTube
-  bike: "zSNSNSBN8Og", // YouTube
+  treadmill: "https://vt.tiktok.com/ZS4T2HfCY/", // TikTok
+  bike: "https://vt.tiktok.com/ZS4T249MW/", // TikTok
   crunches: "7654453038815399171", // Abs rope crunches
   leg_raise: "hdng3ubkBrI", // YouTube
-  jump_rope: "FJmRQ5iTXKE", // YouTube
-  burpees: "dZgVxmf6jkA", // YouTube
+  jump_rope: "https://www.tiktok.com/@tiboinshape/video/7358498825012661537", // TikTok
+  burpees: "https://vt.tiktok.com/ZS4TjS16a/", // TikTok
 };
 
 // ------------------------------------------------------------

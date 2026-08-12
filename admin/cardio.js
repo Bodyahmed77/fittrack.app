@@ -81,9 +81,7 @@
           <label>Cardio type
             <select id="ff-cardio-type">${CARDIO.map(([id,en,ar]) => `<option value="${id}">${en} — ${ar}</option>`).join("")}</select>
           </label>
-          <label>Duration (minutes)
-            <input id="ff-cardio-minutes" type="number" min="1" max="300" step="1" value="15" inputmode="numeric" />
-          </label>
+          <div style="padding:10px 12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:#080b09;color:#dce4df;font-size:13px">Duration: <strong>15 minutes</strong> (fixed)</div>
         </div>
         <div class="ff-cardio-actions">
           <button type="button" class="ff-cardio-cancel">Cancel</button>
@@ -94,12 +92,11 @@
     modal.querySelector(".ff-cardio-cancel").onclick = closeModal;
     modal.querySelector(".ff-cardio-save").onclick = () => {
       const type = modal.querySelector("#ff-cardio-type").value;
-      const minutes = Math.max(1, Math.min(300, Number(modal.querySelector("#ff-cardio-minutes").value) || 15));
+      const minutes = 15;
       addCardio(type, minutes);
       closeModal();
     };
     modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
-    modal.querySelector("#ff-cardio-minutes").focus();
   }
 
   function install() {

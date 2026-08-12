@@ -10,6 +10,47 @@
       html, body, #root { height: 100%; margin: 0; padding: 0; background: #0b0d10; }
       * { -webkit-tap-highlight-color: transparent; }
     </style>
+    <script>
+      /* Runtime compatibility fixes for the current release bundle.
+         - Keep the legacy bare `planIds` lookup alive without rewriting the
+           large App.jsx bundle yet.
+         - Convert TikTok video iframe sources into the official player URL so
+           raw numeric IDs/normal TikTok URLs never navigate the app WebView. */
+      (function () {
+        try {
+          window.planIds = ["training", "nutrition", "both", "ai"];
+        } catch (_) {}
+
+        try {
+          var TIKTOK_PLAYER = "https://www.tiktok.com/player/v1/";
+          var TIKTOK_QS = "?controls=1&autoplay=0&description=0&music_info=0&rel=0";
+          var nativeSrc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "src");
+          if (nativeSrc && nativeSrc.set && nativeSrc.get && !window.__FIFTYFIT_TIKTOK_IFRAME_PATCHED__) {
+            var normalizeTikTok = function (value) {
+              var raw = String(value || "");
+              if (/^\d+$/.test(raw)) return TIKTOK_PLAYER + raw + TIKTOK_QS;
+              var match = raw.match(/https?:\/\/www\.tiktok\.com\/.*?\/video\/(\d+)/i);
+              if (match) return TIKTOK_PLAYER + match[1] + TIKTOK_QS;
+              return raw;
+            };
+            Object.defineProperty(HTMLIFrameElement.prototype, "src", {
+              configurable: nativeSrc.configurable,
+              enumerable: nativeSrc.enumerable,
+              get: nativeSrc.get,
+              set: function (value) { return nativeSrc.set.call(this, normalizeTikTok(value)); }
+            });
+            var nativeSetAttribute = Element.prototype.setAttribute;
+            Element.prototype.setAttribute = function (name, value) {
+              if (this instanceof HTMLIFrameElement && String(name).toLowerCase() === "src") {
+                value = normalizeTikTok(value);
+              }
+              return nativeSetAttribute.call(this, name, value);
+            };
+            window.__FIFTYFIT_TIKTOK_IFRAME_PATCHED__ = true;
+          }
+        } catch (_) {}
+      })();
+    </script>
     <script type="module" src="/src/networkGuard.js"></script>
   </head>
   <body>

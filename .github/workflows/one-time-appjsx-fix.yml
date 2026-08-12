@@ -30,11 +30,11 @@ jobs:
           if 'deleteAccountServerData' not in text:
               raise SystemExit('Expected deleteAccountServerData import/reference is missing')
 
-          # AI-only subscribers must be treated as Pro in Settings.
+          # AI-only subscribers must be treated as Pro in Settings when the old expression exists.
           pro_pattern = re.compile(r'const pro = data\.entitlements\.trainingPro\s*\|\|\s*data\.entitlements\.nutritionPro\s*;')
           matches = list(pro_pattern.finditer(text))
           if len(matches) > 1:
-              raise SystemExit(f'Found {len(matches)} matching pro expressions; refusing ambiguous edit')
+              raise SystemExit(f'Found {len(matches)} old pro expressions; refusing ambiguous edit')
           if len(matches) == 1:
               text = pro_pattern.sub(
                   'const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;',
@@ -42,25 +42,15 @@ jobs:
                   count=1,
               )
 
-          # Account deletion must clean server-side Supabase data before any local/Auth deletion.
-          start = text.find('function DeleteAccountScreen')
-          if start < 0:
-              raise SystemExit('DeleteAccountScreen not found')
-          next_fn = text.find('\nfunction ', start + len('function DeleteAccountScreen'))
-          end = next_fn if next_fn >= 0 else len(text)
-          section = text[start:end]
-
-          if 'await deleteAccountServerData()' not in section:
-              # Insert immediately before the first local Firestore/Auth deletion.
-              boundary = re.search(r'(?m)^\s*await\s+deleteDoc\s*\(', section)
-              if not boundary:
-                  boundary = re.search(r'(?m)^\s*await\s+deleteUser\s*\(', section)
-              if not boundary:
-                  raise SystemExit('Could not find local account deletion boundary')
-              line_start = section.rfind('\n', 0, boundary.start()) + 1
-              indent = re.match(r'[ \t]*', section[line_start:]).group(0)
-              section = section[:line_start] + indent + 'await deleteAccountServerData();\n' + section[line_start:]
-              text = text[:start] + section + text[end:]
+          # Account deletion must clean server-side Supabase data before local/Auth deletion.
+          if 'await deleteAccountServerData()' not in text:
+              # deleteUser is imported by App.jsx and should be unique to the account-deletion flow.
+              candidates = list(re.finditer(r'(?m)^([ \t]*)await\s+deleteUser\s*\(', text))
+              if len(candidates) != 1:
+                  raise SystemExit(f'Expected exactly one await deleteUser boundary, found {len(candidates)}')
+              m = candidates[0]
+              indent = m.group(1)
+              text = text[:m.start()] + indent + 'await deleteAccountServerData();\n' + text[m.start():]
 
           if text == original:
               raise SystemExit('No changes were necessary')
@@ -71,9 +61,6 @@ jobs:
       - name: Validate focused changes
         run: |
           grep -n 'deleteAccountServerData' src/App.jsx
-          if ! grep -Eq 'const pro = data\.entitlements\.trainingPro \|\| data\.entitlements\.nutritionPro \|\| data\.entitlements\.aiCoachPro;' src/App.jsx; then
-            echo 'AI-only Pro expression was not found; it may already be wired.'
-          fi
 
       - name: Commit and push
         run: |

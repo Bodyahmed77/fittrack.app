@@ -2621,6 +2621,8 @@ function useAppData(uid) {
           customPlan: parsed.customPlan || {},
           customTrainingPlan: parsed.customTrainingPlan || null,
           customNutritionPlan: parsed.customNutritionPlan || null,
+          customTrainingPlan: parsed.customTrainingPlan || null,
+          customNutritionPlan: parsed.customNutritionPlan || null,
         };
         setDataRaw(merged);
         setLoaded(true);

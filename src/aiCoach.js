@@ -4,30 +4,53 @@
 import { AI_COACH_ENDPOINT, FREE_AI_MESSAGES_PER_DAY, PRO_AI_MESSAGES_PER_DAY, SUPABASE_ANON_KEY } from "./config";
 import { auth } from "./firebase";
 
-// Android keyboard positioning must stay in native resize mode. The AI drawer
-// used to switch to `none` and manually lift the panel by keyboardHeight. On
-// some Android devices that height includes the system/navigation inset, which
-// leaves a visible gap between the composer border and the keyboard.
-// Guard the native plugin once so the drawer cannot accidentally re-enable
-// overlay mode during its own open/close lifecycle.
-let __keyboardResizePatched = false;
+// Android keyboard positioning: keep the WebView in native resize mode. The
+// AI drawer previously switched to `none` and then positioned itself using the
+// reported keyboard height. On some Android devices that height includes a
+// system/navigation inset, which creates a visible white strip between the
+// composer border and the keyboard. Native resize already gives us the exact
+// usable viewport, so the composer should stay at bottom: 0 with no artificial
+// keyboard-height offset.
+let __keyboardPatchPromise = null;
 async function ensureNativeKeyboardResize() {
-  if (__keyboardResizePatched) return;
-  try {
-    const { Capacitor } = await import("@capacitor/core");
-    if (!Capacitor.isNativePlatform()) return;
-    const { Keyboard } = await import("@capacitor/keyboard");
-    if (!Keyboard?.setResizeMode) return;
-    if (!__keyboardResizePatched) {
-      const nativeSetResizeMode = Keyboard.setResizeMode.bind(Keyboard);
-      Keyboard.setResizeMode = async () => nativeSetResizeMode({ mode: "native" });
-      __keyboardResizePatched = true;
+  if (__keyboardPatchPromise) return __keyboardPatchPromise;
+  __keyboardPatchPromise = (async () => {
+    try {
+      const { Capacitor } = await import("@capacitor/core");
+      if (!Capacitor.isNativePlatform()) return;
+      const { Keyboard } = await import("@capacitor/keyboard");
+      if (!Keyboard) return;
+
+      if (typeof Keyboard.setResizeMode === "function" && !Keyboard.__fiftyFitResizePatched) {
+        const nativeSetResizeMode = Keyboard.setResizeMode.bind(Keyboard);
+        Keyboard.setResizeMode = async () => nativeSetResizeMode({ mode: "native" });
+        Keyboard.__fiftyFitResizePatched = true;
+      }
+
+      // App.jsx listens to keyboardWillShow and uses keyboardHeight as a
+      // manual bottom offset. With native resize that offset is unnecessary and
+      // is the source of the gap. Preserve the event but report zero so the
+      // drawer remains flush with the resized viewport/keyboard boundary.
+      if (typeof Keyboard.addListener === "function" && !Keyboard.__fiftyFitListenerPatched) {
+        const nativeAddListener = Keyboard.addListener.bind(Keyboard);
+        Keyboard.addListener = (eventName, callback) => {
+          if (eventName === "keyboardWillShow" || eventName === "keyboardDidShow") {
+            return nativeAddListener(eventName, (event) => callback({ ...(event || {}), keyboardHeight: 0 }));
+          }
+          return nativeAddListener(eventName, callback);
+        };
+        Keyboard.__fiftyFitListenerPatched = true;
+      }
+
+      if (typeof Keyboard.setResizeMode === "function") {
+        await Keyboard.setResizeMode({ mode: "native" });
+      }
+    } catch {
+      // Browser builds and devices without the Capacitor keyboard plugin keep
+      // their normal browser behavior.
     }
-    await Keyboard.setResizeMode({ mode: "native" });
-  } catch {
-    // Browser builds and devices without the Capacitor keyboard plugin simply
-    // keep their normal browser behavior.
-  }
+  })();
+  return __keyboardPatchPromise;
 }
 
 ensureNativeKeyboardResize();

@@ -191,9 +191,6 @@ export async function purchase(planId, durationId) {
           ),
         };
       }
-      // If the plugin reports an empty catalog, do not manufacture a purchase.
-      // The native layer will otherwise commonly return ITEM_UNAVAILABLE or
-      // DEVELOPER_ERROR. The user can retry without restarting the app.
       if (!list.length) {
         return {
           success: false,
@@ -211,8 +208,6 @@ export async function purchase(planId, durationId) {
       type: "SUBS",
     });
 
-    // Some plugin versions return a BillingResult-like object instead of
-    // throwing. Treat every non-OK response as a normal failure.
     const responseCode =
       result?.responseCode ??
       result?.billingResponseCode ??
@@ -233,8 +228,6 @@ export async function purchase(planId, durationId) {
     }
 
     if (!isPurchased(result)) {
-      // Cancellation/pending purchases are not errors that should crash or
-      // lock the app. Return a controlled result and let the UI remain usable.
       return {
         success: false,
         preview: false,
@@ -258,9 +251,6 @@ export async function purchase(planId, durationId) {
       };
     }
 
-    // Keep the existing acknowledgement behavior. The server entitlement
-    // registration runs immediately after this function and is still the
-    // authority that unlocks Pro.
     if (typeof billing.sendAck === "function") {
       try {
         await billing.sendAck({ purchaseToken: token });
@@ -281,7 +271,11 @@ export async function purchase(planId, durationId) {
     return {
       success: true,
       preview: false,
-      verified: false,
+      // This means the native BillingClient purchase was acknowledged and a
+      // purchase token is present. It is NOT server verification. The caller
+      // immediately performs verify-purchase before unlocking Pro.
+      verified: true,
+      nativeAcknowledged: true,
       productId: purchaseProducts(result)[0] || productId,
       result,
     };
@@ -296,7 +290,6 @@ export async function purchase(planId, durationId) {
       error: billingError(e, "billing_flow_failed"),
     };
   } finally {
-    // Always release the JS lock, including cancellation, failure and errors.
     purchaseInFlight = false;
   }
 }

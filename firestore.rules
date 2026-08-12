@@ -4,22 +4,25 @@ rules_version = '2';
 // or via the Firebase CLI: firebase deploy --only firestore:rules
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Marks who is an admin. A document only exists here if YOU created it
-    // by hand in the Firebase Console — no client, admin or not, can ever
-    // write to this collection, so nobody can grant themselves access.
+    function isAdmin() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get("role", "") in ["owner", "staff"];
+    }
+
+    // Marks who is an admin. A document only exists here if the owner created
+    // it deliberately. No client, admin or not, can grant itself access.
     match /admins/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
 
     // Every signed-in user has exactly one document at users/{their own uid}.
-    // A normal user can update application data on their own document, but
-    // subscription entitlements are immutable from the client. An admin (see
-    // above) can read/write ANY user's document for support/moderation.
+    // Normal users can update their own application data, but subscription
+    // entitlements and admin-managed plans are immutable from the client.
     match /users/{userId} {
       allow read: if request.auth != null && (
-        request.auth.uid == userId ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        request.auth.uid == userId || isAdmin()
       );
       allow create: if request.auth != null &&
         request.auth.uid == userId &&
@@ -27,7 +30,7 @@ service cloud.firestore {
         request.resource.data.get("entitlements", {}).get("nutritionPro", false) == false &&
         request.resource.data.get("entitlements", {}).get("aiCoachPro", false) == false;
       allow update: if request.auth != null && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        isAdmin() ||
         (
           request.auth.uid == userId &&
           request.resource.data.get("entitlements", {}) ==
@@ -39,10 +42,9 @@ service cloud.firestore {
         )
       );
       // Required for in-app account deletion. The user can delete only their
-      // own Firestore profile; admins may delete any user document.
+      // own Firestore profile; authorized staff may delete any user document.
       allow delete: if request.auth != null && (
-        request.auth.uid == userId ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        request.auth.uid == userId || isAdmin()
       );
     }
   }

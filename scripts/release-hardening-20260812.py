@@ -20,8 +20,10 @@ s = require_once(s, old, new, 'notification listener')
 s = require_once(s, '      setLoaded(false);\n      verifiedEntitlementsRef.current = null;\n      return;', '      setLoaded(false);\n      setNotifications([]);\n      verifiedEntitlementsRef.current = null;\n      return;', 'notification reset')
 s = require_once(s, '  return { data, setData, setVerifiedEntitlements, loaded };', '  return { data, setData, setVerifiedEntitlements, loaded, notifications };', 'useAppData return')
 
-s = require_once(s, '  const [storeProducts, setStoreProducts] = useState([]);\n\n  // Launch policy: expose only a real monthly subscription until the native', '  const [storeProducts, setStoreProducts] = useState([]);\n  const planIds = ["training", "nutrition", "both", "ai"];\n\n  // All four durations are shown. The billing wrapper maps each duration to its own Google Play subscription product.\n', 'planIds and duration policy')
-s = require_once(s, '  // Launch policy: expose only a real monthly subscription until the native\n  // billing bridge supports selecting Google Play base-plan offer tokens.\n  // This prevents the UI from showing four prices that all purchase the same\n  // underlying product/base plan. Longer periods can be enabled later without\n  // changing the entitlement model.\n  const availableDurations = DURATIONS.filter((d) => d.id === "monthly");', '  const availableDurations = DURATIONS;', 'monthly-only duration filter')
+# Paywall: define all plan IDs and expose all four durations.
+s = require_once(s, '  const [storeProducts, setStoreProducts] = useState([]);\n\n  // Launch policy: expose only a real monthly subscription until the native', '  const [storeProducts, setStoreProducts] = useState([]);\n  const planIds = ["training", "nutrition", "both", "ai"];\n\n', 'planIds declaration')
+s = require_once(s, '  const availableDurations = DURATIONS.filter((d) => d.id === "monthly");', '  const availableDurations = DURATIONS;', 'monthly-only duration filter')
+s = require_once(s, '    billingQueryProducts("monthly")', '    billingQueryProducts()', 'billing product query')
 s = require_once(s, '  const storeProduct = storeProducts.find(\n    (p) => p?.productId === BILLING_PRODUCTS[selectedPlan],\n  );', '  const selectedProductId =\n    typeof BILLING_PRODUCTS[selectedPlan] === "string"\n      ? BILLING_PRODUCTS[selectedPlan]\n      : BILLING_PRODUCTS[selectedPlan]?.[selectedDuration];\n  const storeProduct = storeProducts.find(\n    (p) => p?.productId === selectedProductId,\n  );', 'store product lookup')
 
 pattern = re.compile(r'(\{\(\(\) => \{\n\s*)const start = customNutritionPlan\.startDate \|\| today;', re.M)
@@ -30,6 +32,7 @@ if not pattern.search(s):
     raise SystemExit('nutrition null safety injection point not found')
 s = pattern.sub(replacement, s, count=1)
 
+# AI keyboard: single native resize policy, zero manual inset.
 start = s.find('function AICoachDrawer(')
 if start < 0: raise SystemExit('AICoachDrawer not found')
 end = s.find('function AICoachSideTab(', start)
@@ -47,10 +50,10 @@ segment = segment.replace('minHeight: keyboardInset > 0 ? 58 : 62,', 'minHeight:
 segment = segment.replace('          // Lift entire drawer above the soft keyboard (dynamic inset).\n', '')
 s = s[:start] + segment + s[end:]
 
-# Remove iframe sandbox restrictions for TikTok WebView compatibility.
+# TikTok iframe: keep full-screen viewer but remove sandbox restrictions that can break TikTok pages.
 s = s.replace('          sandbox="allow-scripts allow-same-origin allow-presentation"\n', '')
 
-# Notification history screen. It reads the live Firestore subcollection itself, so the app root does not need another state prop.
+# Notification history screen reads the live Firestore subcollection directly.
 marker = '/* ============================== REMINDERS ============================== */'
 idx = s.find(marker)
 if idx < 0: raise SystemExit('Reminders marker not found')
@@ -95,13 +98,9 @@ function NotificationsScreen({ back }) {
       <TopBar title={ar ? "الإشعارات" : "Notifications"} onBack={back} />
       <div style={{ padding: "0 18px 24px", display: "flex", flexDirection: "column", gap: 10 }}>
         {loading ? (
-          <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>
-            {ar ? "جاري تحميل الإشعارات…" : "Loading notifications…"}
-          </Card>
+          <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>{ar ? "جاري تحميل الإشعارات…" : "Loading notifications…"}</Card>
         ) : !rows.length ? (
-          <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>
-            {ar ? "مفيش إشعارات جديدة دلوقتي." : "No notifications yet."}
-          </Card>
+          <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>{ar ? "مفيش إشعارات جديدة دلوقتي." : "No notifications yet."}</Card>
         ) : rows.map((n) => {
           const created = new Date(String(n.createdAt || ""));
           const when = Number.isFinite(created.getTime())
@@ -148,7 +147,7 @@ if needle in s:
     s = s.replace(needle, 'const plan = PLAN_TEMPLATES[planId] || PLAN_TEMPLATES.beginner;', 1)
 path.write_text(s, encoding='utf-8')
 
-# aiCoach.js: keep a single native resize mode and no manual inset listener.
+# aiCoach.js: keep native resize only; no manual keyboard inset listeners.
 path = Path('src/aiCoach.js')
 a = path.read_text(encoding='utf-8')
 a = re.sub(r'export async function ensureNativeKeyboardResize\(\)[\s\S]*?\n\}\n', 'export async function ensureNativeKeyboardResize() {\n  try {\n    const { Keyboard } = await import("@capacitor/keyboard");\n    await Keyboard.setResizeMode?.({ mode: "native" });\n  } catch {}\n}\n', a, count=1)

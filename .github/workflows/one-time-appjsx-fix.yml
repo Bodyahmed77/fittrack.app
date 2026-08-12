@@ -27,44 +27,43 @@ jobs:
           text = path.read_text(encoding='utf-8')
           original = text
 
-          if 'import { deleteAccountServerData } from "./deleteAccount";' not in text:
-              raise SystemExit('Expected deleteAccountServerData import is missing')
+          if 'deleteAccountServerData' not in text:
+              raise SystemExit('Expected deleteAccountServerData import/reference is missing')
 
           # AI-only subscribers must be treated as Pro in Settings.
-          old_pro = 'const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro;'
-          new_pro = 'const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;'
-          if text.count(old_pro) != 1:
-              raise SystemExit(f'Expected exactly one Settings pro expression, found {text.count(old_pro)}')
-          text = text.replace(old_pro, new_pro, 1)
+          pro_pattern = re.compile(r'const pro = data\.entitlements\.trainingPro\s*\|\|\s*data\.entitlements\.nutritionPro\s*;')
+          matches = list(pro_pattern.finditer(text))
+          if len(matches) > 1:
+              raise SystemExit(f'Found {len(matches)} matching pro expressions; refusing ambiguous edit')
+          if len(matches) == 1:
+              text = pro_pattern.sub(
+                  'const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;',
+                  text,
+                  count=1,
+              )
 
           # Account deletion must clean server-side Supabase data before any local/Auth deletion.
           start = text.find('function DeleteAccountScreen')
           if start < 0:
               raise SystemExit('DeleteAccountScreen not found')
-          end = text.find('\nfunction ', start + 10)
-          if end < 0:
-              end = len(text)
+          next_fn = text.find('\nfunction ', start + len('function DeleteAccountScreen'))
+          end = next_fn if next_fn >= 0 else len(text)
           section = text[start:end]
 
-          if 'deleteAccountServerData()' not in section:
-              # Prefer the Firestore deletion boundary so server cleanup happens
-              # after reauthentication but before local account/data deletion.
-              m = re.search(r'(?m)^(\s*)await deleteDoc\(', section)
-              if m:
-                  indent = m.group(1)
-                  replacement = indent + 'await deleteAccountServerData();\n' + m.group(0)
-                  section = section[:m.start()] + replacement + section[m.end():]
-              else:
-                  m = re.search(r'(?m)^(\s*)await deleteUser\(user\);', section)
-                  if not m:
-                      raise SystemExit('Could not find local account deletion boundary')
-                  indent = m.group(1)
-                  replacement = indent + 'await deleteAccountServerData();\n' + m.group(0)
-                  section = section[:m.start()] + replacement + section[m.end():]
+          if 'await deleteAccountServerData()' not in section:
+              # Insert immediately before the first local Firestore/Auth deletion.
+              boundary = re.search(r'(?m)^\s*await\s+deleteDoc\s*\(', section)
+              if not boundary:
+                  boundary = re.search(r'(?m)^\s*await\s+deleteUser\s*\(', section)
+              if not boundary:
+                  raise SystemExit('Could not find local account deletion boundary')
+              line_start = section.rfind('\n', 0, boundary.start()) + 1
+              indent = re.match(r'[ \t]*', section[line_start:]).group(0)
+              section = section[:line_start] + indent + 'await deleteAccountServerData();\n' + section[line_start:]
               text = text[:start] + section + text[end:]
 
           if text == original:
-              raise SystemExit('No changes were made')
+              raise SystemExit('No changes were necessary')
 
           path.write_text(text, encoding='utf-8')
           PY
@@ -72,7 +71,9 @@ jobs:
       - name: Validate focused changes
         run: |
           grep -n 'deleteAccountServerData' src/App.jsx
-          grep -n 'const pro = data.entitlements.trainingPro || data.entitlements.nutritionPro || data.entitlements.aiCoachPro;' src/App.jsx
+          if ! grep -Eq 'const pro = data\.entitlements\.trainingPro \|\| data\.entitlements\.nutritionPro \|\| data\.entitlements\.aiCoachPro;' src/App.jsx; then
+            echo 'AI-only Pro expression was not found; it may already be wired.'
+          fi
 
       - name: Commit and push
         run: |

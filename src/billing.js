@@ -22,13 +22,27 @@ async function getPlugin() {
   }
 }
 
-export function productIdFor(planId, _durationId) {
-  const id = BILLING_PRODUCTS?.[planId];
+export function productIdFor(planId, durationId = "monthly") {
+  const entry = BILLING_PRODUCTS?.[planId];
+  const id =
+    typeof entry === "string"
+      ? entry
+      : entry?.[durationId] || entry?.monthly || null;
   return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
 export function allProductIds() {
-  return [...new Set(Object.values(BILLING_PRODUCTS || {}).filter(Boolean))];
+  const out = [];
+  Object.values(BILLING_PRODUCTS || {}).forEach((entry) => {
+    if (typeof entry === "string") {
+      if (entry) out.push(entry);
+      return;
+    }
+    Object.values(entry || {}).forEach((id) => {
+      if (typeof id === "string" && id) out.push(id);
+    });
+  });
+  return [...new Set(out)];
 }
 
 function purchaseProducts(purchase) {
@@ -172,9 +186,6 @@ export async function purchase(planId, durationId) {
   purchaseInFlight = true;
 
   try {
-    // Do not open the native purchase screen with an unknown/unavailable SKU.
-    // This avoids a large class of native BillingClient errors and prevents
-    // the WebView from being left in a broken state after a failed attempt.
     if (typeof billing.queryProductDetails === "function" || typeof billing.querySkuDetails === "function") {
       const catalog = await queryProducts();
       if (catalog?.error) {
@@ -271,19 +282,13 @@ export async function purchase(planId, durationId) {
     return {
       success: true,
       preview: false,
-      // This means the native BillingClient purchase was acknowledged and a
-      // purchase token is present. It is NOT server verification. The caller
-      // immediately performs verify-purchase before unlocking Pro.
       verified: true,
       nativeAcknowledged: true,
       productId: purchaseProducts(result)[0] || productId,
       result,
     };
   } catch (e) {
-    // IMPORTANT: do NOT call endConnection/disconnect/close here. Some native
-    // billing implementations keep a shared BillingClient connection and
-    // tearing it down after a transient error can make the next purchase fail
-    // until the whole application is restarted.
+    // Do not disconnect the shared native BillingClient after an error.
     return {
       success: false,
       preview: false,
@@ -324,8 +329,14 @@ export async function restorePurchases() {
 
     const activePurchases = (Array.isArray(purchases) ? purchases : []).filter(isPurchased);
     const idToPlan = {};
-    Object.entries(BILLING_PRODUCTS || {}).forEach(([plan, pid]) => {
-      if (pid) idToPlan[pid] = plan;
+    Object.entries(BILLING_PRODUCTS || {}).forEach(([plan, entry]) => {
+      if (typeof entry === "string") {
+        idToPlan[entry] = plan;
+      } else {
+        Object.values(entry || {}).forEach((pid) => {
+          if (pid) idToPlan[pid] = plan;
+        });
+      }
     });
 
     activePurchases.forEach((purchase) => {

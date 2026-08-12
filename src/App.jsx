@@ -3130,8 +3130,6 @@ function registerFullScreenVideoClose(fn) {
    Exercise Screen only shows a "Watch Short" button; the iframe lives here. */
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const [resolvedTikTokId, setResolvedTikTokId] = useState(() => extractTikTokVideoId(videoId));
-  const [videoResolveError, setVideoResolveError] = useState(false);
   const looksTikTok = /tiktok\.com/i.test(String(videoId || "")) || /^\d+$/.test(String(videoId || ""));
   const isTikTok = looksTikTok;
   const embedSrc = isTikTok
@@ -3141,13 +3139,6 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
   useEffect(() => {
     let cancelled = false;
     setVideoLoaded(false);
-    setVideoResolveError(false);
-    setResolvedTikTokId(extractTikTokVideoId(videoId));
-    if (looksTikTok && !extractTikTokVideoId(videoId)) {
-      resolveTikTokVideoId(videoId)
-        .then((id) => { if (!cancelled) setResolvedTikTokId(id); })
-        .catch(() => { if (!cancelled) setVideoResolveError(true); });
-    }
     registerFullScreenVideoClose(() => {
       onClose();
       return true;
@@ -3232,11 +3223,6 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
             }}
           >
             {ar ? "جاري تحميل الفيديو…" : "Loading video…"}
-          </div>
-        )}
-        {videoResolveError && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 2, display: "grid", placeItems: "center", padding: 24, textAlign: "center", background: C.card2, color: C.sub, fontSize: 13 }}>
-            {ar ? "تعذر تحميل فيديو TikTok" : "Could not load the TikTok video"}
           </div>
         )}
         <iframe

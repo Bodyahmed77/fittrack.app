@@ -57,6 +57,9 @@ export const EXERCISE_IMAGES = {
 
 // ------------------------------------------------------------
 // EXERCISE VIDEO IDs (TikTok embeds / YouTube embeds)
+// Every exercise in the library has a non-empty demo video ID.
+// Numeric IDs are TikTok embeds; non-numeric IDs are YouTube IDs.
+// Keep existing TikTok mappings when they are exercise-correct.
 // ------------------------------------------------------------
 export const EXERCISE_VIDEOS = {
   bench_press: "7603190204740013313", // Chest press machine
@@ -109,12 +112,18 @@ export const BILLING_PRODUCTS = {
   training: "training_pro",
   nutrition: "nutrition_pro",
   both: "both_pro",
+  // Separate AI Coach subscription (ongoing token cost — not bundled with Pro).
   ai: "ai_coach_pro",
 };
 
+// ------------------------------------------------------------
+// AI COACH LIMITS (single source of truth — do not scatter)
+// ------------------------------------------------------------
 export const FREE_AI_MESSAGES_PER_DAY = 3;
 export const PRO_AI_MESSAGES_PER_DAY = 50;
 
+// Public backend URL only — never put GEMINI_API_KEY here.
+// Override at build time with VITE_AI_ENDPOINT if needed.
 export const AI_COACH_ENDPOINT =
   "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/ai-coach";
 
@@ -127,6 +136,10 @@ export const AI_REPORT_ENDPOINT =
     "/functions/v1/ai-report",
   );
 
+// Server-side entitlement store. The ai-coach function grants quotas
+// from this table ONLY, so every real purchase must be registered here.
+// Same Supabase project as the AI coach endpoint — one host, two functions.
+// Override at build time with VITE_VERIFY_PURCHASE_ENDPOINT if needed.
 export const VERIFY_PURCHASE_ENDPOINT =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
@@ -136,17 +149,43 @@ export const VERIFY_PURCHASE_ENDPOINT =
     "/functions/v1/verify-purchase",
   );
 
+// Optional public Supabase anon/publishable key (safe in client).
+// Required by Supabase gateway on some projects alongside Authorization.
+// Set via VITE_SUPABASE_ANON_KEY at build time, or leave empty if the
+// Edge Function has verify_jwt disabled and accepts Firebase tokens alone.
 export const SUPABASE_ANON_KEY =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
     import.meta.env.VITE_SUPABASE_ANON_KEY) ||
   "";
 
+// Display prices only. Google Play regional pricing is the purchase source
+// of truth — the app must not invent a country via GPS/IP.
 export const AI_COACH_PRICES = {
-  eg: { currency: "EGP", currencyLabelAr: "جنيه", currencyLabelEn: "EGP", monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
-  intl: { currency: "USD", currencyLabelAr: "دولار", currencyLabelEn: "USD", monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
+  eg: {
+    currency: "EGP",
+    currencyLabelAr: "جنيه",
+    currencyLabelEn: "EGP",
+    monthly: 50,
+    quarterly: 129,
+    halfyearly: 249,
+    yearly: 399,
+  },
+  intl: {
+    currency: "USD",
+    currencyLabelAr: "دولار",
+    currencyLabelEn: "USD",
+    monthly: 4.99,
+    quarterly: 12.99,
+    halfyearly: 24.99,
+    yearly: 39.99,
+  },
 };
 
+// ------------------------------------------------------------
+// PAYWALL OPTIONS
+// Duration catalog for future Google Play base-plan support; launch enables monthly only.
+// ------------------------------------------------------------
 export const DURATIONS = [
   { id: "monthly", label: "شهري", labelEn: "Monthly", months: 1 },
   { id: "quarterly", label: "3 شهور", labelEn: "3 Months", months: 3 },
@@ -154,16 +193,22 @@ export const DURATIONS = [
   { id: "yearly", label: "سنوي", labelEn: "Yearly", months: 12 },
 ];
 
+// Display prices by region. Real charged price comes from Google Play
+// (Play Console regional pricing). Do NOT detect country via GPS/IP.
 export const PAYWALL_PRICES = {
   eg: {
-    currency: "EGP", currencyLabelAr: "جنيه", currencyLabelEn: "EGP",
+    currency: "EGP",
+    currencyLabelAr: "جنيه",
+    currencyLabelEn: "EGP",
     training: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
     nutrition: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
     both: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
     ai: { monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
   },
   intl: {
-    currency: "USD", currencyLabelAr: "دولار", currencyLabelEn: "USD",
+    currency: "USD",
+    currencyLabelAr: "دولار",
+    currencyLabelEn: "USD",
     training: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
     nutrition: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
     both: { monthly: 7.99, quarterly: 19.99, halfyearly: 34.99, yearly: 59.99 },
@@ -173,27 +218,58 @@ export const PAYWALL_PRICES = {
 
 export const PAYWALL_PLANS = {
   training: {
-    title: "Training Pro", titleAr: "تدريب برو",
+    title: "Training Pro",
+    titleAr: "تدريب برو",
     prices: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
-    featuresAr: ["تمارين غير محدودة كل يوم", "خطة تمرين مخصصة حسب هدفك ووزنك وطولك", "سجل وزن كامل، من غير حذف", "مقارنات تقدم يومية وشهرية"],
-    featuresEn: ["Unlimited exercises per workout day", "Personalized workout plan by your goal, weight & height", "Full body-weight history, never deleted", "Daily & monthly progress comparisons"],
+    featuresAr: [
+      "تمارين غير محدودة كل يوم",
+      "خطة تمرين مخصصة حسب هدفك ووزنك وطولك",
+      "سجل وزن كامل، من غير حذف",
+      "مقارنات تقدم يومية وشهرية",
+    ],
+    featuresEn: [
+      "Unlimited exercises per workout day",
+      "Personalized workout plan by your goal, weight & height",
+      "Full body-weight history, never deleted",
+      "Daily & monthly progress comparisons",
+    ],
   },
   nutrition: {
-    title: "Nutrition Pro", titleAr: "تغذية برو",
+    title: "Nutrition Pro",
+    titleAr: "تغذية برو",
     prices: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
-    featuresAr: ["خطة غذائية كاملة مبنية على جسمك وهدفك", "أهداف يومية دقيقة للسعرات والبروتين والكارب والدهون", "بتتحدث مع تغيّر وزنك وهدفك"],
-    featuresEn: ["A complete diet plan built for your body & goal", "Exact daily targets for calories, protein, carbs & fat", "Updated as your weight and goal change"],
+    featuresAr: [
+      "خطة غذائية كاملة مبنية على جسمك وهدفك",
+      "أهداف يومية دقيقة للسعرات والبروتين والكارب والدهون",
+      "بتتحدث مع تغيّر وزنك وهدفك",
+    ],
+    featuresEn: [
+      "A complete diet plan built for your body & goal",
+      "Exact daily targets for calories, protein, carbs & fat",
+      "Updated as your weight and goal change",
+    ],
   },
   both: {
-    title: "Training + Nutrition", titleAr: "تدريب + تغذية", best: true,
+    title: "Training + Nutrition",
+    titleAr: "تدريب + تغذية",
+    best: true,
     prices: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
     featuresAr: ["كل حاجة في الخطتين فوق", "أفضل قيمة — وفّر أكتر"],
     featuresEn: ["Everything in both plans above", "Best value — save more"],
   },
   ai: {
-    title: "AI Coach Pro", titleAr: "مدرب ذكي برو",
+    title: "AI Coach Pro",
+    titleAr: "مدرب ذكي برو",
     prices: { monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
-    featuresAr: ["حتى 50 رسالة يومية للمدرب الذكي (بدلًا من 3)", "إجابات مبينة على خطتك ووزنك وتمارين اليوم", "إجابات بالعربية والإنجليزية"],
-    featuresEn: ["Up to 50 AI messages per day (instead of 3)", "Answers grounded in your plan, weight & today's exercises", "Arabic & English support"],
+    featuresAr: [
+      "حتى 50 رسالة يومية للمدرب الذكي (بدلًا من 3)",
+      "إجابات مبينة على خطتك ووزنك وتمارين اليوم",
+      "إجابات بالعربية والإنجليزية",
+    ],
+    featuresEn: [
+      "Up to 50 AI messages per day (instead of 3)",
+      "Answers grounded in your plan, weight & today's exercises",
+      "Arabic & English support",
+    ],
   },
 };

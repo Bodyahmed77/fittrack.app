@@ -5,14 +5,6 @@
 // here so they can be updated easily without touching the app logic.
 // ============================================================
 
-// ------------------------------------------------------------
-// EXERCISE IMAGES
-// Every exercise is rendered with a consistent, hand-crafted SVG
-// vector illustration (see the ExerciseVisual component in App.jsx).
-// The `variant` below maps each exercise to its illustration so the
-// whole app shares one clean, flat vector style — no external images,
-// no broken placeholders, works fully offline.
-// ------------------------------------------------------------
 export const EXERCISE_IMAGES = {
   bench_press: "bench",
   incline_db_press: "incline",
@@ -55,66 +47,79 @@ export const EXERCISE_IMAGES = {
   burpees: "burpees",
 };
 
-// ------------------------------------------------------------
-// EXERCISE VIDEO IDs (TikTok embeds / YouTube embeds)
-// Direct TikTok URLs are intentionally kept for the normal WebView
-// implementation; do not replace them with the official player API.
-// ------------------------------------------------------------
+// Direct TikTok URLs are kept for the normal in-app WebView.
+// Numeric IDs use TikTok's public /video/<id> page URL, not the official player.
 export const EXERCISE_VIDEOS = {
-  bench_press: "7603190204740013313",
-  incline_db_press: "7267987124610239762",
+  bench_press: "https://www.tiktok.com/video/7603190204740013313",
+  incline_db_press: "https://www.tiktok.com/video/7267987124610239762",
   chest_fly: "eozdVDA78K0",
   dips: "2z8JmcrW-As",
-  tricep_pushdown: "7586888221125070094",
-  zigzag_tricep_ext: "7586888221125070094",
-  overhead_ext: "7527210325834206486",
+  tricep_pushdown: "https://www.tiktok.com/video/7586888221125070094",
+  zigzag_tricep_ext: "https://www.tiktok.com/video/7586888221125070094",
+  overhead_ext: "https://www.tiktok.com/video/7527210325834206486",
   push_up: "IODxDxX7oi4",
-  lat_pulldown: "7665886081329532174",
-  barbell_row: "7532789627212631314",
-  seated_row: "7639010632561478934",
-  single_arm_seated_row: "7639010632561478934",
-  bicep_curl: "7636460964870720788",
-  behind_body_bicep_curl: "7636460964870720788",
-  hammer_curl: "7623849292461051156",
-  supported_db_curl: "7636460964870720788",
-  squat: "7513352117692665094",
-  hack_squat: "7513352117692665094",
-  leg_press: "7545454872586423574",
-  leg_extension: "7564750740061752598",
-  abduction: "7419086233487281415",
-  reverse_curl: "7214952400631778566",
-  face_pull: "7474058570451946757",
-  lunges: "7353289956699229472",
-  leg_curl: "7521556521390460166",
-  calf_raise: "7602285498962349342",
-  ohp: "7663674671677705488",
-  lateral_raise: "7486685939025054981",
-  rear_delt_fly: "7630410819259387158",
-  shrugs: "7500002250526395653",
-  deadlift: "7380964646062263558",
+  lat_pulldown: "https://www.tiktok.com/video/7665886081329532174",
+  barbell_row: "https://www.tiktok.com/video/7532789627212631314",
+  seated_row: "https://www.tiktok.com/video/7639010632561478934",
+  single_arm_seated_row: "https://www.tiktok.com/video/7639010632561478934",
+  bicep_curl: "https://www.tiktok.com/video/7636460964870720788",
+  behind_body_bicep_curl: "https://www.tiktok.com/video/7636460964870720788",
+  hammer_curl: "https://www.tiktok.com/video/7623849292461051156",
+  supported_db_curl: "https://www.tiktok.com/video/7636460964870720788",
+  squat: "https://www.tiktok.com/video/7513352117692665094",
+  hack_squat: "https://www.tiktok.com/video/7513352117692665094",
+  leg_press: "https://www.tiktok.com/video/7545454872586423574",
+  leg_extension: "https://www.tiktok.com/video/7564750740061752598",
+  abduction: "https://www.tiktok.com/video/7419086233487281415",
+  reverse_curl: "https://www.tiktok.com/video/7214952400631778566",
+  face_pull: "https://www.tiktok.com/video/7474058570451946757",
+  lunges: "https://www.tiktok.com/video/7353289956699229472",
+  leg_curl: "https://www.tiktok.com/video/7521556521390460166",
+  calf_raise: "https://www.tiktok.com/video/7602285498962349342",
+  ohp: "https://www.tiktok.com/video/7663674671677705488",
+  lateral_raise: "https://www.tiktok.com/video/7486685939025054981",
+  rear_delt_fly: "https://www.tiktok.com/video/7630410819259387158",
+  shrugs: "https://www.tiktok.com/video/7500002250526395653",
+  deadlift: "https://www.tiktok.com/video/7380964646062263558",
   pull_up: "eGo4IYlbE5g",
   plank: "pSHjTRCQxIw",
   treadmill: "https://vt.tiktok.com/ZS4T2HfCY/",
   bike: "https://vt.tiktok.com/ZS4T249MW/",
-  crunches: "7654453038815399171",
+  crunches: "https://www.tiktok.com/video/7654453038815399171",
   leg_raise: "hdng3ubkBrI",
   jump_rope: "https://www.tiktok.com/@tiboinshape/video/7358498825012661537",
   burpees: "https://vt.tiktok.com/ZS4TjS16a/",
 };
 
-// ------------------------------------------------------------
-// GOOGLE PLAY BILLING PRODUCT IDs
-// ------------------------------------------------------------
+// Google Play product IDs. Each duration is a separate subscription product
+// because the current capacitor-billing bridge does not expose Play offerToken/base-plan selection.
 export const BILLING_PRODUCTS = {
-  training: "training_pro",
-  nutrition: "nutrition_pro",
-  both: "both_pro",
-  ai: "ai_coach_pro",
+  training: {
+    monthly: "training_pro_monthly",
+    quarterly: "training_pro_quarterly",
+    halfyearly: "training_pro_6months",
+    yearly: "training_pro_yearly",
+  },
+  nutrition: {
+    monthly: "nutrition_pro_monthly",
+    quarterly: "nutrition_pro_quarterly",
+    halfyearly: "nutrition_pro_6months",
+    yearly: "nutrition_pro_yearly",
+  },
+  both: {
+    monthly: "both_pro_monthly",
+    quarterly: "both_pro_quarterly",
+    halfyearly: "both_pro_6months",
+    yearly: "both_pro_yearly",
+  },
+  ai: {
+    monthly: "ai_coach_pro_monthly",
+    quarterly: "ai_coach_pro_quarterly",
+    halfyearly: "ai_coach_pro_6months",
+    yearly: "ai_coach_pro_yearly",
+  },
 };
 
-// ------------------------------------------------------------
-// AI COACH LIMITS
-// ------------------------------------------------------------
 export const FREE_AI_MESSAGES_PER_DAY = 3;
 export const PRO_AI_MESSAGES_PER_DAY = 50;
 
@@ -145,9 +150,6 @@ export const SUPABASE_ANON_KEY =
     import.meta.env.VITE_SUPABASE_ANON_KEY) ||
   "";
 
-// ------------------------------------------------------------
-// AI COACH DISPLAY PRICES
-// ------------------------------------------------------------
 export const AI_COACH_PRICES = {
   eg: {
     currency: "EGP",
@@ -169,11 +171,6 @@ export const AI_COACH_PRICES = {
   },
 };
 
-// ------------------------------------------------------------
-// PAYWALL OPTIONS
-// Duration catalog for Google Play base-plan support.
-// The actual charged price is always Google Play's source of truth.
-// ------------------------------------------------------------
 export const DURATIONS = [
   { id: "monthly", label: "شهري", labelEn: "Monthly", months: 1 },
   { id: "quarterly", label: "3 شهور", labelEn: "3 Months", months: 3 },

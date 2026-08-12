@@ -1,8 +1,9 @@
 // ============================================================
 // Google Play Billing Wrapper (capacitor-billing)
 // ============================================================
-// Clean, modular production abstraction around Google Play Billing.
-// No RevenueCat — Google Play Billing only.
+// Defensive production wrapper around Google Play Billing.
+// The native billing plugin is the only source of purchase state.
+// Server verification happens separately in registerPurchase.js.
 
 import { BILLING_PRODUCTS } from "./config";
 
@@ -13,36 +14,35 @@ async function getPlugin() {
   if (plugin) return plugin;
   try {
     const mod = await import(/* @vite-ignore */ "capacitor-billing");
-    plugin = mod.BillingPlugin;
+    plugin = mod?.BillingPlugin || mod?.default || null;
     return plugin;
   } catch (e) {
-    console.warn("Billing plugin not available — running in preview mode", e);
+    console.warn("Billing plugin unavailable", e);
     return null;
   }
 }
 
-export function productIdFor(planId, durationId) {
-  const id = BILLING_PRODUCTS[planId];
-  return id || null;
+export function productIdFor(planId, _durationId) {
+  const id = BILLING_PRODUCTS?.[planId];
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
 export function allProductIds() {
-  return Object.values(BILLING_PRODUCTS).filter(Boolean);
+  return [...new Set(Object.values(BILLING_PRODUCTS || {}).filter(Boolean))];
 }
 
 function purchaseProducts(purchase) {
   const products = purchase?.products || purchase?.productIds;
-  if (Array.isArray(products)) return products;
+  if (Array.isArray(products)) return products.filter(Boolean);
   const product = purchase?.productId || purchase?.product;
   return product ? [product] : [];
 }
 
 function isPurchased(purchase) {
-  return (
-    purchase &&
-    (purchase.purchaseState === 1 || purchase.purchaseState === "1") &&
-    !!(purchase.purchaseToken || purchase.token)
-  );
+  if (!purchase || typeof purchase !== "object") return false;
+  const state = purchase.purchaseState ?? purchase.purchase?.purchaseState;
+  const token = extractPurchaseToken(purchase);
+  return (state === 1 || state === "1") && !!token;
 }
 
 function extractPurchaseToken(purchase) {
@@ -51,59 +51,114 @@ function extractPurchaseToken(purchase) {
     purchase.purchaseToken ||
     purchase.token ||
     purchase.purchase?.purchaseToken ||
-    purchase.product?.purchaseToken;
+    purchase.product?.purchaseToken ||
+    purchase.result?.purchaseToken ||
+    purchase.result?.purchase?.purchaseToken;
   return typeof token === "string" && token ? token : null;
 }
 
-function billingError(e) {
-  const code = e?.code || e?.responseCode || e?.response?.code || "";
-  const message = String(e?.message || e?.response?.message || e || "Billing error");
+function billingError(e, fallbackCode = "billing_error") {
+  const source = e?.error || e?.response || e;
+  const code =
+    source?.code ??
+    source?.responseCode ??
+    source?.billingResponseCode ??
+    e?.code ??
+    e?.responseCode ??
+    fallbackCode;
+  const message = String(
+    source?.message ||
+      source?.debugMessage ||
+      e?.message ||
+      "Google Play Billing could not complete the operation",
+  );
   const err = new Error(message);
-  if (code) err.code = String(code);
+  err.code = String(code);
+  if (source?.subResponseCode != null) {
+    err.subResponseCode = String(source.subResponseCode);
+  }
   return err;
 }
 
-// Some native billing implementations keep a failed/cancelled activity or
-// connection alive. Clean it up when the plugin exposes a compatible method;
-// never let cleanup failure mask the original billing error.
-async function resetBillingAfterFailure(billing) {
-  try {
-    if (typeof billing?.endConnection === "function") await billing.endConnection();
-    else if (typeof billing?.disconnect === "function") await billing.disconnect();
-    else if (typeof billing?.close === "function") await billing.close();
-  } catch (_) {
-    // Best effort only.
-  }
+function normalizeProductList(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.products)) return result.products;
+  if (Array.isArray(result?.list)) return result.list;
+  if (Array.isArray(result?.productDetails)) return result.productDetails;
+  return [];
 }
 
-export async function queryProducts(durationId = "monthly") {
+function productMatches(product, productId) {
+  const ids = [
+    product?.productId,
+    product?.product,
+    product?.sku,
+    product?.id,
+  ].filter(Boolean);
+  return ids.includes(productId);
+}
+
+export async function queryProducts() {
   const billing = await getPlugin();
   if (!billing) return { preview: true, products: null };
+
+  const ids = allProductIds();
+  if (!ids.length) {
+    return {
+      preview: false,
+      products: [],
+      error: Object.assign(new Error("No Google Play product IDs configured"), {
+        code: "billing_products_missing",
+      }),
+    };
+  }
+
   try {
     let result = null;
     if (typeof billing.queryProductDetails === "function") {
-      result = await billing.queryProductDetails({ products: allProductIds() });
+      result = await billing.queryProductDetails({ products: ids, type: "SUBS" });
     } else if (typeof billing.querySkuDetails === "function") {
-      result = await billing.querySkuDetails({ product: allProductIds() });
+      result = await billing.querySkuDetails({ product: ids, type: "SUBS" });
+    } else {
+      return {
+        preview: false,
+        products: [],
+        unsupported: true,
+        error: Object.assign(
+          new Error("Google Play product query is unavailable in this billing build"),
+          { code: "billing_query_unsupported" },
+        ),
+      };
     }
-    const list = Array.isArray(result) ? result : result?.list || [];
-    return { preview: false, products: list };
+
+    const list = normalizeProductList(result);
+    return {
+      preview: false,
+      products: list,
+      unfetched: result?.unfetchedProducts || result?.unfetched || [],
+    };
   } catch (e) {
-    return { preview: false, products: [], error: billingError(e) };
+    return { preview: false, products: [], error: billingError(e, "billing_query_failed") };
   }
 }
 
 export async function purchase(planId, durationId) {
   const productId = productIdFor(planId, durationId);
   if (!productId) {
-    return { success: false, preview: false, error: new Error("Missing product ID") };
+    return {
+      success: false,
+      preview: false,
+      error: Object.assign(new Error("This Pro product is not configured yet"), {
+        code: "product_not_configured",
+      }),
+    };
   }
 
   if (purchaseInFlight) {
     return {
       success: false,
       preview: false,
-      error: Object.assign(new Error("A billing operation is already in progress"), {
+      error: Object.assign(new Error("A Google Play purchase is already in progress"), {
         code: "billing_busy",
       }),
     };
@@ -111,59 +166,137 @@ export async function purchase(planId, durationId) {
 
   const billing = await getPlugin();
   if (!billing) {
-    return { success: false, preview: true, message: "Preview mode — no real purchase" };
+    return { success: false, preview: true, message: "Billing is unavailable outside Android" };
   }
 
   purchaseInFlight = true;
+
   try {
+    // Do not open the native purchase screen with an unknown/unavailable SKU.
+    // This avoids a large class of native BillingClient errors and prevents
+    // the WebView from being left in a broken state after a failed attempt.
+    if (typeof billing.queryProductDetails === "function" || typeof billing.querySkuDetails === "function") {
+      const catalog = await queryProducts();
+      if (catalog?.error) {
+        return { success: false, preview: false, error: catalog.error };
+      }
+      const list = Array.isArray(catalog?.products) ? catalog.products : [];
+      if (list.length && !list.some((p) => productMatches(p, productId))) {
+        return {
+          success: false,
+          preview: false,
+          error: Object.assign(
+            new Error(`Google Play product is unavailable: ${productId}`),
+            { code: "product_unavailable" },
+          ),
+        };
+      }
+      // If the plugin reports an empty catalog, do not manufacture a purchase.
+      // The native layer will otherwise commonly return ITEM_UNAVAILABLE or
+      // DEVELOPER_ERROR. The user can retry without restarting the app.
+      if (!list.length) {
+        return {
+          success: false,
+          preview: false,
+          error: Object.assign(
+            new Error(`Google Play product is unavailable: ${productId}`),
+            { code: "product_unavailable" },
+          ),
+        };
+      }
+    }
+
     const result = await billing.launchBillingFlow({
       product: productId,
       type: "SUBS",
     });
 
-    if (!isPurchased(result)) {
+    // Some plugin versions return a BillingResult-like object instead of
+    // throwing. Treat every non-OK response as a normal failure.
+    const responseCode =
+      result?.responseCode ??
+      result?.billingResponseCode ??
+      result?.response?.responseCode;
+    if (responseCode != null && String(responseCode) !== "0") {
       return {
         success: false,
         preview: false,
+        error: billingError(
+          {
+            responseCode,
+            message: result?.debugMessage || result?.response?.message,
+            subResponseCode: result?.subResponseCode,
+          },
+          "billing_flow_failed",
+        ),
+      };
+    }
+
+    if (!isPurchased(result)) {
+      // Cancellation/pending purchases are not errors that should crash or
+      // lock the app. Return a controlled result and let the UI remain usable.
+      return {
+        success: false,
+        preview: false,
+        pending: !!result?.pending,
+        cancelled: !!result?.cancelled || !!result?.canceled,
         error: Object.assign(
-          new Error("Google Play did not return a completed purchase"),
-          { code: "purchase_not_completed" },
+          new Error("Google Play purchase was not completed"),
+          { code: result?.pending ? "purchase_pending" : "purchase_not_completed" },
         ),
       };
     }
 
     const token = extractPurchaseToken(result);
-    if (!token || typeof billing.sendAck !== "function") {
+    if (!token) {
+      return {
+        success: false,
+        preview: false,
+        error: Object.assign(new Error("Google Play purchase token is missing"), {
+          code: "purchase_token_missing",
+        }),
+      };
+    }
+
+    // Keep the existing acknowledgement behavior. The server entitlement
+    // registration runs immediately after this function and is still the
+    // authority that unlocks Pro.
+    if (typeof billing.sendAck === "function") {
+      try {
+        await billing.sendAck({ purchaseToken: token });
+      } catch (ackErr) {
+        return { success: false, preview: false, error: billingError(ackErr, "ack_failed") };
+      }
+    } else {
       return {
         success: false,
         preview: false,
         error: Object.assign(
-          new Error("Google Play purchase acknowledgement is unavailable"),
+          new Error("Google Play acknowledgement is unavailable"),
           { code: "ack_unavailable" },
         ),
       };
     }
 
-    try {
-      await billing.sendAck({ purchaseToken: token });
-    } catch (ackErr) {
-      return { success: false, preview: false, error: billingError(ackErr) };
-    }
-
     return {
       success: true,
       preview: false,
-      verified: true,
+      verified: false,
       productId: purchaseProducts(result)[0] || productId,
       result,
     };
   } catch (e) {
-    const error = billingError(e);
-    await resetBillingAfterFailure(billing);
-    return { success: false, preview: false, error };
+    // IMPORTANT: do NOT call endConnection/disconnect/close here. Some native
+    // billing implementations keep a shared BillingClient connection and
+    // tearing it down after a transient error can make the next purchase fail
+    // until the whole application is restarted.
+    return {
+      success: false,
+      preview: false,
+      error: billingError(e, "billing_flow_failed"),
+    };
   } finally {
-    // Critical: a cancelled/failed purchase must never lock the app into a
-    // permanent "busy" state that forces the user to restart the app.
+    // Always release the JS lock, including cancellation, failure and errors.
     purchaseInFlight = false;
   }
 }
@@ -174,6 +307,7 @@ export async function restorePurchases() {
 
   const restoredPlans = [];
   const purchasesOut = [];
+
   try {
     let purchases = [];
     if (typeof billing.queryPurchases === "function") {
@@ -182,26 +316,23 @@ export async function restorePurchases() {
     } else if (typeof billing.getPurchases === "function") {
       const result = await billing.getPurchases();
       purchases = Array.isArray(result) ? result : result?.purchases || [];
-    }
-
-    const activePurchases = (Array.isArray(purchases) ? purchases : []).filter(isPurchased);
-
-    if (
-      typeof billing.queryPurchases !== "function" &&
-      typeof billing.getPurchases !== "function"
-    ) {
+    } else {
       return {
         restoredPlans: [],
         purchases: [],
         preview: false,
         unsupported: true,
-        error: new Error("Active Google Play purchase queries are unavailable"),
+        error: Object.assign(
+          new Error("Active Google Play purchase queries are unavailable"),
+          { code: "billing_restore_unsupported" },
+        ),
       };
     }
 
+    const activePurchases = (Array.isArray(purchases) ? purchases : []).filter(isPurchased);
     const idToPlan = {};
-    Object.entries(BILLING_PRODUCTS).forEach(([plan, pid]) => {
-      idToPlan[pid] = plan;
+    Object.entries(BILLING_PRODUCTS || {}).forEach(([plan, pid]) => {
+      if (pid) idToPlan[pid] = plan;
     });
 
     activePurchases.forEach((purchase) => {
@@ -225,9 +356,14 @@ export async function restorePurchases() {
       restoredPlans,
       purchases: purchasesOut,
       preview: false,
-      verified: true,
+      verified: false,
     };
   } catch (e) {
-    return { restoredPlans, purchases: purchasesOut, preview: false, error: billingError(e) };
+    return {
+      restoredPlans,
+      purchases: purchasesOut,
+      preview: false,
+      error: billingError(e, "billing_restore_failed"),
+    };
   }
 }

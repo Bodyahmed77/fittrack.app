@@ -23,6 +23,26 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const root = document.getElementById("app");
 
+const SUPABASE_ADMIN_ENTITLEMENTS =
+  "https://zemqiedqcujevyewfpld.supabase.co/functions/v1/admin-entitlements";
+
+async function getVerifiedEntitlementsForAdmin(uid) {
+  if (!uid || !currentUser) return null;
+  try {
+    const token = await currentUser.getIdToken();
+    const response = await fetch(SUPABASE_ADMIN_ENTITLEMENTS, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ uid }),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload?.ok ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 const EXERCISES = [
   ["bench_press", "Bench Press", "ضغط البنش"], ["incline_db_press", "Incline Dumbbell Press", "ضغط دمبل مائل"],
   ["chest_fly", "Chest Fly", "فراشة صدر"], ["dips", "Dips", "ديبس"], ["tricep_pushdown", "Tricep Pushdown", "ترايسبس"],
@@ -146,17 +166,24 @@ async function renderCustomers(customers=null) {
 async function openCustomer(uid) {
   const snap = await getDoc(doc(db, "users", uid));
   if (!snap.exists()) return renderCustomers();
-  currentCustomer = { id: snap.id, ...snap.data() };
+  const rawCustomer = { id: snap.id, ...snap.data() };
+  rawCustomer.verifiedEntitlements = await getVerifiedEntitlementsForAdmin(uid);
+  currentCustomer = rawCustomer;
   planDraft = normalizeTraining(currentCustomer.customTrainingPlan);
   nutritionDraft = normalizeNutrition(currentCustomer.customNutritionPlan);
   renderCustomerDetail();
 }
 
 function renderCustomerDetail() {
-  const a = currentCustomer.account || {}, e = currentCustomer.entitlements || {};
+  const a = currentCustomer.account || {};
+  const e = currentCustomer.verifiedEntitlements || { trainingPro: false, nutritionPro: false, aiCoachPro: false };
+  const firestoreFlags = currentCustomer.entitlements || {};
+  const hasVerified = !!currentCustomer.verifiedEntitlements;
   const hasTraining = !!e.trainingPro, hasNutrition = !!e.nutritionPro;
   shell(`<div class="page-head"><div><button id="back-customers" class="back">← Customers</button><h1>${esc(a.name || "Customer")}</h1><p class="muted">${esc(a.email || "")} · ${esc(a.phone || "")}</p></div><div class="status-pills">${hasTraining ? '<span class="badge gold">Training Pro</span>' : ''}${hasNutrition ? '<span class="badge gold">Nutrition Pro</span>' : ''}${e.aiCoachPro ? '<span class="badge ai">AI Coach</span>' : ''}</div></div>
-  <div class="profile-grid"><section class="panel"><div class="panel-head"><h2>Account</h2><span class="muted">UID ${esc(currentCustomer.id)}</span></div><div class="facts"><div><span>Name</span><b>${esc(a.name || "—")}</b></div><div><span>Phone</span><b>${esc(a.phone || "—")}</b></div><div><span>Email</span><b>${esc(a.email || "—")}</b></div><div><span>Goal</span><b>${esc(a.goal || "—")}</b></div><div><span>Weight</span><b>${esc(a.weight || "—")} kg</b></div><div><span>Height</span><b>${esc(a.height || "—")} cm</b></div></div></section><section class="panel"><div class="panel-head"><h2>Subscription</h2><span class="muted">Read-only</span></div><div class="entitlements"><div class="ent ${hasTraining ? 'on' : ''}"><b>Training Pro</b><span>${hasTraining ? 'Active' : 'Not active'}</span></div><div class="ent ${hasNutrition ? 'on' : ''}"><b>Nutrition Pro</b><span>${hasNutrition ? 'Active' : 'Not active'}</span></div><div class="ent ${e.aiCoachPro ? 'on' : ''}"><b>AI Coach Pro</b><span>${e.aiCoachPro ? 'Active' : 'Not active'}</span></div></div></section></div>
+  <div class="profile-grid"><section class="panel"><div class="panel-head"><h2>Account</h2><span class="muted">UID ${esc(currentCustomer.id)}</span></div><div class="facts"><div><span>Name</span><b>${esc(a.name || "—")}</b></div><div><span>Phone</span><b>${esc(a.phone || "—")}</b></div><div><span>Email</span><b>${esc(a.email || "—")}</b></div><div><span>Goal</span><b>${esc(a.goal || "—")}</b></div><div><span>Weight</span><b>${esc(a.weight || "—")} kg</b></div><div><span>Height</span><b>${esc(a.height || "—")} cm</b></div></div></section><section class="panel"><div class="panel-head"><h2>Subscription</h2><span class="muted">Read-only</span></div><div class="entitlements"><div class="ent ${hasTraining ? 'on' : ''}"><b>Training Pro</b><span>${hasTraining ? 'Verified active' : 'Not verified'}</span></div><div class="ent ${hasNutrition ? 'on' : ''}"><b>Nutrition Pro</b><span>${hasNutrition ? 'Verified active' : 'Not verified'}</span></div><div class="ent ${e.aiCoachPro ? 'on' : ''}"><b>AI Coach Pro</b><span>${e.aiCoachPro ? 'Verified active' : 'Not verified'}</span></div></div><div class="admin-billing-note">${hasVerified
+    ? "Billing status shown here is verified from Supabase/Google Play entitlement state."
+    : "Billing verification is currently unavailable. Firestore flags are not treated as verified Play subscriptions."}</div></section></div>
   <div class="editor-tabs"><button class="tab active" data-editor="training">Training plan</button><button class="tab" data-editor="nutrition">Nutrition plan</button></div><div id="editor"></div>`);
   document.getElementById("back-customers").onclick = () => renderCustomers();
   document.querySelectorAll("[data-editor]").forEach((b) => b.onclick = () => { document.querySelectorAll("[data-editor]").forEach(x => x.classList.remove("active")); b.classList.add("active"); b.dataset.editor === "training" ? renderTrainingEditor() : renderNutritionEditor(); });
@@ -190,7 +217,19 @@ async function saveTraining() {
   if (!currentCustomer.entitlements?.trainingPro) return alert("Training Pro is not active for this customer.");
   const payload = { ...normalizeTraining(planDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
   await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload, workoutStartDate: payload.startDate }, { merge: true });
-  await setDoc(doc(db,"users",currentCustomer.id,"notifications",`training-plan-${Date.now()}`), { type: "training_plan_ready", title: "Your training plan is ready", body: "Your personalized training plan has been published.", createdAt: new Date().toISOString(), read: false }, { merge: false });
+  const userLang = String(currentCustomer?.settings?.language || currentCustomer?.settings?.lang || currentCustomer?.account?.language || currentCustomer?.account?.lang || "en").toLowerCase();
+  const ar = userLang.startsWith("ar");
+  await setDoc(doc(db,"users",currentCustomer.id,"notifications",`training-plan-${Date.now()}`), {
+    type: "training_plan_ready",
+    title: ar ? "اتضافت لك خطة تدريب جديدة 💪" : "A new training plan was added 💪",
+    body: ar ? "خطة التدريب المخصصة ليك بقت جاهزة داخل Fifty Fit." : "Your personalized training plan is now ready in Fifty Fit.",
+    titleAr: "اتضافت لك خطة تدريب جديدة 💪",
+    bodyAr: "خطة التدريب المخصصة ليك بقت جاهزة داخل Fifty Fit.",
+    titleEn: "A new training plan was added 💪",
+    bodyEn: "Your personalized training plan is now ready in Fifty Fit.",
+    createdAt: new Date().toISOString(),
+    read: false,
+  }, { merge: false });
   currentCustomer.customTrainingPlan = payload;
   planDraft = normalizeTraining(payload);
   alert("Training plan published. The customer will see it in the app.");
@@ -218,7 +257,19 @@ async function saveNutrition() {
   if (!currentCustomer.entitlements?.nutritionPro) return alert("Nutrition Pro is not active for this customer.");
   const payload = { ...normalizeNutrition(nutritionDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
   await setDoc(doc(db,"users",currentCustomer.id), { customNutritionPlan: payload }, { merge: true });
-  await setDoc(doc(db,"users",currentCustomer.id,"notifications",`nutrition-plan-${Date.now()}`), { type: "nutrition_plan_ready", title: "Your nutrition plan is ready", body: "Your personalized nutrition plan has been published.", createdAt: new Date().toISOString(), read: false }, { merge: false });
+  const userLang = String(currentCustomer?.settings?.language || currentCustomer?.settings?.lang || currentCustomer?.account?.language || currentCustomer?.account?.lang || "en").toLowerCase();
+  const ar = userLang.startsWith("ar");
+  await setDoc(doc(db,"users",currentCustomer.id,"notifications",`nutrition-plan-${Date.now()}`), {
+    type: "nutrition_plan_ready",
+    title: ar ? "اتضاف لك نظام أكل جديد 🍽️" : "A new nutrition plan was added 🍽️",
+    body: ar ? "خطة الأكل المخصصة ليك بقت جاهزة داخل Fifty Fit." : "Your personalized nutrition plan is now ready in Fifty Fit.",
+    titleAr: "اتضاف لك نظام أكل جديد 🍽️",
+    bodyAr: "خطة الأكل المخصصة ليك بقت جاهزة داخل Fifty Fit.",
+    titleEn: "A new nutrition plan was added 🍽️",
+    bodyEn: "Your personalized nutrition plan is now ready in Fifty Fit.",
+    createdAt: new Date().toISOString(),
+    read: false,
+  }, { merge: false });
   currentCustomer.customNutritionPlan = payload;
   nutritionDraft = normalizeNutrition(payload);
   alert("Nutrition plan published. The customer will see it in the app.");

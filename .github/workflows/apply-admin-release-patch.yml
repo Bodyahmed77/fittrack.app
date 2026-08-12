@@ -1,0 +1,29 @@
+name: Apply Admin Release Patch
+
+on:
+  push:
+    paths:
+      - scripts/admin-release-patch.py
+      - .github/workflows/apply-admin-release-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Apply admin patch
+        run: python3 scripts/admin-release-patch.py
+      - name: Commit patched admin and remove temporary tooling
+        run: |
+          rm -f scripts/admin-release-patch.py
+          rm -f .github/workflows/apply-admin-release-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add admin/app.js admin/index.html admin/boot.js admin/styles.css
+          git add -u scripts/admin-release-patch.py .github/workflows/apply-admin-release-patch.yml
+          git commit -m "fix: verify admin billing state and publish localized plan notifications" || exit 0
+          git push

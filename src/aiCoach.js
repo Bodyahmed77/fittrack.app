@@ -4,31 +4,32 @@
 import { AI_COACH_ENDPOINT, FREE_AI_MESSAGES_PER_DAY, PRO_AI_MESSAGES_PER_DAY, SUPABASE_ANON_KEY } from "./config";
 import { auth } from "./firebase";
 
-// Android keyboard positioning is owned by the native WebView resize mode.
-// The AI drawer previously switched Capacitor Keyboard to `none` and then
-// manually lifted the drawer by the reported IME height. On some Android
-// devices that height includes the system/navigation inset, producing a
-// visible white gap between the composer border and the keyboard. Keep the
-// native resize behavior instead: the WebView viewport ends exactly where the
-// keyboard begins, so the composer can sit directly on that boundary.
+// Android keyboard positioning must stay in native resize mode. The AI drawer
+// used to switch to `none` and manually lift the panel by keyboardHeight. On
+// some Android devices that height includes the system/navigation inset, which
+// leaves a visible gap between the composer border and the keyboard.
+// Guard the native plugin once so the drawer cannot accidentally re-enable
+// overlay mode during its own open/close lifecycle.
 let __keyboardResizePatched = false;
 async function ensureNativeKeyboardResize() {
   if (__keyboardResizePatched) return;
-  __keyboardResizePatched = true;
   try {
     const { Capacitor } = await import("@capacitor/core");
     if (!Capacitor.isNativePlatform()) return;
     const { Keyboard } = await import("@capacitor/keyboard");
-    if (Keyboard?.setResizeMode) {
-      await Keyboard.setResizeMode({ mode: "native" });
+    if (!Keyboard?.setResizeMode) return;
+    if (!__keyboardResizePatched) {
+      const nativeSetResizeMode = Keyboard.setResizeMode.bind(Keyboard);
+      Keyboard.setResizeMode = async () => nativeSetResizeMode({ mode: "native" });
+      __keyboardResizePatched = true;
     }
+    await Keyboard.setResizeMode({ mode: "native" });
   } catch {
     // Browser builds and devices without the Capacitor keyboard plugin simply
     // keep their normal browser behavior.
   }
 }
 
-// Run as soon as this module is evaluated, before the AI drawer is opened.
 ensureNativeKeyboardResize();
 
 export function aiDailyLimit(hasAiPro) { return hasAiPro ? PRO_AI_MESSAGES_PER_DAY : FREE_AI_MESSAGES_PER_DAY; }

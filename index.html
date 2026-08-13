@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0b0d10" />
     <link rel="preconnect" href="https://www.tiktok.com" crossorigin />
     <title>Fifty Fit</title>
@@ -11,13 +11,13 @@
       * { -webkit-tap-highlight-color: transparent; }
     </style>
     <script>
-      /* Runtime compatibility fixes for the current release bundle.
+      /* Runtime compatibility fixes for the current Android release.
          1) Keep the legacy bare planIds lookup alive.
          2) Keep the AI composer attached to the visible Android viewport when
-            the soft keyboard opens (no manual keyboard-height inset).
-         3) TikTok exercise links are opened as normal web pages inside the
-            existing Android WebView. We intentionally do NOT rewrite them to
-            TikTok's official embedded player. */
+            the soft keyboard opens.
+         3) TikTok exercises use a normal top-level TikTok web page inside the
+            existing Capacitor Android WebView. We do NOT use TikTok's official
+            embedded player and we do NOT send the user to the external app. */
       (function () {
         try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
 
@@ -40,48 +40,78 @@
               for (var depth = 0; node && depth < 8; depth++, node = node.parentElement) {
                 var cs = window.getComputedStyle(node);
                 if (cs.position === "fixed" || cs.position === "absolute") {
-                  var bottom = cs.bottom;
-                  if (bottom === "0px" || bottom === "auto" || node.style.inset === "0px" || node.style.inset === "0") {
-                    node.style.setProperty("bottom", "auto", "important");
-                    node.style.setProperty("height", h + "px", "important");
-                    node.style.setProperty("max-height", h + "px", "important");
-                    if (cs.position === "fixed") node.style.setProperty("top", "0px", "important");
-                  }
+                  node.style.setProperty("bottom", "0px", "important");
+                  node.style.setProperty("max-height", h + "px", "important");
+                  node.style.setProperty("height", h + "px", "important");
                 }
               }
             }
           } catch (_) {}
         }
 
-        function extractTikTokUrl(src) {
-          var raw = String(src || "");
-          if (!raw) return "";
-          var direct = raw.match(/https?:\/\/www\.tiktok\.com\/(?:@[^/]+\/)?video\/\d+(?:[^\s]*)?/i);
-          if (direct) return direct[0];
-          var shortDirect = raw.match(/https?:\/\/vt\.tiktok\.com\/[^\s"']+/i);
-          if (shortDirect) return shortDirect[0];
+        function normalizeTikTokUrl(raw) {
+          var value = String(raw || "").trim();
+          if (!value) return "";
 
-          /* App.jsx currently wraps full/short TikTok URLs as a YouTube embed
-             id because its old detector only recognizes numeric IDs. */
-          var wrapped = raw.match(/youtube-nocookie\.com\/embed\/(https?:\/\/(?:www\.tiktok\.com|vt\.tiktok\.com)\/[^?&\s]+)/i);
-          if (wrapped) return wrapped[1];
+          /* Undo old/unsupported official-player URLs so the user gets the
+             normal TikTok page they asked for. */
+          var player = value.match(/https?:\/\/www\.tiktok\.com\/player\/v1\/(\d+)/i);
+          if (player) return "https://www.tiktok.com/video/" + player[1];
+
+          var full = value.match(/https?:\/\/www\.tiktok\.com\/(?:@[^/]+\/)?video\/(\d+)/i);
+          if (full) return "https://www.tiktok.com/video/" + full[1];
+
+          var shortUrl = value.match(/https?:\/\/vt\.tiktok\.com\/[^\s"']+/i);
+          if (shortUrl) return shortUrl[0];
+
+          /* App.jsx may hand the viewer a bare TikTok post id. */
+          if (/^\d{15,25}$/.test(value)) return "https://www.tiktok.com/video/" + value;
+
+          /* Old builds sometimes wrapped the TikTok URL in a YouTube embed. */
+          var wrapped = value.match(/youtube-nocookie\.com\/embed\/(https?:\/\/(?:www\.tiktok\.com|vt\.tiktok\.com)\/[^?&\s]+)/i);
+          if (wrapped) return normalizeTikTokUrl(wrapped[1]);
+
           return "";
         }
 
         var lastTikTokNavigation = "";
-        function handleTikTokFrames() {
+        function openTikTokAsWebViewPage(url) {
+          if (!url || url === lastTikTokNavigation) return;
+          lastTikTokNavigation = url;
+          /* This is deliberately a top-level navigation in the existing
+             Capacitor WebView: visually it behaves like opening a browser
+             page in-app, with the full TikTok web experience. Android WebView
+             navigation history lets Back return to Fifty Fit. */
+          try { window.location.assign(url); }
+          catch (_) { try { window.location.href = url; } catch (__) {} }
+        }
+
+        function scanTikTokFrames() {
           try {
             var frames = document.querySelectorAll("iframe");
             for (var i = 0; i < frames.length; i++) {
-              var url = extractTikTokUrl(frames[i].getAttribute("src") || frames[i].src);
-              if (!url || lastTikTokNavigation === url) continue;
-              lastTikTokNavigation = url;
-              /* Load the public TikTok page in the existing Capacitor WebView.
-                 This is the requested browser-like web mode, not TikTok's
-                 official embedded player. Android WebView keeps navigation
-                 history, so Back can return to Fifty Fit. */
-              window.location.assign(url);
-              return;
+              var raw = frames[i].getAttribute("src") || frames[i].src || "";
+              var url = normalizeTikTokUrl(raw);
+              if (url) {
+                openTikTokAsWebViewPage(url);
+                return;
+              }
+            }
+          } catch (_) {}
+        }
+
+        function scanTikTokIntent() {
+          try {
+            var nodes = document.querySelectorAll("a,button,[role='button']");
+            for (var i = 0; i < nodes.length; i++) {
+              var text = String(nodes[i].textContent || "").toLowerCase();
+              if (!text) continue;
+              if (!text.includes("شوف الشورت") && !text.includes("مشاهدة الفيديو") && !text.includes("watch short") && !text.includes("watch video")) continue;
+              nodes[i].addEventListener("click", function () {
+                setTimeout(scanTikTokFrames, 0);
+                setTimeout(scanTikTokFrames, 60);
+                setTimeout(scanTikTokFrames, 250);
+              }, { once: true, passive: true });
             }
           } catch (_) {}
         }
@@ -94,11 +124,17 @@
           }
           window.addEventListener("resize", syncAiViewport, { passive: true });
           window.addEventListener("orientationchange", syncAiViewport, { passive: true });
-          var observer = new MutationObserver(function () { syncAiViewport(); handleTikTokFrames(); });
+          var observer = new MutationObserver(function () {
+            syncAiViewport();
+            scanTikTokFrames();
+            scanTikTokIntent();
+          });
           observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "style"] });
           setTimeout(syncAiViewport, 0);
           setTimeout(syncAiViewport, 250);
           setTimeout(syncAiViewport, 700);
+          setTimeout(scanTikTokFrames, 0);
+          setTimeout(scanTikTokIntent, 0);
         } catch (_) {}
 
         try {

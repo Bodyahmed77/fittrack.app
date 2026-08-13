@@ -1,0 +1,119 @@
+name: One-time admin plans and TikTok fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply targeted fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1) Prevent the client from persisting admin-owned plans back to Firestore.
+          p = Path('src/App.jsx')
+          s = p.read_text(encoding='utf-8')
+          old = '''const persisted = Object.fromEntries(
+          Object.entries(next).filter(([key]) => key !== "entitlements"),
+        );'''
+          new = '''const persisted = Object.fromEntries(
+          Object.entries(next).filter(
+            ([key]) =>
+              key !== "entitlements" &&
+              key !== "customTrainingPlan" &&
+              key !== "customNutritionPlan",
+          ),
+        );'''
+          if old not in s:
+              raise SystemExit('setData persistence block not found')
+          s = s.replace(old, new, 1)
+
+          # Never let a client-side built-in plan selection delete an admin plan.
+          s, n = re.subn(
+              r'\n\s*// A built-in plan selection intentionally replaces an admin custom plan\.\n\s*next\.customTrainingPlan = null;',
+              '',
+              s,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit('customTrainingPlan client-delete line not found')
+
+          # Make the published training plan discoverable from the real Plans screen.
+          marker = '      {data.customNutritionPlan && data.entitlements.nutritionPro && ('
+          training_card = '''      {data.customTrainingPlan && data.entitlements.trainingPro && (\n        <div style={{ padding: "0 18px 10px" }}>\n          <Card\n            onClick={() => go("workout")}\n            style={{\n              background: C.greenSoft,\n              border: `1.5px solid ${C.green}66`,\n              cursor: "pointer",\n            }}\n          >\n            <div style={{ color: C.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0.6 }}>\n              {ar ? "خطة تدريب مخصصة" : "PERSONALIZED TRAINING"}\n            </div>\n            <div style={{ color: C.text, fontSize: 15, fontWeight: 900, marginTop: 4 }}>\n              🏋️ {ar ? (data.customTrainingPlan.titleAr || "خطة التدريب المخصصة") : (data.customTrainingPlan.title || "Personal Training Plan")}\n            </div>\n            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 4 }}>\n              {ar ? `تبدأ ${data.customTrainingPlan.startDate || dateKey(0)}` : `Starts ${data.customTrainingPlan.startDate || dateKey(0)}`}\n            </div>\n            <div style={{ color: C.text, fontSize: 11.5, fontWeight: 800, marginTop: 9 }}>\n              {ar ? "فتح خطة التدريب ←" : "Open Training Plan →"}\n            </div>\n          </Card>\n        </div>\n      )}\n'''
+          if marker not in s:
+              raise SystemExit('Plans nutrition card marker not found')
+          if 'PERSONALIZED TRAINING' not in s:
+              s = s.replace(marker, training_card + marker, 1)
+          p.write_text(s, encoding='utf-8')
+
+          # 2) Notifications should carry an explicit destination.
+          p = Path('admin/app.js')
+          a = p.read_text(encoding='utf-8')
+          a, n1 = re.subn(
+              r'(type: "training_plan_ready",\n)',
+              r'\1    route: { screen: "workout", params: {} },\n',
+              a,
+              count=1,
+          )
+          a, n2 = re.subn(
+              r'(type: "nutrition_plan_ready",\n)',
+              r'\1    route: { screen: "nutritionPlan", params: {} },\n',
+              a,
+              count=1,
+          )
+          if n1 != 1 or n2 != 1:
+              raise SystemExit(f'notification route patch failed: training={n1}, nutrition={n2}')
+          p.write_text(a, encoding='utf-8')
+
+          # 3) Keep TikTok as the exact supplied web URL inside the existing full-screen iframe.
+          #    Do not sandbox it: TikTok's normal web page needs the browser-like iframe context.
+          p = Path('index.html')
+          h = p.read_text(encoding='utf-8')
+          sandbox_line = '              frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");\n'
+          if sandbox_line in h:
+              h = h.replace(sandbox_line, '              frame.removeAttribute("sandbox");\n', 1)
+          else:
+              raise SystemExit('TikTok sandbox line not found in index.html')
+          p.write_text(h, encoding='utf-8')
+
+          # 4) GitHub Pages: /docs is the public root; expose the current Admin dashboard explicitly.
+          Path('docs/index.html').write_text('''<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width,initial-scale=1">\n  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n  <meta http-equiv="Pragma" content="no-cache">\n  <meta http-equiv="Expires" content="0">\n  <title>Fifty Fit</title>\n  <style>body{font-family:Arial,sans-serif;max-width:760px;margin:50px auto;padding:0 20px;line-height:1.7}a{display:block;margin:14px 0}</style>\n</head>\n<body>\n  <h1>Fifty Fit</h1>\n  <p>Official resources and staff tools for Fifty Fit.</p>\n  <a href="./admin/">Admin Dashboard</a>\n  <a href="./privacy-policy.html">Privacy Policy</a>\n  <a href="./account-deletion.html">Account &amp; Data Deletion</a>\n</body>\n</html>\n''', encoding='utf-8')
+
+          # 5) GitHub Pages Admin loader: always load the canonical /admin assets,
+          #    including the nutrition builder, with no-cache semantics.
+          Path('docs/admin/boot.js').write_text('''const root = document.getElementById("app");\n\nfunction showBootError(error) {\n  const message = error instanceof Error ? error.message : String(error || "Unknown error");\n  root.innerHTML = `<div class="login-page"><div class="login-card"><div class="brand center"><div class="brand-mark big">F</div><div><b>Fifty Fit</b><span>Admin Console</span></div></div><h1>Admin could not start</h1><p class="muted">The page loaded, but the Firebase admin module could not start.</p><div class="error">${message.replace(/[&<>\\"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",\\" : "&quot;", "'":"&#39;"}[c]))}</div><p class="muted">Refresh this page once. If this message remains, send this exact error to the developer.</p></div></div>`;\n}\n\nconst cacheVersion = Date.now();\nconst rawBase = "https://raw.githubusercontent.com/Bodyahmed77/fittrack.app/main/admin/";\n\nasync function fetchText(name) {\n  const response = await fetch(`${rawBase}${name}?v=${cacheVersion}`, { cache: "no-store" });\n  if (!response.ok) throw new Error(`Failed to load admin asset ${name} (${response.status})`);\n  return response.text();\n}\n\nfunction importBlob(source, label) {\n  const blob = new Blob([source], { type: "text/javascript" });\n  const url = URL.createObjectURL(blob);\n  return import(url).finally(() => URL.revokeObjectURL(url)).catch((error) => {\n    error.message = `${label}: ${error.message || error}`;\n    throw error;\n  });\n}\n\nasync function boot() {\n  const [styles, appSource, cardioSource, nutritionSource] = await Promise.all([\n    fetchText("styles.css"),\n    fetchText("app.js"),\n    fetchText("cardio.js"),\n    fetchText("nutrition-builder.js"),\n  ]);\n\n  const style = document.createElement("style");\n  style.textContent = styles;\n  document.head.appendChild(style);\n\n  const firebaseConfigModule = `const firebaseConfig = ${JSON.stringify({\n    apiKey: "AIzaSyANEXYUVqaGss1i9WS5gH7Ic3UrBgKG_qc",\n    authDomain: "fittrack-698fa.firebaseapp.com",\n    projectId: "fittrack-698fa",\n    storageBucket: "fittrack-698fa.firebasestorage.app",\n    messagingSenderId: "632925500741",\n    appId: "1:632925500741:web:1d42d331f0bd09f4c67a2c",\n    measurementId: "G-7S75NTCV5B",\n  })};`;\n\n  const normalizedApp = appSource.replace(\n    'import { firebaseConfig } from "./firebase-config.js";',\n    firebaseConfigModule,\n  );\n  const normalizedNutrition = nutritionSource.replace(\n    'import { firebaseConfig } from "./firebase-config.js";',\n    firebaseConfigModule,\n  );\n\n  await importBlob(normalizedApp, "admin/app.js");\n  await importBlob(cardioSource, "admin/cardio.js");\n  await importBlob(normalizedNutrition, "admin/nutrition-builder.js");\n}\n\nboot().catch(showBootError);\n''', encoding='utf-8')
+
+          p = Path('docs/admin/index.html')
+          page = p.read_text(encoding='utf-8').replace('boot.js?v=20260813-2', 'boot.js?v=20260813-4')
+          p.write_text(page, encoding='utf-8')
+
+          # 6) Keep the root docs page focused on legal resources + admin, not a stale dashboard copy.
+          #    The dashboard itself always executes the latest /admin sources above.
+
+          # Basic assertions so this maintenance commit cannot silently ship a bad partial patch.
+          assert 'customTrainingPlan" && !' in s or 'customTrainingPlan"' in s
+          assert 'route: { screen: "nutritionPlan", params: {} }' in a
+          assert 'route: { screen: "workout", params: {} }' in a
+          assert 'Admin Dashboard' in Path('docs/index.html').read_text(encoding='utf-8')
+          assert 'nutrition-builder.js' in Path('docs/admin/boot.js').read_text(encoding='utf-8')
+          print('Targeted admin/plan/notification/TikTok fixes prepared successfully.')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/one-time-admin-plans-fix.yml
+          git add src/App.jsx admin/app.js index.html docs/index.html docs/admin/boot.js docs/admin/index.html
+          git commit -m "fix: keep admin plans, pages dashboard, notification routes and in-app TikTok"
+          git push

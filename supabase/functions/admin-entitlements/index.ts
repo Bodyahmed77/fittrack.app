@@ -6,16 +6,27 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const FIRESTORE_BASE = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
-const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://bodyahmed77.github.io",
+  "http://localhost",
+  "https://localhost",
+]);
 
-function json(status: number, body: Record<string, unknown>) {
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("Origin") || "";
+  const allowed = ALLOWED_ORIGINS.has(origin) ? origin : "https://bodyahmed77.github.io";
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
+
+function json(req: Request, status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
@@ -50,23 +61,23 @@ async function assertAdmin(firebaseToken: string, uid: string) {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders(req) });
+  if (req.method !== "POST") return json(req, 405, { error: "method_not_allowed" });
 
   try {
     const authHeader = req.headers.get("Authorization") || "";
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    if (!match) return json(401, { error: "missing_authorization" });
+    if (!match) return json(req, 401, { error: "missing_authorization" });
 
     const firebaseToken = match[1];
     const callerUid = await verifyFirebaseIdToken(firebaseToken);
     if (!(await assertAdmin(firebaseToken, callerUid))) {
-      return json(403, { error: "admin_required" });
+      return json(req, 403, { error: "admin_required" });
     }
 
     const body = await req.json().catch(() => ({}));
     const targetUid = typeof body?.uid === "string" ? body.uid.trim() : "";
-    if (!targetUid) return json(400, { error: "uid_required" });
+    if (!targetUid) return json(req, 400, { error: "uid_required" });
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -77,9 +88,7 @@ Deno.serve(async (req: Request) => {
       .select("product_key,purchase_state,expires_at,updated_at")
       .eq("uid", targetUid);
 
-    if (error) {
-      return json(500, { error: "entitlement_lookup_failed" });
-    }
+    if (error) return json(req, 500, { error: "entitlement_lookup_failed" });
 
     const now = Date.now();
     const active = (data || []).filter((row) => {
@@ -90,7 +99,7 @@ Deno.serve(async (req: Request) => {
     });
 
     const keys = new Set(active.map((row) => row.product_key));
-    return json(200, {
+    return json(req, 200, {
       ok: true,
       uid: targetUid,
       source: "supabase_verified_entitlements",
@@ -106,6 +115,6 @@ Deno.serve(async (req: Request) => {
     });
   } catch (error) {
     console.error("admin-entitlements error", error instanceof Error ? error.message : "unknown");
-    return json(500, { error: "internal_error" });
+    return json(req, 500, { error: "internal_error" });
   }
 });

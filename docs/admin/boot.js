@@ -5,11 +5,12 @@ function showBootError(error) {
   root.innerHTML = `<div class="login-page"><div class="login-card"><div class="brand center"><div class="brand-mark big">F</div><div><b>Fifty Fit</b><span>Admin Console</span></div></div><h1>Admin could not start</h1><p class="muted">The page loaded, but the Firebase admin module could not start.</p><div class="error">${message.replace(/[&<>\"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}</div><p class="muted">Refresh this page once. If this message remains, send this exact error to the developer.</p></div></div>`;
 }
 
-// GitHub Pages publishes /docs as the site root. The current admin source lives
-// under /admin in the repository. GitHub's raw endpoint serves JavaScript with
-// a non-JavaScript MIME type, so browsers refuse to load it as a module via
-// dynamic import. Fetch the current source as text, create same-page JS blobs,
-// and import those blobs as real JavaScript modules instead.
+// GitHub Pages publishes /docs as the site root. The canonical admin source
+// lives under /admin in the repository. GitHub Raw serves JavaScript with a
+// MIME type that browsers may reject for module imports, so fetch the current
+// source as text and import it from same-page Blob URLs. We intentionally do
+// not load the old runtime-enhancements polling/MutationObserver layer here;
+// the canonical app already owns its UI and publish behavior.
 const cacheVersion = Date.now();
 const rawBase = "https://raw.githubusercontent.com/Bodyahmed77/fittrack.app/main/admin/";
 
@@ -22,27 +23,27 @@ async function fetchText(name) {
 function importBlob(source, label) {
   const blob = new Blob([source], { type: "text/javascript" });
   const url = URL.createObjectURL(blob);
-  return import(/* webpackIgnore: true */ url).finally(() => URL.revokeObjectURL(url)).catch((error) => {
-    error.message = `${label}: ${error.message || error}`;
-    throw error;
-  });
+  return import(/* webpackIgnore: true */ url)
+    .finally(() => URL.revokeObjectURL(url))
+    .catch((error) => {
+      error.message = `${label}: ${error.message || error}`;
+      throw error;
+    });
 }
 
 async function boot() {
-  const [styles, appSource, cardioSource, runtimeSource] = await Promise.all([
+  const [styles, appSource, cardioSource] = await Promise.all([
     fetchText("styles.css"),
     fetchText("app.js"),
     fetchText("cardio.js"),
-    fetchText("runtime-enhancements.js"),
   ]);
 
   const style = document.createElement("style");
   style.textContent = styles;
   document.head.appendChild(style);
 
-  // app.js is the only admin module with a relative repository import.
-  // Inline the public Firebase web config so the blob module has no relative
-  // dependency and still keeps the existing Firebase security model.
+  // app.js has one relative import. Inline the public Firebase web config so
+  // the blob module has no relative repository dependency.
   const firebaseConfigModule = `const firebaseConfig = ${JSON.stringify({
     apiKey: "AIzaSyANEXYUVqaGss1i9WS5gH7Ic3UrBgKG_qc",
     authDomain: "fittrack-698fa.firebaseapp.com",
@@ -57,10 +58,8 @@ async function boot() {
     firebaseConfigModule,
   );
 
-  // Start the app first so the runtime enhancement can observe its DOM.
   await importBlob(normalizedApp, "admin/app.js");
   await importBlob(cardioSource, "admin/cardio.js");
-  await importBlob(runtimeSource, "admin/runtime-enhancements.js");
 }
 
 boot().catch(showBootError);

@@ -21,7 +21,8 @@ async function loadUser(uid) {
 }
 
 function isPlansPage() {
-  return [...document.querySelectorAll("h1")].some((h) => /^(Plans|الخطط)$/i.test(String(h.textContent || "").trim()));
+  const text = String(document.body?.innerText || "");
+  return text.includes("Standard Plan") || text.includes("الخطة الأساسية مجانية للأبد");
 }
 
 function clickNutritionTab() {
@@ -36,27 +37,26 @@ function inject() {
   if (!isPlansPage()) return;
   if (document.querySelector("[data-fifty-fit-published-nutrition-plan]")) return;
 
-  const heading = [...document.querySelectorAll("h1")].find((h) => /^(Plans|الخطط)$/i.test(String(h.textContent || "").trim()));
-  if (!heading) return;
-  const host = heading.closest("main") || heading.parentElement?.parentElement || document.body;
+  const plan = userData.customNutritionPlan;
   const card = document.createElement("div");
   card.dataset.fiftyFitPublishedNutritionPlan = "1";
   card.style.cssText = "margin:10px 18px;padding:14px;border:1.5px solid rgba(255,255,255,.28);border-radius:14px;background:rgba(255,255,255,.06);cursor:pointer";
-  const plan = userData.customNutritionPlan;
   card.innerHTML = `<div style="font-size:10px;font-weight:900;letter-spacing:.6px;opacity:.65">PERSONALIZED PLAN</div><div style="font-size:15px;font-weight:900;margin-top:4px">🍽️ ${esc(plan.title || "Your Nutrition Plan")}</div><div style="font-size:11.5px;opacity:.65;margin-top:4px">${plan.startDate ? `Starts ${esc(plan.startDate)}` : "Published by Fifty Fit"}</div><div style="font-size:11.5px;font-weight:800;margin-top:9px">Open Nutrition Plan →</div>`;
   card.addEventListener("click", () => {
     clickNutritionTab();
     setTimeout(() => {
       const title = String(plan.title || "Your Nutrition Plan");
       const candidates = [...document.querySelectorAll("div,button")].filter((el) => String(el.textContent || "").includes(title));
-      const target = candidates.find((el) => el !== card && el.closest("[data-fifty-fit-published-nutrition-plan]") == null);
+      const target = candidates.find((el) => el !== card && !el.closest("[data-fifty-fit-published-nutrition-plan]"));
       if (target) target.closest("button")?.click?.();
-    }, 250);
+    }, 300);
   });
 
-  const firstCard = host.querySelector("div");
-  if (firstCard?.parentElement) firstCard.parentElement.insertBefore(card, firstCard);
-  else host.prepend(card);
+  // PlansScreen is a normal div-based screen (TopBar is not an h1), so insert
+  // directly before the first built-in plan card instead of relying on a heading.
+  const builtIn = [...document.querySelectorAll("div")].find((el) => String(el.textContent || "").includes("Standard Plan") && el.querySelector?.("button"));
+  if (builtIn?.parentElement) builtIn.parentElement.insertBefore(card, builtIn);
+  else document.querySelector("#root")?.prepend(card);
 }
 
 onAuthStateChanged(auth, (user) => {

@@ -10,6 +10,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get("role", "") in ["owner", "staff"];
     }
 
+    function clientCreatedEntitlementsAreFree() {
+      return request.resource.data.get("entitlements", {}) == {
+        "trainingPro": false,
+        "nutritionPro": false,
+        "aiCoachPro": false,
+        "proExpiresAt": null
+      };
+    }
+
     // Marks who is an admin. A document only exists here if the owner created
     // it deliberately. No client, admin or not, can grant itself access.
     match /admins/{uid} {
@@ -26,9 +35,13 @@ service cloud.firestore {
       );
       allow create: if request.auth != null &&
         request.auth.uid == userId &&
-        request.resource.data.get("entitlements", {}).get("trainingPro", false) == false &&
-        request.resource.data.get("entitlements", {}).get("nutritionPro", false) == false &&
-        request.resource.data.get("entitlements", {}).get("aiCoachPro", false) == false;
+        clientCreatedEntitlementsAreFree() &&
+        !request.resource.data.keys().hasAny([
+          "customTrainingPlan",
+          "customNutritionPlan",
+          "bothPro",
+          "everythingPro"
+        ]);
       allow update: if request.auth != null && (
         isAdmin() ||
         (

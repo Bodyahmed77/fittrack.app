@@ -12,42 +12,140 @@
     </style>
     <script>
       /* Runtime compatibility fixes for the current release bundle.
-         - Keep the legacy bare `planIds` lookup alive without rewriting the
-           large App.jsx bundle yet.
-         - Convert TikTok video iframe sources into the official player URL so
-           raw numeric IDs/normal TikTok URLs never navigate the app WebView. */
+         1) Keep the legacy bare planIds lookup alive.
+         2) Keep the AI composer attached to the visible Android viewport when
+            the soft keyboard opens (no manual keyboard-height inset).
+         3) TikTok exercise links are opened as normal web pages inside the
+            existing Android WebView. We intentionally do NOT rewrite them to
+            TikTok's official embedded player. */
       (function () {
         try {
           window.planIds = ["training", "nutrition", "both", "ai"];
         } catch (_) {}
 
-        try {
-          var TIKTOK_PLAYER = "https://www.tiktok.com/player/v1/";
-          var TIKTOK_QS = "?controls=1&autoplay=0&description=0&music_info=0&rel=0";
-          var nativeSrc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "src");
-          if (nativeSrc && nativeSrc.set && nativeSrc.get && !window.__FIFTYFIT_TIKTOK_IFRAME_PATCHED__) {
-            var normalizeTikTok = function (value) {
-              var raw = String(value || "");
-              if (/^\d+$/.test(raw)) return TIKTOK_PLAYER + raw + TIKTOK_QS;
-              var match = raw.match(/https?:\/\/www\.tiktok\.com\/.*?\/video\/(\d+)/i);
-              if (match) return TIKTOK_PLAYER + match[1] + TIKTOK_QS;
-              return raw;
-            };
-            Object.defineProperty(HTMLIFrameElement.prototype, "src", {
-              configurable: nativeSrc.configurable,
-              enumerable: nativeSrc.enumerable,
-              get: nativeSrc.get,
-              set: function (value) { return nativeSrc.set.call(this, normalizeTikTok(value)); }
-            });
-            var nativeSetAttribute = Element.prototype.setAttribute;
-            Element.prototype.setAttribute = function (name, value) {
-              if (this instanceof HTMLIFrameElement && String(name).toLowerCase() === "src") {
-                value = normalizeTikTok(value);
-              }
-              return nativeSetAttribute.call(this, name, value);
-            };
-            window.__FIFTYFIT_TIKTOK_IFRAME_PATCHED__ = true;
+        function viewportHeight() {
+          try {
+            return Math.max(0, Math.round(window.visualViewport ? window.visualViewport.height : window.innerHeight));
+          } catch (_) {
+            return Math.max(0, Math.round(window.innerHeight || 0));
           }
+        }
+
+        function syncAiViewport() {
+          try {
+            var h = viewportHeight();
+            if (!h) return;
+            document.documentElement.style.setProperty("--fiftyfit-visible-vh", h + "px");
+
+            var inputs = document.querySelectorAll("input");
+            for (var i = 0; i < inputs.length; i++) {
+              var input = inputs[i];
+              var ph = String(input.getAttribute("placeholder") || "").toLowerCase();
+              if (!ph.includes("اكتب سؤالك") && !ph.includes("ask anything")) continue;
+
+              var node = input;
+              for (var depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+                var cs = window.getComputedStyle(node);
+                if (cs.position === "fixed" || cs.position === "absolute") {
+                  var bottom = cs.bottom;
+                  if (bottom === "0px" || bottom === "auto" || node.style.inset === "0px" || node.style.inset === "0") {
+                    node.style.setProperty("bottom", "auto", "important");
+                    node.style.setProperty("height", h + "px", "important");
+                    node.style.setProperty("max-height", h + "px", "important");
+                    if (cs.position === "fixed") {
+                      node.style.setProperty("top", "0px", "important");
+                    }
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
+        function restoreAiViewport() {
+          try {
+            var inputs = document.querySelectorAll("input");
+            for (var i = 0; i < inputs.length; i++) {
+              var ph = String(inputs[i].getAttribute("placeholder") || "").toLowerCase();
+              if (!ph.includes("اكتب سؤالك") && !ph.includes("ask anything")) continue;
+              var node = inputs[i];
+              for (var depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+                if (node.style.height && node.style.maxHeight) {
+                  node.style.removeProperty("height");
+                  node.style.removeProperty("max-height");
+                  node.style.removeProperty("bottom");
+                  node.style.removeProperty("top");
+                }
+              }
+            }
+          } catch (_) {}
+        }
+
+        function extractTikTokUrl(src) {
+          var raw = String(src || "");
+          if (!raw) return "";
+          var direct = raw.match(/https?:\/\/www\.tiktok\.com\/(?:@[^/]+\/)?video\/\d+(?:[^\s]*)?/i);
+          if (direct) return direct[0];
+
+          /* Current App.jsx temporarily wraps a full TikTok URL as a YouTube
+             embed id because its old detector only recognizes numeric IDs. */
+          var wrapped = raw.match(/youtube-nocookie\.com\/embed\/(https?:\/\/www\.tiktok\.com\/[^?&]+(?:\?[^#]*)?)/i);
+          if (wrapped) return wrapped[1];
+          return "";
+        }
+
+        var lastTikTokNavigation = "";
+        function handleTikTokFrames() {
+          try {
+            var frames = document.querySelectorAll("iframe");
+            for (var i = 0; i < frames.length; i++) {
+              var url = extractTikTokUrl(frames[i].getAttribute("src") || frames[i].src);
+              if (!url) continue;
+              if (lastTikTokNavigation === url) continue;
+              lastTikTokNavigation = url;
+
+              /* A TikTok public page is a normal HTTPS page. Navigating the
+                 Capacitor WebView to it gives the requested browser-like
+                 experience and lets Android WebView maintain back history.
+                 It also avoids the official TikTok player entirely. */
+              window.location.assign(url);
+              return;
+            }
+          } catch (_) {}
+        }
+
+        try {
+          var vv = window.visualViewport;
+          if (vv) {
+            vv.addEventListener("resize", syncAiViewport, { passive: true });
+            vv.addEventListener("scroll", syncAiViewport, { passive: true });
+          }
+          window.addEventListener("resize", syncAiViewport, { passive: true });
+          window.addEventListener("orientationchange", syncAiViewport, { passive: true });
+
+          var observer = new MutationObserver(function () {
+            syncAiViewport();
+            handleTikTokFrames();
+          });
+          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "style"] });
+
+          setTimeout(syncAiViewport, 0);
+          setTimeout(syncAiViewport, 250);
+          setTimeout(syncAiViewport, 700);
+        } catch (_) {}
+
+        try {
+          document.addEventListener("focusin", function (event) {
+            var el = event.target;
+            var ph = String(el && el.getAttribute ? el.getAttribute("placeholder") || "" : "").toLowerCase();
+            if (ph.includes("اكتب سؤالك") || ph.includes("ask anything")) {
+              setTimeout(syncAiViewport, 40);
+              setTimeout(syncAiViewport, 180);
+            }
+          }, true);
+          document.addEventListener("focusout", function () {
+            setTimeout(restoreAiViewport, 120);
+          }, true);
         } catch (_) {}
       })();
     </script>

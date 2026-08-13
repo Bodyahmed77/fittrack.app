@@ -19,16 +19,11 @@
             existing Android WebView. We intentionally do NOT rewrite them to
             TikTok's official embedded player. */
       (function () {
-        try {
-          window.planIds = ["training", "nutrition", "both", "ai"];
-        } catch (_) {}
+        try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
 
         function viewportHeight() {
-          try {
-            return Math.max(0, Math.round(window.visualViewport ? window.visualViewport.height : window.innerHeight));
-          } catch (_) {
-            return Math.max(0, Math.round(window.innerHeight || 0));
-          }
+          try { return Math.max(0, Math.round(window.visualViewport ? window.visualViewport.height : window.innerHeight)); }
+          catch (_) { return Math.max(0, Math.round(window.innerHeight || 0)); }
         }
 
         function syncAiViewport() {
@@ -36,13 +31,11 @@
             var h = viewportHeight();
             if (!h) return;
             document.documentElement.style.setProperty("--fiftyfit-visible-vh", h + "px");
-
             var inputs = document.querySelectorAll("input");
             for (var i = 0; i < inputs.length; i++) {
               var input = inputs[i];
               var ph = String(input.getAttribute("placeholder") || "").toLowerCase();
               if (!ph.includes("اكتب سؤالك") && !ph.includes("ask anything")) continue;
-
               var node = input;
               for (var depth = 0; node && depth < 8; depth++, node = node.parentElement) {
                 var cs = window.getComputedStyle(node);
@@ -65,10 +58,12 @@
           if (!raw) return "";
           var direct = raw.match(/https?:\/\/www\.tiktok\.com\/(?:@[^/]+\/)?video\/\d+(?:[^\s]*)?/i);
           if (direct) return direct[0];
+          var shortDirect = raw.match(/https?:\/\/vt\.tiktok\.com\/[^\s"']+/i);
+          if (shortDirect) return shortDirect[0];
 
-          /* Current App.jsx temporarily wraps a full TikTok URL as a YouTube
-             embed id because its old detector only recognizes numeric IDs. */
-          var wrapped = raw.match(/youtube-nocookie\.com\/embed\/(https?:\/\/www\.tiktok\.com\/[^?&]+(?:\?[^#]*)?)/i);
+          /* App.jsx currently wraps full/short TikTok URLs as a YouTube embed
+             id because its old detector only recognizes numeric IDs. */
+          var wrapped = raw.match(/youtube-nocookie\.com\/embed\/(https?:\/\/(?:www\.tiktok\.com|vt\.tiktok\.com)\/[^?&\s]+)/i);
           if (wrapped) return wrapped[1];
           return "";
         }
@@ -81,11 +76,10 @@
               var url = extractTikTokUrl(frames[i].getAttribute("src") || frames[i].src);
               if (!url || lastTikTokNavigation === url) continue;
               lastTikTokNavigation = url;
-
               /* Load the public TikTok page in the existing Capacitor WebView.
                  This is the requested browser-like web mode, not TikTok's
                  official embedded player. Android WebView keeps navigation
-                 history, so the system back action can return to Fifty Fit. */
+                 history, so Back can return to Fifty Fit. */
               window.location.assign(url);
               return;
             }
@@ -100,13 +94,8 @@
           }
           window.addEventListener("resize", syncAiViewport, { passive: true });
           window.addEventListener("orientationchange", syncAiViewport, { passive: true });
-
-          var observer = new MutationObserver(function () {
-            syncAiViewport();
-            handleTikTokFrames();
-          });
+          var observer = new MutationObserver(function () { syncAiViewport(); handleTikTokFrames(); });
           observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "style"] });
-
           setTimeout(syncAiViewport, 0);
           setTimeout(syncAiViewport, 250);
           setTimeout(syncAiViewport, 700);

@@ -131,15 +131,38 @@ async function localizeLatestNotification(uid, type, startedAt) {
   }, { merge: true });
 }
 
+async function requireVerifiedEntitlement(uid, type) {
+  const payload = await getVerifiedEntitlements(uid);
+  if (!payload?.ok) {
+    alert("Billing verification is unavailable. The plan was not published.");
+    return false;
+  }
+  const allowed = type === "training_plan_ready" ? payload.trainingPro : payload.nutritionPro;
+  if (!allowed) {
+    alert("This customer does not have a verified Pro entitlement for this plan.");
+    return false;
+  }
+  return true;
+}
+
 function wrapPublishButton(button, type) {
   if (!button || button.__fiftyFitWrapped) return;
   const original = button.onclick;
   if (typeof original !== "function") return;
   button.__fiftyFitWrapped = true;
   button.onclick = async function wrappedPublish(event) {
+    const uid = adminUidFromPage();
+    try {
+      const allowed = await requireVerifiedEntitlement(uid, type);
+      if (!allowed) return;
+    } catch (error) {
+      console.warn("Fifty Fit verified entitlement check failed", error);
+      alert("Billing verification failed. The plan was not published.");
+      return;
+    }
+
     const startedAt = Date.now();
     await original.call(this, event);
-    const uid = adminUidFromPage();
     try {
       await localizeLatestNotification(uid, type, startedAt);
     } catch (error) {

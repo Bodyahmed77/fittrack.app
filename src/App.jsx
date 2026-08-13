@@ -3282,21 +3282,6 @@ function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    if (!videoId || typeof document === "undefined") return undefined;
-    const isTikTok = /^\d+$/.test(videoId);
-    const href = isTikTok
-      ? `https://www.tiktok.com/player/v1/${videoId}?controls=1&autoplay=0&description=0&music_info=0&rel=0`
-      : `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0`;
-    const link = document.createElement("link");
-    link.rel = "prefetch";
-    link.as = "document";
-    link.href = href;
-    document.head.appendChild(link);
-    return () => {
-      try { link.remove(); } catch {}
-    };
-  }, [videoId]);
   const close = useCallback(() => setOpen(false), []);
 
   if (!videoId) return null;
@@ -8882,6 +8867,31 @@ function PlansScreen({ data, setData, go, showToast }) {
   return (
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "الخطط" : "Plans"} />
+      {data.customNutritionPlan && data.entitlements.nutritionPro && (
+        <div style={{ padding: "0 18px 10px" }}>
+          <Card
+            onClick={() => go("nutritionPlan")}
+            style={{
+              background: C.greenSoft,
+              border: `1.5px solid ${C.green}66`,
+              cursor: "pointer",
+            }}
+          >
+            <div style={{ color: C.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0.6 }}>
+              {ar ? "خطة مخصصة" : "PERSONALIZED PLAN"}
+            </div>
+            <div style={{ color: C.text, fontSize: 15, fontWeight: 900, marginTop: 4 }}>
+              🍽️ {ar ? (data.customNutritionPlan.titleAr || "خطتك الغذائية") : (data.customNutritionPlan.title || "Your Nutrition Plan")}
+            </div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 4 }}>
+              {ar ? `تبدأ ${data.customNutritionPlan.startDate || dateKey(0)}` : `Starts ${data.customNutritionPlan.startDate || dateKey(0)}`}
+            </div>
+            <div style={{ color: C.text, fontSize: 11.5, fontWeight: 800, marginTop: 9 }}>
+              {ar ? "فتح خطة التغذية ←" : "Open Nutrition Plan →"}
+            </div>
+          </Card>
+        </div>
+      )}
       <div style={{ padding: "0 18px 4px", color: C.sub, fontSize: 12.5 }}>
         {ar
           ? "الخطة الأساسية مجانية للأبد. الخطط المخصصة محتاجة Training Pro."
@@ -11038,7 +11048,7 @@ function MeasurementsScreen({ data, back, go }) {
 }
 
 /* ============================== NOTIFICATION HISTORY ============================== */
-function NotificationsScreen({ back }) {
+function NotificationsScreen({ back, onOpen }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const [rows, setRows] = useState([]);
@@ -11073,6 +11083,16 @@ function NotificationsScreen({ back }) {
     } catch {}
   };
 
+  const openNotification = async (notification) => {
+    await markRead(notification);
+    const target = notification?.route?.screen || notification?.screen;
+    const targetParams = notification?.route?.params || notification?.params || {};
+    if (target) { onOpen?.(target, targetParams); return; }
+    if (notification?.type === "nutrition_plan_ready") { onOpen?.("nutritionPlan", {}); return; }
+    if (notification?.type === "training_plan_ready") { onOpen?.("workout", {}); return; }
+    if (notification?.type === "subscription") { onOpen?.("paywall", {}); }
+  };
+
   return (
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "الإشعارات" : "Notifications"} onBack={back} />
@@ -11087,7 +11107,7 @@ function NotificationsScreen({ back }) {
             ? created.toLocaleString(ar ? "ar-EG" : "en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
             : "";
           return (
-            <Card key={n.id} onClick={() => markRead(n)} style={{ border: n.read ? `1px solid ${C.border}` : `1px solid ${C.green}`, background: n.read ? C.card : C.greenSoft }}>
+            <Card key={n.id} onClick={() => openNotification(n)} style={{ border: n.read ? `1px solid ${C.border}` : `1px solid ${C.green}`, background: n.read ? C.card : C.greenSoft }}>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ color: C.text, fontWeight: 800, fontSize: 14 }}>{ar ? (n.titleAr || n.title) : (n.titleEn || n.title)}</div>
@@ -12989,7 +13009,7 @@ export default function GymApp() {
   else if (screen === "measurements")
     content = <MeasurementsScreen data={data} back={back} go={go} />;
   else if (screen === "notifications")
-    content = <NotificationsScreen back={back} />;
+    content = <NotificationsScreen back={back} onOpen={(target, targetParams) => go(target, targetParams)} />;
   else if (screen === "reminders")
     content = (
       <RemindersScreen

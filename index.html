@@ -14,8 +14,9 @@
       /* Android runtime fixes:
          - keep the legacy paywall planIds lookup defined;
          - keep the AI drawer above the real visible keyboard boundary;
-         - keep TikTok inside the existing full-screen iframe/WebView.
-         No external browser navigation and no TikTok official player URL. */
+         - keep TikTok inside the existing full-screen iframe/WebView without
+           rewriting the supplied URL into the official player or an author-less URL.
+      */
       (function () {
         try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
 
@@ -46,27 +47,16 @@
           } catch (_) {}
         }
 
-        function normalizeTikTokUrl(raw) {
-          var value = String(raw || "").trim();
-          if (!value) return "";
-          var player = value.match(/https?:\/\/www\.tiktok\.com\/player\/v1\/(\d+)/i);
-          if (player) return "https://www.tiktok.com/video/" + player[1];
-          var full = value.match(/https?:\/\/www\.tiktok\.com\/(?:@[^/]+\/)?video\/(\d+)/i);
-          if (full) return "https://www.tiktok.com/video/" + full[1];
-          if (/^\d{15,25}$/.test(value)) return "https://www.tiktok.com/video/" + value;
-          return "";
-        }
-
         function keepTikTokInsideIframe() {
           try {
             var frames = document.querySelectorAll("iframe");
             for (var i = 0; i < frames.length; i++) {
               var frame = frames[i];
               var raw = frame.getAttribute("src") || "";
-              var normalized = normalizeTikTokUrl(raw);
-              if (!normalized) continue;
-              if (raw !== normalized) frame.setAttribute("src", normalized);
-              frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+              if (!/tiktok\.com/i.test(raw)) continue;
+              // The app supplies the exact public TikTok web URL. Keep it intact.
+              // Do NOT rewrite it to /video/<id> or /player/v1/<id>.
+              frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
               frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
               frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
             }
@@ -112,7 +102,6 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-    <script type="module" src="/src/published-plan-ui.js"></script>
     <script type="module" src="/src/android-ui-fixes.js"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
 function esc(value = "") {
@@ -7,18 +7,7 @@ function esc(value = "") {
 }
 
 let userData = null;
-let loadedUid = null;
-
-async function loadUser(uid) {
-  if (!uid || uid === loadedUid) return;
-  loadedUid = uid;
-  try {
-    const snap = await getDoc(doc(db, "users", uid));
-    userData = snap.exists() ? snap.data() : null;
-  } catch {
-    userData = null;
-  }
-}
+let unsubscribeUser = null;
 
 function isPlansPage() {
   const text = String(document.body?.innerText || "");
@@ -52,20 +41,20 @@ function inject() {
     }, 300);
   });
 
-  // PlansScreen is a normal div-based screen (TopBar is not an h1), so insert
-  // directly before the first built-in plan card instead of relying on a heading.
   const builtIn = [...document.querySelectorAll("div")].find((el) => String(el.textContent || "").includes("Standard Plan") && el.querySelector?.("button"));
   if (builtIn?.parentElement) builtIn.parentElement.insertBefore(card, builtIn);
   else document.querySelector("#root")?.prepend(card);
 }
 
 onAuthStateChanged(auth, (user) => {
-  if (!user) {
-    userData = null;
-    loadedUid = null;
-    return;
-  }
-  loadUser(user.uid).then(() => inject());
+  unsubscribeUser?.();
+  unsubscribeUser = null;
+  userData = null;
+  if (!user) return;
+  unsubscribeUser = onSnapshot(doc(db, "users", user.uid), (snap) => {
+    userData = snap.exists() ? snap.data() : null;
+    inject();
+  });
 });
 
 const observer = new MutationObserver(() => inject());

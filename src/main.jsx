@@ -1,6 +1,9 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
 
+// Load the reversible Pro nutrition presentation enhancement once. It observes
+// the existing NutritionPlanScreen and never replaces its state or handlers.
+import "./proNutritionUx";
 
 // Keep Android system bars black (matches app chrome after Cap 7 edge-to-edge margins).
 async function applySystemBarColors() {

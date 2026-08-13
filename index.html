@@ -52,29 +52,8 @@
                     node.style.setProperty("bottom", "auto", "important");
                     node.style.setProperty("height", h + "px", "important");
                     node.style.setProperty("max-height", h + "px", "important");
-                    if (cs.position === "fixed") {
-                      node.style.setProperty("top", "0px", "important");
-                    }
+                    if (cs.position === "fixed") node.style.setProperty("top", "0px", "important");
                   }
-                }
-              }
-            }
-          } catch (_) {}
-        }
-
-        function restoreAiViewport() {
-          try {
-            var inputs = document.querySelectorAll("input");
-            for (var i = 0; i < inputs.length; i++) {
-              var ph = String(inputs[i].getAttribute("placeholder") || "").toLowerCase();
-              if (!ph.includes("اكتب سؤالك") && !ph.includes("ask anything")) continue;
-              var node = inputs[i];
-              for (var depth = 0; node && depth < 8; depth++, node = node.parentElement) {
-                if (node.style.height && node.style.maxHeight) {
-                  node.style.removeProperty("height");
-                  node.style.removeProperty("max-height");
-                  node.style.removeProperty("bottom");
-                  node.style.removeProperty("top");
                 }
               }
             }
@@ -100,14 +79,13 @@
             var frames = document.querySelectorAll("iframe");
             for (var i = 0; i < frames.length; i++) {
               var url = extractTikTokUrl(frames[i].getAttribute("src") || frames[i].src);
-              if (!url) continue;
-              if (lastTikTokNavigation === url) continue;
+              if (!url || lastTikTokNavigation === url) continue;
               lastTikTokNavigation = url;
 
-              /* A TikTok public page is a normal HTTPS page. Navigating the
-                 Capacitor WebView to it gives the requested browser-like
-                 experience and lets Android WebView maintain back history.
-                 It also avoids the official TikTok player entirely. */
+              /* Load the public TikTok page in the existing Capacitor WebView.
+                 This is the requested browser-like web mode, not TikTok's
+                 official embedded player. Android WebView keeps navigation
+                 history, so the system back action can return to Fifty Fit. */
               window.location.assign(url);
               return;
             }
@@ -142,9 +120,6 @@
               setTimeout(syncAiViewport, 40);
               setTimeout(syncAiViewport, 180);
             }
-          }, true);
-          document.addEventListener("focusout", function () {
-            setTimeout(restoreAiViewport, 120);
           }, true);
         } catch (_) {}
       })();

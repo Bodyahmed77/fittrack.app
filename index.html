@@ -11,40 +11,37 @@
       * { -webkit-tap-highlight-color: transparent; }
     </style>
     <script>
-      /* Runtime compatibility fixes for the current Android release.
-         1) Keep the legacy bare planIds lookup alive.
-         2) Keep the AI composer attached to the visible Android viewport when
-            the soft keyboard opens.
-         3) TikTok exercises use a normal top-level TikTok web page inside the
-            existing Capacitor Android WebView. We do NOT use TikTok's official
-            embedded player and we do NOT send the user to the external app. */
+      /* Android runtime fixes:
+         - keep the legacy paywall planIds lookup defined;
+         - keep the AI drawer above the real visible keyboard boundary;
+         - keep TikTok inside the existing full-screen iframe/WebView.
+         No external browser navigation and no TikTok official player URL. */
       (function () {
         try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
 
-        function viewportHeight() {
-          try { return Math.max(0, Math.round(window.visualViewport ? window.visualViewport.height : window.innerHeight)); }
-          catch (_) { return Math.max(0, Math.round(window.innerHeight || 0)); }
+        function keyboardInset() {
+          try {
+            var vv = window.visualViewport;
+            if (!vv) return 0;
+            return Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
+          } catch (_) { return 0; }
         }
 
-        function syncAiViewport() {
+        function syncAiDrawer() {
           try {
-            var h = viewportHeight();
-            if (!h) return;
-            document.documentElement.style.setProperty("--fiftyfit-visible-vh", h + "px");
-            var inputs = document.querySelectorAll("input");
-            for (var i = 0; i < inputs.length; i++) {
-              var input = inputs[i];
-              var ph = String(input.getAttribute("placeholder") || "").toLowerCase();
-              if (!ph.includes("اكتب سؤالك") && !ph.includes("ask anything")) continue;
-              var node = input;
-              for (var depth = 0; node && depth < 8; depth++, node = node.parentElement) {
-                var cs = window.getComputedStyle(node);
-                if (cs.position === "fixed" || cs.position === "absolute") {
-                  node.style.setProperty("bottom", "0px", "important");
-                  node.style.setProperty("max-height", h + "px", "important");
-                  node.style.setProperty("height", h + "px", "important");
-                }
-              }
+            var inset = keyboardInset();
+            var candidates = document.querySelectorAll("div");
+            for (var i = 0; i < candidates.length; i++) {
+              var el = candidates[i];
+              var cs = window.getComputedStyle(el);
+              if (cs.position !== "absolute") continue;
+              if (!el.parentElement) continue;
+              var parentStyle = window.getComputedStyle(el.parentElement);
+              if (parentStyle.position !== "fixed" || parentStyle.zIndex !== "1200") continue;
+              if (!String(cs.width || "").includes("360px")) continue;
+              el.style.setProperty("bottom", inset + "px", "important");
+              el.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
+              el.style.setProperty("max-height", "calc(100% - " + inset + "px)", "important");
             }
           } catch (_) {}
         }
@@ -52,66 +49,26 @@
         function normalizeTikTokUrl(raw) {
           var value = String(raw || "").trim();
           if (!value) return "";
-
-          /* Undo old/unsupported official-player URLs so the user gets the
-             normal TikTok page they asked for. */
           var player = value.match(/https?:\/\/www\.tiktok\.com\/player\/v1\/(\d+)/i);
           if (player) return "https://www.tiktok.com/video/" + player[1];
-
           var full = value.match(/https?:\/\/www\.tiktok\.com\/(?:@[^/]+\/)?video\/(\d+)/i);
           if (full) return "https://www.tiktok.com/video/" + full[1];
-
-          var shortUrl = value.match(/https?:\/\/vt\.tiktok\.com\/[^\s"']+/i);
-          if (shortUrl) return shortUrl[0];
-
-          /* App.jsx may hand the viewer a bare TikTok post id. */
           if (/^\d{15,25}$/.test(value)) return "https://www.tiktok.com/video/" + value;
-
-          /* Old builds sometimes wrapped the TikTok URL in a YouTube embed. */
-          var wrapped = value.match(/youtube-nocookie\.com\/embed\/(https?:\/\/(?:www\.tiktok\.com|vt\.tiktok\.com)\/[^?&\s]+)/i);
-          if (wrapped) return normalizeTikTokUrl(wrapped[1]);
-
           return "";
         }
 
-        var lastTikTokNavigation = "";
-        function openTikTokAsWebViewPage(url) {
-          if (!url || url === lastTikTokNavigation) return;
-          lastTikTokNavigation = url;
-          /* This is deliberately a top-level navigation in the existing
-             Capacitor WebView: visually it behaves like opening a browser
-             page in-app, with the full TikTok web experience. Android WebView
-             navigation history lets Back return to Fifty Fit. */
-          try { window.location.assign(url); }
-          catch (_) { try { window.location.href = url; } catch (__) {} }
-        }
-
-        function scanTikTokFrames() {
+        function keepTikTokInsideIframe() {
           try {
             var frames = document.querySelectorAll("iframe");
             for (var i = 0; i < frames.length; i++) {
-              var raw = frames[i].getAttribute("src") || frames[i].src || "";
-              var url = normalizeTikTokUrl(raw);
-              if (url) {
-                openTikTokAsWebViewPage(url);
-                return;
-              }
-            }
-          } catch (_) {}
-        }
-
-        function scanTikTokIntent() {
-          try {
-            var nodes = document.querySelectorAll("a,button,[role='button']");
-            for (var i = 0; i < nodes.length; i++) {
-              var text = String(nodes[i].textContent || "").toLowerCase();
-              if (!text) continue;
-              if (!text.includes("شوف الشورت") && !text.includes("مشاهدة الفيديو") && !text.includes("watch short") && !text.includes("watch video")) continue;
-              nodes[i].addEventListener("click", function () {
-                setTimeout(scanTikTokFrames, 0);
-                setTimeout(scanTikTokFrames, 60);
-                setTimeout(scanTikTokFrames, 250);
-              }, { once: true, passive: true });
+              var frame = frames[i];
+              var raw = frame.getAttribute("src") || "";
+              var normalized = normalizeTikTokUrl(raw);
+              if (!normalized) continue;
+              if (raw !== normalized) frame.setAttribute("src", normalized);
+              frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+              frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+              frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
             }
           } catch (_) {}
         }
@@ -119,33 +76,34 @@
         try {
           var vv = window.visualViewport;
           if (vv) {
-            vv.addEventListener("resize", syncAiViewport, { passive: true });
-            vv.addEventListener("scroll", syncAiViewport, { passive: true });
+            vv.addEventListener("resize", syncAiDrawer, { passive: true });
+            vv.addEventListener("scroll", syncAiDrawer, { passive: true });
           }
-          window.addEventListener("resize", syncAiViewport, { passive: true });
-          window.addEventListener("orientationchange", syncAiViewport, { passive: true });
-          var observer = new MutationObserver(function () {
-            syncAiViewport();
-            scanTikTokFrames();
-            scanTikTokIntent();
-          });
-          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "style"] });
-          setTimeout(syncAiViewport, 0);
-          setTimeout(syncAiViewport, 250);
-          setTimeout(syncAiViewport, 700);
-          setTimeout(scanTikTokFrames, 0);
-          setTimeout(scanTikTokIntent, 0);
-        } catch (_) {}
-
-        try {
+          window.addEventListener("resize", syncAiDrawer, { passive: true });
+          window.addEventListener("orientationchange", syncAiDrawer, { passive: true });
           document.addEventListener("focusin", function (event) {
-            var el = event.target;
-            var ph = String(el && el.getAttribute ? el.getAttribute("placeholder") || "" : "").toLowerCase();
-            if (ph.includes("اكتب سؤالك") || ph.includes("ask anything")) {
-              setTimeout(syncAiViewport, 40);
-              setTimeout(syncAiViewport, 180);
+            var target = event.target;
+            var placeholder = String(target?.getAttribute?.("placeholder") || "").toLowerCase();
+            if (placeholder.includes("اكتب سؤالك") || placeholder.includes("ask anything")) {
+              setTimeout(syncAiDrawer, 40);
+              setTimeout(syncAiDrawer, 180);
+              setTimeout(syncAiDrawer, 400);
             }
           }, true);
+
+          var observer = new MutationObserver(function () {
+            syncAiDrawer();
+            keepTikTokInsideIframe();
+          });
+          observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["src", "style"]
+          });
+          setTimeout(syncAiDrawer, 0);
+          setTimeout(syncAiDrawer, 300);
+          setTimeout(keepTikTokInsideIframe, 0);
         } catch (_) {}
       })();
     </script>

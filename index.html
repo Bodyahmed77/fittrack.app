@@ -56,7 +56,7 @@
               if (!/tiktok\.com/i.test(raw)) continue;
               // The app supplies the exact public TikTok web URL. Keep it intact.
               // Do NOT rewrite it to /video/<id> or /player/v1/<id>.
-              frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups");
+              frame.removeAttribute("sandbox");
               frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
               frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
             }

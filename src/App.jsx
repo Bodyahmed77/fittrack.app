@@ -2677,7 +2677,12 @@ function useAppData(uid) {
       if (!uid) return;
       try {
         const persisted = Object.fromEntries(
-          Object.entries(next).filter(([key]) => key !== "entitlements"),
+          Object.entries(next).filter(
+            ([key]) =>
+              key !== "entitlements" &&
+              key !== "customTrainingPlan" &&
+              key !== "customNutritionPlan",
+          ),
         );
         await setDoc(
           doc(db, "users", uid),
@@ -8867,6 +8872,31 @@ function PlansScreen({ data, setData, go, showToast }) {
   return (
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "الخطط" : "Plans"} />
+      {data.customTrainingPlan && data.entitlements.trainingPro && (
+        <div style={{ padding: "0 18px 10px" }}>
+          <Card
+            onClick={() => go("workout")}
+            style={{
+              background: C.greenSoft,
+              border: `1.5px solid ${C.green}66`,
+              cursor: "pointer",
+            }}
+          >
+            <div style={{ color: C.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0.6 }}>
+              {ar ? "خطة تدريب مخصصة" : "PERSONALIZED TRAINING"}
+            </div>
+            <div style={{ color: C.text, fontSize: 15, fontWeight: 900, marginTop: 4 }}>
+              🏋️ {ar ? (data.customTrainingPlan.titleAr || "خطة التدريب المخصصة") : (data.customTrainingPlan.title || "Personal Training Plan")}
+            </div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 4 }}>
+              {ar ? `تبدأ ${data.customTrainingPlan.startDate || dateKey(0)}` : `Starts ${data.customTrainingPlan.startDate || dateKey(0)}`}
+            </div>
+            <div style={{ color: C.text, fontSize: 11.5, fontWeight: 800, marginTop: 9 }}>
+              {ar ? "فتح خطة التدريب ←" : "Open Training Plan →"}
+            </div>
+          </Card>
+        </div>
+      )}
       {data.customNutritionPlan && data.entitlements.nutritionPro && (
         <div style={{ padding: "0 18px 10px" }}>
           <Card
@@ -9005,8 +9035,6 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
     // Switching to a Pro plan starts that plan from Day 1 today.
     if (plan.pro && data.entitlements.trainingPro && !isActive) {
       next.workoutStartDate = dateKey(0);
-      // A built-in plan selection intentionally replaces an admin custom plan.
-      next.customTrainingPlan = null;
     }
     setData(next);
     showToast(

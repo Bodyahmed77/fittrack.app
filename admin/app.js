@@ -221,6 +221,7 @@ async function saveTraining() {
   const ar = userLang.startsWith("ar");
   await setDoc(doc(db,"users",currentCustomer.id,"notifications",`training-plan-${Date.now()}`), {
     type: "training_plan_ready",
+    route: { screen: "workout", params: {} },
     title: ar ? "اتضافت لك خطة تدريب جديدة 💪" : "A new training plan was added 💪",
     body: ar ? "خطة التدريب المخصصة ليك بقت جاهزة داخل Fifty Fit." : "Your personalized training plan is now ready in Fifty Fit.",
     titleAr: "اتضافت لك خطة تدريب جديدة 💪",
@@ -261,6 +262,7 @@ async function saveNutrition() {
   const ar = userLang.startsWith("ar");
   await setDoc(doc(db,"users",currentCustomer.id,"notifications",`nutrition-plan-${Date.now()}`), {
     type: "nutrition_plan_ready",
+    route: { screen: "nutritionPlan", params: {} },
     title: ar ? "اتضاف لك نظام أكل جديد 🍽️" : "A new nutrition plan was added 🍽️",
     body: ar ? "خطة الأكل المخصصة ليك بقت جاهزة داخل Fifty Fit." : "Your personalized nutrition plan is now ready in Fifty Fit.",
     titleAr: "اتضاف لك نظام أكل جديد 🍽️",

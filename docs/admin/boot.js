@@ -8,9 +8,7 @@ function showBootError(error) {
 // GitHub Pages publishes /docs as the site root. The canonical admin source
 // lives under /admin in the repository. GitHub Raw serves JavaScript with a
 // MIME type that browsers may reject for module imports, so fetch the current
-// source as text and import it from same-page Blob URLs. We intentionally do
-// not load the old runtime-enhancements polling/MutationObserver layer here;
-// the canonical app already owns its UI and publish behavior.
+// source as text and import it from same-page Blob URLs.
 const cacheVersion = Date.now();
 const rawBase = "https://raw.githubusercontent.com/Bodyahmed77/fittrack.app/main/admin/";
 
@@ -23,13 +21,30 @@ async function fetchText(name) {
 function importBlob(source, label) {
   const blob = new Blob([source], { type: "text/javascript" });
   const url = URL.createObjectURL(blob);
-  return import(/* webpackIgnore: true */ url)
+  return import(url)
     .finally(() => URL.revokeObjectURL(url))
     .catch((error) => {
       error.message = `${label}: ${error.message || error}`;
       throw error;
     });
 }
+
+// The core admin app refreshes the customer list every 30 seconds. Because the
+// app re-renders the customer screen when navigating back to it, its timer can
+// otherwise accumulate and cause the dashboard to become progressively slower.
+// Keep exactly one copy of that specific refresh timer while leaving unrelated
+// timers untouched.
+const nativeSetInterval = window.setInterval.bind(window);
+const nativeClearInterval = window.clearInterval.bind(window);
+let customerRefreshTimer = null;
+window.setInterval = (handler, timeout, ...args) => {
+  const source = typeof handler === "function" ? Function.prototype.toString.call(handler) : "";
+  const isCustomerRefresh = timeout === 30000 && source.includes("refresh().catch");
+  if (!isCustomerRefresh) return nativeSetInterval(handler, timeout, ...args);
+  if (customerRefreshTimer !== null) nativeClearInterval(customerRefreshTimer);
+  customerRefreshTimer = nativeSetInterval(handler, timeout, ...args);
+  return customerRefreshTimer;
+};
 
 async function boot() {
   const [styles, appSource, cardioSource] = await Promise.all([
@@ -58,6 +73,8 @@ async function boot() {
     firebaseConfigModule,
   );
 
+  // Keep the Pages admin lightweight. The former runtime-enhancements layer
+  // used MutationObserver + 4-second polling and is intentionally not loaded.
   await importBlob(normalizedApp, "admin/app.js");
   await importBlob(cardioSource, "admin/cardio.js");
 }

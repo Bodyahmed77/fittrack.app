@@ -1,24 +1,75 @@
 from pathlib import Path
+import re
 
+# Start from the already-verified deterministic v5 patch set.
 exec(Path('scripts/release-fixes-v5.py').read_text(encoding='utf-8'), {'__name__': '__release_fixes_v5__'})
 
 APP = Path('src/App.jsx')
 text = APP.read_text(encoding='utf-8')
 
-old = '''function FullScreenVideoViewer({ videoId, ar, onClose }) {\n  const [videoLoaded, setVideoLoaded] = useState(false);\n  const looksTikTok = /tiktok\\.com/i.test(String(videoId || "")) || /^\\d+$/.test(String(videoId || ""));\n  const isTikTok = looksTikTok;\n  const embedSrc = isTikTok\n    ? String(videoId || "")\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;\n\n  useEffect(() => {\n    let cancelled = false;\n    setVideoLoaded(false);\n    registerFullScreenVideoClose(() => {\n      onClose();\n      return true;\n    });\n    return () => registerFullScreenVideoClose(null);\n  }, [onClose]);'''
+# v6 must patch the viewer that is actually present after v5. Do not depend on
+# the old exact whitespace/header from an earlier App.jsx revision. Keep the
+# existing full-screen JSX/UI intact and replace only the viewer's setup logic.
+marker = 'function FullScreenVideoViewer({ videoId, ar, onClose }) {'
+start = text.find(marker)
+if start < 0:
+    raise SystemExit('v6: FullScreenVideoViewer function not found')
+return_marker = '  return ('
+return_pos = text.find(return_marker, start)
+if return_pos < 0:
+    raise SystemExit('v6: FullScreenVideoViewer return block not found')
 
-new = '''async function resolveTikTokCanonicalWebUrl(value) {\n  const raw = String(value || "").trim();\n  if (!raw || !/tiktok\\.com/i.test(raw)) return raw;\n  if (/^https?:\\/\\/www\\.tiktok\\.com\\/@[^/]+\\/video\\/\\d+/i.test(raw)) return raw;\n  try {\n    const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(raw)}`);\n    if (!response.ok) return raw;\n    const payload = await response.json();\n    const html = String(payload?.html || "");\n    const cite = html.match(/\\bcite=["']([^"']+)["']/i)?.[1];\n    return cite || raw;\n  } catch {\n    return raw;\n  }\n}\n\nfunction FullScreenVideoViewer({ videoId, ar, onClose }) {\n  const [videoLoaded, setVideoLoaded] = useState(false);\n  const [webUrl, setWebUrl] = useState(String(videoId || ""));\n  const rawVideoId = String(videoId || "").trim();\n  const isTikTokUrl = /tiktok\\.com/i.test(rawVideoId);\n  const isTikTokNumericId = /^\\d+$/.test(rawVideoId);\n  const isTikTok = isTikTokUrl || isTikTokNumericId;\n  const embedSrc = isTikTokNumericId\n    ? `https://www.tiktok.com/player/v1/${rawVideoId}?music_info=1&description=1`\n    : isTikTokUrl\n      ? webUrl\n      : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;\n\n  useEffect(() => {\n    let cancelled = false;\n    setVideoLoaded(false);\n    setWebUrl(rawVideoId);\n    if (isTikTokUrl) {\n      resolveTikTokCanonicalWebUrl(rawVideoId).then((resolved) => {\n        if (!cancelled) setWebUrl(resolved || rawVideoId);\n      });\n    }\n    registerFullScreenVideoClose(() => {\n      onClose();\n      return true;\n    });\n    return () => {\n      cancelled = true;\n      registerFullScreenVideoClose(null);\n    };\n  }, [isTikTokUrl, onClose, rawVideoId]);'''
+new_header = '''function FullScreenVideoViewer({ videoId, ar, onClose }) {
+  const [videoLoaded, setVideoLoaded] = useState(false);
+  const rawVideoId = String(videoId || "").trim();
+  const isTikTokUrl = /tiktok\\.com/i.test(rawVideoId);
+  const isTikTokNumericId = /^\\d+$/.test(rawVideoId);
+  const isTikTok = isTikTokUrl || isTikTokNumericId;
 
-if old not in text:
-    raise SystemExit('v6: expected FullScreenVideoViewer block not found')
-text = text.replace(old, new, 1)
-text = text.replace('referrerPolicy="strict-origin-when-cross-origin"', 'referrerPolicy="no-referrer-when-downgrade"', 1)
+  // Keep admin/configured TikTok URLs exactly as supplied. The viewer is a
+  // full-screen in-app iframe; it must not rewrite the URL through oEmbed,
+  // resolve short links, or launch the TikTok application. Numeric legacy IDs
+  // are the only case that needs TikTok's documented player URL.
+  const embedSrc = isTikTokNumericId
+    ? `https://www.tiktok.com/player/v1/${rawVideoId}?music_info=1&description=1`
+    : isTikTokUrl
+      ? rawVideoId
+      : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+
+  useEffect(() => {
+    setVideoLoaded(false);
+    registerFullScreenVideoClose(() => {
+      onClose();
+      return true;
+    });
+    return () => registerFullScreenVideoClose(null);
+  }, [onClose, rawVideoId]);
+
+'''
+text = text[:start] + new_header + text[return_pos:]
+
+# The TikTok web page is being hosted inside our iframe, so do not force the
+# stricter referrer policy that can cause TikTok's web response to reject the
+# embedded request. This does not change or expose the stored video URL.
+text = text.replace(
+    'referrerPolicy="strict-origin-when-cross-origin"',
+    'referrerPolicy="no-referrer-when-downgrade"',
+    1,
+)
+
 APP.write_text(text, encoding='utf-8')
 
+# Build-time assertions: fail only if the intended current viewer was not
+# actually patched. In particular, never silently ship the oEmbed/redirect
+# implementation that caused the 404 behavior.
 text = APP.read_text(encoding='utf-8')
-assert 'resolveTikTokCanonicalWebUrl' in text
-assert 'isTikTokNumericId' in text
-assert 'isTikTokUrl' in text
-assert 'https://www.tiktok.com/player/v1/${rawVideoId}' in text
+assert 'const rawVideoId = String(videoId || "").trim();' in text
+assert 'const isTikTokUrl = /tiktok\\.com/i.test(rawVideoId);' in text
+assert 'const isTikTokNumericId = /^\\d+$/.test(rawVideoId);' in text
+assert ': rawVideoId' in text
+assert 'https://www.tiktok.com/oembed?url=' not in text
+assert 'resolveTikTokCanonicalWebUrl' not in text
 assert 'referrerPolicy="no-referrer-when-downgrade"' in text
 print('Release fixes v6 applied successfully')
+print('TikTok viewer keeps the configured normal URL inside the full-screen in-app iframe')
+print('TikTok oEmbed/canonical URL rewriting is disabled')

@@ -6638,7 +6638,7 @@ function CardioExerciseView({
   const running = phase === "RUNNING";
 
   useEffect(() => {
-    if (alreadyFinished || !existingStartedAt || resumableStartedAt || !uidSafe()) return;
+    if (alreadyFinished || !existingStartedAt || resumableStartedAt) return;
     // A stale unfinished timer should reset to IDLE instead of auto-completing.
     if (existingElapsed >= DURATION_SECONDS) {
       setStartedAt(null);

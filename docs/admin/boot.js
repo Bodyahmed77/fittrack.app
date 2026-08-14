@@ -27,11 +27,12 @@ function importBlob(source, label) {
 }
 
 async function boot() {
-  const [styles, appSource, cardioSource, nutritionSource] = await Promise.all([
+  const [styles, appSource, cardioSource, nutritionSource, nutritionUxSource] = await Promise.all([
     fetchText("styles.css"),
     fetchText("app.js"),
     fetchText("cardio.js"),
     fetchText("nutrition-builder.js"),
+    fetchText("nutrition-builder-ux.js"),
   ]);
 
   const style = document.createElement("style");
@@ -60,6 +61,7 @@ async function boot() {
   await importBlob(normalizedApp, "admin/app.js");
   await importBlob(cardioSource, "admin/cardio.js");
   await importBlob(normalizedNutrition, "admin/nutrition-builder.js");
+  await importBlob(nutritionUxSource, "admin/nutrition-builder-ux.js");
 }
 
 boot().catch(showBootError);

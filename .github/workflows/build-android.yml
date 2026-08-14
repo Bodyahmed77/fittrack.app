@@ -19,122 +19,54 @@ jobs:
       - name: Apply reviewed Claude source fix once
         run: |
           set -euo pipefail
-          cat > /tmp/fittrack-keyboard.diff <<'PATCH'
-          diff --git a/src/App.jsx b/src/App.jsx
-          index 3687df2..8522256 100644
-          --- a/src/App.jsx
-          +++ b/src/App.jsx
-          @@ -9920,7 +9920,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
-             const [reportTarget, setReportTarget] = useState(null);
-             const [reportReason, setReportReason] = useState("");
-             const [reportBusy, setReportBusy] = useState(false);
-          -  const keyboardInset = 0;
-          +  const [keyboardInset, setKeyboardInset] = useState(0);
-             const listRef = useRef(null);
-             const inputBarRef = useRef(null);
-          
-          @@ -9937,10 +9937,41 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
-               }
-             }, [open]);
-           
-          +  // Track the real, live keyboard height so the composer can be lifted
-          +  // above it. setResizeMode/setScroll are iOS-only no-ops on Android (this
-          +  // app is Android-only, so the previous setResizeMode call never had any
-          +  // effect on-device) — keyboardWillShow/keyboardDidShow/keyboardWillHide/
-          +  // keyboardDidHide do fire correctly on Android, so listen to those and
-          +  // apply the reported height as a real inset instead.
-             useEffect(() => {
-          -    try {
-          -      import("@capacitor/keyboard").then(({ Keyboard }) => Keyboard.setResizeMode?.({ mode: "native" })).catch(() => {});
-          -    } catch {}
-          +    if (!open) return undefined;
-          +    let cancelled = false;
-          +    let handles = [];
-          +    import("@capacitor/keyboard")
-          +      .then(async ({ Keyboard }) => {
-          +        if (cancelled) return;
-          +        const onShow = (info) => {
-          +          setKeyboardInset(Math.max(0, Number(info?.keyboardHeight) || 0));
-          +        };
-          +        const onHide = () => setKeyboardInset(0);
-          +        const registered = await Promise.all([
-          +          Keyboard.addListener("keyboardWillShow", onShow),
-          +          Keyboard.addListener("keyboardDidShow", onShow),
-          +          Keyboard.addListener("keyboardWillHide", onHide),
-          +          Keyboard.addListener("keyboardDidHide", onHide),
-          +        ]);
-          +        if (cancelled) {
-          +          registered.forEach((h) => { try { h?.remove?.(); } catch {} });
-          +          return;
-          +        }
-          +        handles = registered;
-          +      })
-          +      .catch(() => {});
-          +    return () => {
-          +      cancelled = true;
-          +      setKeyboardInset(0);
-          +      handles.forEach((h) => { try { h?.remove?.(); } catch {} });
-          +    };
-             }, [open]);
-           
-             useEffect(() => {
-          @@ -10159,15 +10190,17 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
-               style={{
-                 position: "absolute",
-                 top: 0,
-          -      // Lift entire drawer above the soft keyboard (dynamic inset).
-          -      bottom: 0,
-          +      // Lift entire drawer above the soft keyboard using the live
-          +      // height from the keyboardWillShow/keyboardDidShow listeners
-          +      // above, so the input bar and message list both stay visible.
-          +      bottom: keyboardInset,
-                 width: "min(360px, 92vw)",
-                 background: C.bg,
-                 display: "flex",
-                 flexDirection: "column",
-                 boxShadow: "0 0 40px rgba(0,0,0,0.35)",
-                 overscrollBehavior: "contain",
-          -      transition: "none",
-          +      transition: keyboardInset ? "bottom 0.15s ease-out" : "none",
-                 ...panelSide,
-               }}
-             >
-          diff --git a/vite.config.js b/vite.config.js
-          index 9f1da7d..88f1778 100644
-          --- a/vite.config.js
-          +++ b/vite.config.js
-          @@ -93,10 +93,14 @@ function fiftyFitHardeningPlugin() {
-               requirePatch(!videoSegment.includes("tiktok.com/player/v1/"), "TikTok official player disabled");
-               requirePatch(!/tiktok\\.com\\/oembed/i.test(videoSegment), "TikTok oEmbed resolver disabled");
-           
-          -    // Keep native Android keyboard resize as the single source of truth.
-          -    out = out.replace(
-          -      /const \\[keyboardInset, setKeyboardInset\\] = useState\\([^)]*\\);/,
-          -      'const [keyboardInset, setKeyboardInset] = useState(0);',
-          +    // AI Coach keyboard: keyboardInset must be tracked from a real
-          +    // source (Keyboard plugin listeners), not hardcoded to 0 — a
-          +    // hardcoded 0 is what caused the composer to stay hidden behind
-          +    // the soft keyboard. Verify tracking exists; do not silently force
-          +    // it back to a dead constant.
-          +    requirePatch(
-          +      !/const keyboardInset = 0;/.test(out) && /\\[keyboardInset, setKeyboardInset\\] = useState/.test(out),
-          +      "AI Coach keyboard inset must be tracked, not hardcoded",
-               );
-           
-               // Do not turn real Google Play billing errors into fake preview purchases.
-          PATCH
+          python3 - <<'PY'
+          from pathlib import Path
 
-          if grep -q 'const keyboardInset = 0;' src/App.jsx; then
-            git apply --index /tmp/fittrack-keyboard.diff
+          app = Path('src/App.jsx')
+          text = app.read_text(encoding='utf-8')
+          if 'const keyboardInset = 0;' in text:
+              old = '''  const [reportTarget, setReportTarget] = useState(null);\n  const [reportReason, setReportReason] = useState(\"\");\n  const [reportBusy, setReportBusy] = useState(false);\n  const keyboardInset = 0;\n  const listRef = useRef(null);\n  const inputBarRef = useRef(null);'''
+              new = '''  const [reportTarget, setReportTarget] = useState(null);\n  const [reportReason, setReportReason] = useState(\"\");\n  const [reportBusy, setReportBusy] = useState(false);\n  const [keyboardInset, setKeyboardInset] = useState(0);\n  const listRef = useRef(null);\n  const inputBarRef = useRef(null);'''
+              assert text.count(old) == 1, 'AI keyboard state anchor mismatch'
+              text = text.replace(old, new, 1)
+
+              old = '''  useEffect(() => {\n    try {\n      import(\"@capacitor/keyboard\").then(({ Keyboard }) => Keyboard.setResizeMode?.({ mode: \"native\" })).catch(() => {});\n    } catch {}\n  }, [open]);'''
+              new = '''  useEffect(() => {\n    if (!open) return undefined;\n    let cancelled = false;\n    let handles = [];\n    import(\"@capacitor/keyboard\")\n      .then(async ({ Keyboard }) => {\n        if (cancelled) return;\n        const onShow = (info) => {\n          setKeyboardInset(Math.max(0, Number(info?.keyboardHeight) || 0));\n        };\n        const onHide = () => setKeyboardInset(0);\n        const registered = await Promise.all([\n          Keyboard.addListener(\"keyboardWillShow\", onShow),\n          Keyboard.addListener(\"keyboardDidShow\", onShow),\n          Keyboard.addListener(\"keyboardWillHide\", onHide),\n          Keyboard.addListener(\"keyboardDidHide\", onHide),\n        ]);\n        if (cancelled) {\n          registered.forEach((h) => { try { h?.remove?.(); } catch {} });\n          return;\n        }\n        handles = registered;\n      })\n      .catch(() => {});\n    return () => {\n      cancelled = true;\n      setKeyboardInset(0);\n      handles.forEach((h) => { try { h?.remove?.(); } catch {} });\n    };\n  }, [open]);'''
+              assert text.count(old) == 1, 'AI keyboard listener anchor mismatch'
+              text = text.replace(old, new, 1)
+
+              old = '''          // Lift entire drawer above the soft keyboard (dynamic inset).\n          bottom: 0,'''
+              new = '''          // Lift the entire drawer above the live keyboard height.\n          bottom: keyboardInset,'''
+              assert text.count(old) == 1, 'AI keyboard panel anchor mismatch'
+              text = text.replace(old, new, 1)
+
+              old = '          transition: "none",'
+              new = '          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",'
+              assert text.count(old) == 1, 'AI keyboard transition anchor mismatch'
+              text = text.replace(old, new, 1)
+              app.write_text(text, encoding='utf-8')
+
+          vite = Path('vite.config.js')
+          text = vite.read_text(encoding='utf-8')
+          old = '''      // Keep native Android keyboard resize as the single source of truth.\n      out = out.replace(\n        /const \\[keyboardInset, setKeyboardInset\\] = useState\\([^)]*\\);/,\n        'const [keyboardInset, setKeyboardInset] = useState(0);',\n      );'''
+          new = '''      // AI Coach keyboard: validate real keyboard tracking; do not rewrite\n      // the source back to a dead zero inset during the production build.\n      requirePatch(\n        !/const keyboardInset = 0;/.test(out) && /\\[keyboardInset, setKeyboardInset\\] = useState/.test(out),\n        "AI Coach keyboard inset must be tracked, not hardcoded",\n      );'''
+          if old in text:
+              text = text.replace(old, new, 1)
+              vite.write_text(text, encoding='utf-8')
+
+          print('Reviewed Claude source fixes applied directly to source files.')
+          PY
+          if git diff --quiet -- src/App.jsx vite.config.js; then
+            echo "Source fixes already applied."
+          else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add src/App.jsx vite.config.js
             git commit -m "fix: AI Coach keyboard tracking and hardening"
             git push origin HEAD:main
-            echo "Source fix committed to main; this run will stop before building so the next run uses the committed source."
+            echo "Source fix committed to main; stopping this run so the next run builds the committed source."
             exit 0
           fi
-          echo "Reviewed source fix already applied. Continuing with the release build."
       - name: Apply admin publishing gate fix
         env:
           GH_TOKEN: ${{ github.token }}

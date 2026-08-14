@@ -87,6 +87,7 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
+import { Browser } from "@capacitor/browser";
 import logoSrc from "./assets/logo.png";
 // Professional, exercise-specific SVG illustrations (offline-safe, bundled by Vite).
 import bench_pressImg from "./assets/exercises/bench_press.svg";
@@ -2674,7 +2675,7 @@ function useAppData(uid) {
     async (next) => {
       verifiedEntitlementsRef.current = next.entitlements;
       setDataRaw(next);
-      if (!uid) return;
+      if (!uid) return true;
       try {
         const persisted = Object.fromEntries(
           Object.entries(next).filter(
@@ -2689,8 +2690,10 @@ function useAppData(uid) {
           { ...persisted, updatedAt: new Date().toISOString() },
           { merge: true },
         );
+        return true;
       } catch (e) {
         console.error("save failed", e);
+        return false;
       }
     },
     [uid],
@@ -2704,7 +2707,6 @@ function getMergedExercises(data, day) {
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
   const customTrainingDay =
-    data.entitlements.trainingPro &&
     data.customTrainingPlan?.days?.[DAYS.indexOf(day)];
   const base = customTrainingDay
     ? (customTrainingDay.exercises || []).map((e) => ({
@@ -2727,7 +2729,6 @@ function getUsableExercises(data, day) {
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
   const customTrainingDay =
-    data.entitlements.trainingPro &&
     data.customTrainingPlan?.days?.[DAYS.indexOf(day)];
   const base = customTrainingDay
     ? (customTrainingDay.exercises || []).map((e) => ({
@@ -3128,36 +3129,32 @@ function Toast({ message }) {
   );
 }
 // In-app exercise video player.
-// Supports both TikTok Shorts (numeric video ID → TikTok embed) and
-// YouTube Shorts (alphanumeric ID → no-cookie YouTube embed). Runs
-// reliably inside a Capacitor WebView without triggering sign-in prompts.
-// Module-level close hook so Android Back can dismiss the full-screen viewer
-// without lifting video state into GymApp or fighting the AI drawer handler.
+// TikTok watch pages must NOT be embedded in an iframe; TikTok blocks framing
+// and can return a 404 fallback. TikTok URLs therefore open through the native
+// Capacitor Browser surface using the original configured URL. YouTube Shorts
+// retain the existing full-screen iframe viewer.
 let __closeFullScreenVideo = null;
 function registerFullScreenVideoClose(fn) {
   __closeFullScreenVideo = fn;
 }
 
-/* Full-screen TikTok/YouTube viewer — mounted only while open.
-   No gesture overlays, no pointer-events hacks, no preventDefault.
-   Exercise Screen only shows a "Watch Short" button; the iframe lives here. */
+function isTikTokVideoRef(value) {
+  const raw = String(value || "").trim();
+  return /(?:^|https?:\/\/)(?:www\.|m\.|vt\.)?tiktok\.com/i.test(raw) || /^\d+$/.test(raw);
+}
+
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const looksTikTok = /tiktok\.com/i.test(String(videoId || "")) || /^\d+$/.test(String(videoId || ""));
-  const isTikTok = looksTikTok;
-  const embedSrc = isTikTok
-    ? String(videoId || "")
-    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+  const embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {
-    let cancelled = false;
     setVideoLoaded(false);
     registerFullScreenVideoClose(() => {
       onClose();
       return true;
     });
     return () => registerFullScreenVideoClose(null);
-  }, [onClose]);
+  }, [onClose, videoId]);
 
   return (
     <div
@@ -3171,21 +3168,18 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
         background: "#000",
         display: "flex",
         flexDirection: "column",
-        // Stay above app chrome; respect existing Cap 7 system-bar margins.
         paddingTop: "env(safe-area-inset-top)",
         paddingBottom: "env(safe-area-inset-bottom)",
       }}
     >
-      <div
-        style={{
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 12px",
-          gap: 8,
-        }}
-      >
+      <div style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "10px 12px",
+        gap: 8,
+      }}>
         <div style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>
           {ar ? "فيديو التمرين" : "Exercise video"}
         </div>
@@ -3200,41 +3194,28 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
             border: "none",
             background: "rgba(255,255,255,0.15)",
             color: "#fff",
-            cursor: "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            flexShrink: 0,
           }}
         >
           <X size={18} color="#fff" />
         </button>
       </div>
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          position: "relative",
-          width: "100%",
-          background: "#000",
-        }}
-      >
+      <div style={{ flex: 1, minHeight: 0, position: "relative", width: "100%", background: "#000" }}>
         {!videoLoaded && (
-          <div
-            aria-live="polite"
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "#000",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
+          <div style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#000",
+            color: "#fff",
+            fontSize: 13,
+            fontWeight: 600,
+          }}>
             {ar ? "جاري تحميل الفيديو…" : "Loading video…"}
           </div>
         )}
@@ -3245,13 +3226,7 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
           fetchPriority="high"
           title={ar ? "فيديو التمرين" : "Exercise video"}
           referrerPolicy="strict-origin-when-cross-origin"
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            border: "none",
-          }}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
         />
@@ -3260,52 +3235,49 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
   );
 }
 
-function extractTikTokVideoId(value) {
-  if (!value) return "";
-  const raw = String(value).trim();
-  if (/^\d+$/.test(raw)) return raw;
-  const match = raw.match(/\/video\/(\d+)/);
-  return match ? match[1] : "";
+async function openTikTokVideo(tikTokUrl, ar) {
+  const raw = String(tikTokUrl || "").trim();
+  if (!raw) return;
+  try {
+    await Browser.open({
+      url: raw,
+      presentationStyle: "fullscreen",
+      toolbarColor: "#000000",
+    });
+  } catch (error) {
+    console.error("[TikTok] Browser.open failed", error);
+    // Do not launch the TikTok native app. Keep the failure inside the app.
+    throw new Error(ar ? "تعذر فتح فيديو التمرين داخل التطبيق." : "Could not open the exercise video inside the app.");
+  }
 }
 
-async function resolveTikTokVideoId(value) {
-  const direct = extractTikTokVideoId(value);
-  if (direct) return direct;
-  if (!/tiktok\.com/i.test(String(value || ""))) return "";
-  const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(value)}`);
-  if (!response.ok) throw new Error(`TikTok oEmbed ${response.status}`);
-  const payload = await response.json();
-  const html = String(payload?.html || "");
-  const id = html.match(/data-video-id=["'](\d+)["']/i)?.[1];
-  return id || "";
-}
-
-// In-app exercise video entry — button only on the Exercise Screen.
-// Supports TikTok (numeric ID) and YouTube Shorts (alphanumeric ID).
-// The embed is never mounted inside the scrollable exercise page.
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [open, setOpen] = useState(false);
 
   const close = useCallback(() => setOpen(false), []);
-
   if (!videoId) return null;
 
-  const isTikTok = /^\d+$/.test(videoId);
+  const isTikTok = isTikTokVideoRef(videoId);
+  const handleWatch = async () => {
+    if (isTikTok) {
+      try {
+        await openTikTokVideo(String(videoId), ar);
+      } catch (error) {
+        // Keep the error in the app; do not redirect to a native/social app.
+        console.warn(error);
+      }
+      return;
+    }
+    setOpen(true);
+  };
 
   return (
     <>
-      <div
-        style={{
-          marginBottom: 14,
-          width: "100%",
-          display: "flex",
-          justifyContent: "center",
-        }}
-      >
+      <div style={{ marginBottom: 14, width: "100%", display: "flex", justifyContent: "center" }}>
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={handleWatch}
           style={{
             width: "100%",
             maxWidth: 360,
@@ -3327,55 +3299,27 @@ function VideoPlayer({ videoId, ar }) {
             <img
               src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}
               alt=""
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                opacity: 0.6,
-              }}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.6 }}
             />
           )}
-          <div
-            style={{
-              position: "relative",
-              width: 52,
-              height: 52,
-              borderRadius: "50%",
-              background: "rgba(255,255,255,0.9)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <div
-              style={{
-                width: 0,
-                height: 0,
-                borderTop: "11px solid transparent",
-                borderBottom: "11px solid transparent",
-                borderLeft: "18px solid #000",
-                marginLeft: 4,
-              }}
-            />
+          <div style={{
+            position: "relative",
+            width: 52,
+            height: 52,
+            borderRadius: "50%",
+            background: "rgba(255,255,255,0.9)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}>
+            <div style={{ width: 0, height: 0, borderTop: "11px solid transparent", borderBottom: "11px solid transparent", borderLeft: "18px solid #000", marginLeft: 4 }} />
           </div>
-          <span
-            style={{
-              position: "relative",
-              color: "#fff",
-              fontSize: 13,
-              fontWeight: 700,
-              textShadow: "0 1px 4px rgba(0,0,0,0.8)",
-            }}
-          >
+          <span style={{ position: "relative", color: "#fff", fontSize: 13, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}>
             {ar ? "دوس على الشورت لمشاهدة الفيديو" : "Watch Short Demo"}
           </span>
         </button>
       </div>
-      {open && (
-        <FullScreenVideoViewer videoId={videoId} ar={ar} onClose={close} />
-      )}
+      {open && <FullScreenVideoViewer videoId={videoId} ar={ar} onClose={close} />}
     </>
   );
 }
@@ -6082,7 +6026,6 @@ function WorkoutScreen({
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
   const assignedCustomDay =
-    data.entitlements.trainingPro &&
     data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)];
   const daySchedule = assignedCustomDay || activePlan.schedule[selectedDay];
   const dayTitle = ar ? daySchedule.titleAr : daySchedule.title;
@@ -6677,59 +6620,99 @@ function CardioExerciseView({
 }) {
   const DURATION_SECONDS = 15 * 60;
   const existingLog = data.logs[logDate]?.[exerciseId] || null;
+  const alreadyFinished = existingLog?.finished === true;
+  const existingStartedAt = Number(existingLog?.cardioStartedAt || 0);
+  const existingElapsed = existingStartedAt > 0 ? Math.floor((Date.now() - existingStartedAt) / 1000) : 0;
+  const resumableStartedAt = !alreadyFinished && existingStartedAt > 0 && existingElapsed < DURATION_SECONDS
+    ? existingStartedAt
+    : null;
+
   const [now, setNow] = useState(() => Date.now());
-  const [startedAt, setStartedAt] = useState(() => {
-    const value = Number(existingLog?.cardioStartedAt || 0);
-    return Number.isFinite(value) && value > 0 ? value : null;
-  });
+  const [startedAt, setStartedAt] = useState(resumableStartedAt);
   const [saving, setSaving] = useState(false);
 
   const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
   const remaining = Math.max(0, DURATION_SECONDS - elapsed);
-  const completed = !!existingLog?.finished || remaining === 0;
-  const running = !!startedAt && !completed;
+  const phase = alreadyFinished ? "COMPLETED" : startedAt ? "RUNNING" : "IDLE";
+  const completed = phase === "COMPLETED";
+  const running = phase === "RUNNING";
 
   useEffect(() => {
-    if (!startedAt || completed) return undefined;
+    if (alreadyFinished || !existingStartedAt || resumableStartedAt || !uidSafe()) return;
+    // A stale unfinished timer should reset to IDLE instead of auto-completing.
+    if (existingElapsed >= DURATION_SECONDS) {
+      setStartedAt(null);
+    }
+  }, [alreadyFinished, existingStartedAt, resumableStartedAt, existingElapsed]);
+
+  useEffect(() => {
+    if (phase !== "RUNNING") return undefined;
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [startedAt, completed]);
+  }, [phase]);
 
-  const persist = useCallback((finished, cardioStartedAt = startedAt) => {
-    const next = clone(data);
-    if (!next.logs[logDate]) next.logs[logDate] = {};
-    next.logs[logDate][exerciseId] = {
-      sets: [{ weight: 0, reps: "15 min", done: finished }],
-      finished,
-      cardioStartedAt: cardioStartedAt || null,
-      cardioCompletedAt: finished ? Date.now() : null,
-    };
-    setData(next);
-  }, [data, exerciseId, logDate, setData, startedAt]);
+  const persist = useCallback(
+    async (finished, cardioStartedAt = startedAt) => {
+      const next = clone(data);
+      if (!next.logs[logDate]) next.logs[logDate] = {};
+      next.logs[logDate][exerciseId] = {
+        sets: [{ weight: 0, reps: "15 min", done: finished }],
+        finished,
+        cardioStartedAt: finished ? null : cardioStartedAt || null,
+        cardioCompletedAt: finished ? Date.now() : null,
+      };
+      const ok = await setData(next);
+      if (ok === false) throw new Error("Cardio persistence failed");
+    },
+    [data, exerciseId, logDate, setData, startedAt],
+  );
 
-  const finish = useCallback((reason) => {
-    if (saving) return;
-    setSaving(true);
-    persist(true, startedAt || Date.now());
-    try { awardXp(35); } catch {}
-    showToast(
-      reason === "timer"
-        ? (ar ? "خلصت الـ15 دقيقة! 💪" : "15 minutes complete! 💪")
-        : (ar ? "تم حفظ الكارديو!" : "Cardio saved!"),
-    );
-    back();
-  }, [ar, awardXp, back, persist, saving, showToast, startedAt]);
+  const finish = useCallback(
+    async (reason) => {
+      if (saving || completed) return;
+      setSaving(true);
+      try {
+        await persist(true, null);
+        setStartedAt(null);
+        setNow(Date.now());
+        try { awardXp(35); } catch {}
+        showToast(
+          reason === "timer"
+            ? (ar ? "خلصت الـ15 دقيقة! 💪" : "15 minutes complete! 💪")
+            : (ar ? "تم حفظ الكارديو!" : "Cardio saved!"),
+        );
+        back();
+      } catch (error) {
+        console.error("[Cardio] completion save failed", error);
+        showToast(ar ? "تعذر حفظ الكارديو، حاول مرة أخرى." : "Cardio could not be saved. Please try again.");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [ar, awardXp, back, completed, persist, saving, showToast],
+  );
 
   useEffect(() => {
-    if (startedAt && remaining === 0 && !existingLog?.finished) finish("timer");
-  }, [existingLog?.finished, finish, remaining, startedAt]);
+    if (phase === "RUNNING" && remaining <= 0 && !saving) {
+      finish("timer");
+    }
+  }, [finish, phase, remaining, saving]);
 
-  const start = () => {
-    if (running || completed) return;
+  const start = async () => {
+    if (saving || phase !== "IDLE") return;
     const value = Date.now();
     setStartedAt(value);
-    persist(false, value);
     setNow(value);
+    setSaving(true);
+    try {
+      await persist(false, value);
+    } catch (error) {
+      console.error("[Cardio] start save failed", error);
+      setStartedAt(null);
+      showToast(ar ? "تعذر بدء المؤقت، حاول مرة أخرى." : "Could not start the timer. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const skip = () => finish("skip");
@@ -6767,9 +6750,9 @@ function CardioExerciseView({
             <div style={{ height: "100%", width: `${completed ? 100 : progress * 100}%`, background: C.positive, borderRadius: 99, transition: "width .25s linear" }} />
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-            {!running && !completed && <GreenButton onClick={start} style={{ flex: 1 }}>{ar ? "ابدأ 15 دقيقة" : "Start 15 min"}</GreenButton>}
-            {running && <GreenButton onClick={skip} style={{ flex: 1 }}>{ar ? "إنهاء الآن" : "Finish now"}</GreenButton>}
-            {completed && <GreenButton onClick={back} style={{ flex: 1 }}>{ar ? "تم" : "Done"}</GreenButton>}
+            {phase === "IDLE" && <GreenButton onClick={start} disabled={saving} style={{ flex: 1 }}>{saving ? (ar ? "جاري البدء…" : "Starting…") : (ar ? "ابدأ 15 دقيقة" : "Start 15 min")}</GreenButton>}
+            {phase === "RUNNING" && <GreenButton onClick={skip} disabled={saving} style={{ flex: 1 }}>{saving ? (ar ? "جاري الحفظ…" : "Saving…") : (ar ? "إنهاء الآن" : "Finish now")}</GreenButton>}
+            {phase === "COMPLETED" && <GreenButton onClick={back} style={{ flex: 1 }}>{ar ? "تم" : "Done"}</GreenButton>}
           </div>
           {!completed && (
             <button onClick={skip} disabled={saving} style={{ marginTop: 12, width: "100%", padding: "11px 0", borderRadius: 12, border: `1px dashed ${C.border}`, background: "transparent", color: C.sub, fontWeight: 700, fontSize: 12.5, cursor: saving ? "default" : "pointer" }}>
@@ -8872,7 +8855,7 @@ function PlansScreen({ data, setData, go, showToast }) {
   return (
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "الخطط" : "Plans"} />
-      {data.customTrainingPlan && data.entitlements.trainingPro && (
+      {data.customTrainingPlan && (
         <div style={{ padding: "0 18px 10px" }}>
           <Card
             onClick={() => go("workout")}
@@ -8897,7 +8880,7 @@ function PlansScreen({ data, setData, go, showToast }) {
           </Card>
         </div>
       )}
-      {data.customNutritionPlan && data.entitlements.nutritionPro && (
+      {data.customNutritionPlan && (
         <div style={{ padding: "0 18px 10px" }}>
           <Card
             onClick={() => go("nutritionPlan")}

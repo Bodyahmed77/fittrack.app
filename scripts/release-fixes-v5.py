@@ -55,6 +55,22 @@ if marker not in text:
     raise SystemExit('v5: nutrition plan conditional marker not found')
 text = text.replace(marker, replacement, 1)
 
+# Keep the Vite hardening check consistent with the intentional non-Pro custom
+# nutrition-plan behavior. The hardening plugin is itself run after this script.
+VITE = Path('vite.config.js')
+v = VITE.read_text(encoding='utf-8')
+v_old = 'const guardedNutritionBranch = `{pro && customNutritionPlan ? (\\n          <Card\\n            onClick={() => go("nutritionPlan")}`;'
+v_new = 'const guardedNutritionBranch = `{customNutritionPlan ? (\\n          <Card\\n            onClick={() => go("nutritionPlan")}`;'
+if v_old not in v:
+    raise SystemExit('v5: Vite nutrition hardening target not found')
+v = v.replace(v_old, v_new, 1)
+v_old = 'out.includes("{pro && customNutritionPlan ? (")'
+v_new = 'out.includes("{customNutritionPlan ? (")'
+if v_old not in v:
+    raise SystemExit('v5: Vite nutrition hardening assertion not found')
+v = v.replace(v_old, v_new, 1)
+VITE.write_text(v, encoding='utf-8')
+
 # 3) Prevent duplicate native notifications. planNotifications.js is the
 #    dedicated bridge for published training/nutrition plans; the generic data
 #    listener must not schedule the same Firestore event a second time.
@@ -83,6 +99,7 @@ APP.write_text(text, encoding='utf-8')
 #    gate around admin-assigned plans, and never re-enable the duplicate DOM bridge.
 text = APP.read_text(encoding='utf-8')
 index_text = INDEX.read_text(encoding='utf-8')
+v = VITE.read_text(encoding='utf-8')
 assert 'const persist = useCallback(async (finished' in text
 assert 'await persist(true, null)' in text
 assert 'data.customTrainingPlan?.days?.[DAYS.indexOf(day)]' in text
@@ -90,6 +107,7 @@ assert 'data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]' in text
 assert 'data.customTrainingPlan && data.entitlements.trainingPro && (' not in text
 assert 'data.customNutritionPlan && data.entitlements.nutritionPro && (' not in text
 assert 'startPublishedPlansUx' not in index_text
+assert 'const guardedNutritionBranch = `{customNutritionPlan ? (' in v
 print('Release fixes v5 applied successfully')
 print('Cardio completion now waits for persistence before navigation')
 print('Admin-assigned custom plans are not gated by billing')

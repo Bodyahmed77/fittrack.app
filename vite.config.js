@@ -80,14 +80,15 @@ function fiftyFitHardeningPlugin() {
       );
       out = out.slice(0, bodyWeightStart) + bodyWeightSegment + out.slice(mealsStart);
 
-      // TikTok pages must not be embedded. The production source uses the
-      // Capacitor Browser API with the original configured URL. The exact local
-      // variable/whitespace is intentionally not part of this invariant.
+      // TikTok pages must not be embedded. The production source may use either
+      // the native in-app WebView bridge or the legacy Capacitor Browser API.
       const videoStart = out.indexOf("function FullScreenVideoViewer");
       const exerciseVisualStart = out.indexOf("/* ============================== EXERCISE VISUAL", videoStart);
       requirePatch(videoStart >= 0 && exerciseVisualStart > videoStart, "video player section");
       const videoSegment = out.slice(videoStart, exerciseVisualStart);
-      const browserFlowOk = /Browser\.open\(\{\s*url\s*:\s*(?:tikTokUrl|raw)/.test(videoSegment);
+      const browserFlowOk =
+        /openTikTokWebView\(/.test(videoSegment) ||
+        /Browser\.open\(\{\s*url\s*:\s*(?:tikTokUrl|raw)/.test(videoSegment);
       requirePatch(browserFlowOk, "TikTok native browser flow");
       requirePatch(!videoSegment.includes("tiktok.com/player/v1/"), "TikTok official player disabled");
       requirePatch(!/tiktok\.com\/oembed/i.test(videoSegment), "TikTok oEmbed resolver disabled");

@@ -36,20 +36,16 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install dependencies
-        run: |
-          npm ci
-          # Browser is used for TikTok's normal page in an Android Custom Tab.
-          # Keep the repository lockfile untouched for this launch-only native integration.
-          npm install @capacitor/browser@7.0.5 --no-save
+        run: npm ci
 
       - name: Extract Google Web Client ID
         env:
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: python3 scripts/extract-google-web-client-id.py
 
-      - name: Build the web app
+      - name: Build the web app from the repository source
         run: |
-          python3 scripts/patch-launch-readiness.py
+          python3 scripts/release-fixes.py
           npm run build
 
       - name: Add the Android platform
@@ -90,7 +86,6 @@ jobs:
               text=text.replace("dependencies {", "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
           if "com.google.gms.google-services" not in text:
               text += "\napply plugin: 'com.google.gms.google-services'\n"
-          # Keep WebView-hosted language selection independent of Play language splits.
           if "enableSplit = false" not in text:
               text += "\nandroid {\n    bundle {\n        language { enableSplit = false }\n    }\n}\n"
           ab.write_text(text,encoding='utf-8')
@@ -148,6 +143,14 @@ jobs:
           test -s app/src/main/assets/public/index.html
           echo "Capacitor web assets are present in the Android base module."
 
+      - name: Verify release artifacts will use identical web assets
+        working-directory: android
+        run: |
+          set -euo pipefail
+          test -s app/src/main/assets/public/index.html
+          sha256sum app/src/main/assets/public/index.html
+          echo "AAB and APK are built in the same Gradle invocation from the same Android/web source tree."
+
       - name: Decode release signing keystore
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -181,6 +184,13 @@ jobs:
             sleep $((attempt * 5))
           done
           exit "$last_rc"
+
+      - name: Verify AAB and APK exist and are non-empty
+        run: |
+          set -euo pipefail
+          test -s android/app/build/outputs/bundle/release/app-release.aab
+          test -s android/app/build/outputs/apk/release/app-release.apk
+          ls -lh android/app/build/outputs/bundle/release/app-release.aab android/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4

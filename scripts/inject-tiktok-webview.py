@@ -70,6 +70,8 @@ public class TikTokWebViewActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
+        s.setSupportMultipleWindows(false);
+        s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setBuiltInZoomControls(false);
         s.setDisplayZoomControls(false);
         s.setSupportZoom(false);

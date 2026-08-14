@@ -4,15 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0b0d10" />
-    <link rel="preconnect" href="https://www.tiktok.com" crossorigin />
     <title>Fifty Fit</title>
     <style>
       html, body, #root { height: 100%; margin: 0; padding: 0; background: #0b0d10; }
       * { -webkit-tap-highlight-color: transparent; }
     </style>
     <script>
-      /* Fifty Fit Android runtime guards.
-       * Launch blockers only: AI keyboard placement + exact TikTok URL fallback.
+      /* Fifty Fit Android runtime guards — AI Coach keyboard inset only.
+       * Plan cards are React-owned. TikTok is handled by FullScreenVideoViewer.
        */
       (function () {
         try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
@@ -43,7 +42,7 @@
             var inset = keyboardInset();
             var drawer = findAiDrawer();
             if (!drawer) {
-              var candidates = document.querySelectorAll("div");
+              var candidates = document.querySelectorSelectorAll ? document.querySelectorAll("div") : document.querySelectorAll("div");
               for (var i = 0; i < candidates.length; i++) {
                 var el = candidates[i];
                 var cs = window.getComputedStyle(el);
@@ -56,51 +55,16 @@
               }
             }
             if (!drawer) return;
-            drawer.style.setProperty("bottom", inset + "px", "important");
-            drawer.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
-            drawer.style.setProperty("max-height", "calc(100% - " + inset + "px)", "important");
-            drawer.style.setProperty("padding-bottom", "0px", "important");
-          } catch (_) {}
-        }
-
-        var shownTikTok = new WeakSet();
-        function keepTikTokInsideViewer() {
-          try {
-            var frames = document.querySelectorAll("iframe");
-            for (var i = 0; i < frames.length; i++) {
-              var frame = frames[i];
-              var raw = frame.getAttribute("src") || "";
-              if (!/^https?:\\/\\/(www\\.)?tiktok\\.com/i.test(raw)) continue;
-              frame.removeAttribute("sandbox");
-              frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
-              frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
-              frame.setAttribute("loading", "eager");
-              if (shownTikTok.has(frame)) continue;
-              shownTikTok.add(frame);
-
-              var parent = frame.parentElement;
-              if (!parent) continue;
-              var fallback = document.createElement("div");
-              fallback.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#080808;color:#fff;z-index:4;padding:24px;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s";
-              fallback.innerHTML = '<div style="max-width:300px"><div style="font-size:16px;font-weight:800;margin-bottom:8px">TikTok video did not finish loading.</div><div style="font-size:12px;opacity:.65;margin-bottom:16px">Open the same TikTok URL like a normal browser page.</div><button type="button" style="border:0;border-radius:12px;padding:12px 18px;font-weight:800;background:#fff;color:#000;cursor:pointer">Open video</button></div>';
-              var button = fallback.querySelector("button");
-              button.dataset.url = raw;
-              button.addEventListener("click", function () {
-                var url = this.dataset.url || "";
-                if (!url) return;
-                try { window.open(url, "_blank", "noopener,noreferrer"); } catch (_) { window.location.href = url; }
-              });
-              parent.style.position = parent.style.position || "relative";
-              parent.appendChild(fallback);
-
-              var iframeLoaded = false;
-              frame.addEventListener("load", function () { iframeLoaded = true; }, { once: true });
-              setTimeout(function () {
-                if (!frame.isConnected || iframeLoaded) return;
-                fallback.style.opacity = "1";
-                fallback.style.pointerEvents = "auto";
-              }, 6500);
+            if (inset > 0) {
+              drawer.style.setProperty("bottom", inset + "px", "important");
+              drawer.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
+              drawer.style.setProperty("max-height", "calc(100% - " + inset + "px)", "important");
+            } else {
+              drawer.style.removeProperty("bottom");
+              drawer.style.removeProperty("height");
+              drawer.style.removeProperty("max-height");
             }
+            drawer.style.setProperty("padding-bottom", "0px", "important");
           } catch (_) {}
         }
 
@@ -117,13 +81,7 @@
             setTimeout(syncAiDrawer, 140);
             setTimeout(syncAiDrawer, 350);
           }, true);
-          var observer = new MutationObserver(function () {
-            syncAiDrawer();
-            keepTikTokInsideViewer();
-          });
-          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
           setTimeout(syncAiDrawer, 0);
-          setTimeout(keepTikTokInsideViewer, 0);
         } catch (_) {}
       })();
     </script>
@@ -134,9 +92,7 @@
     <script type="module" src="/src/main.jsx"></script>
     <script type="module">
       import { startPlanNotificationBridge } from "/src/planNotifications.js";
-      import { startPublishedPlansUx } from "/src/publishedPlansUx.js";
       startPlanNotificationBridge();
-      startPublishedPlansUx();
     </script>
   </body>
 </html>

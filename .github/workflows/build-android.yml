@@ -38,7 +38,7 @@ jobs:
         run: python3 scripts/extract-google-web-client-id.py
       - name: Build the web app from the repository source
         run: |
-          python3 scripts/release-fixes-v5.py
+          python3 scripts/release-fixes-v6.py
           npm run build
       - name: Add the Android platform
         run: npx cap add android || true

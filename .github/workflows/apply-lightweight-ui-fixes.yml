@@ -1,0 +1,102 @@
+name: Apply lightweight UI fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-lightweight-ui-fixes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Apply lightweight UI fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          changed = False
+
+          # Lightweight startup logo animation: no GIF, video, Lottie or runtime download.
+          main = Path("src/main.jsx")
+          text = main.read_text(encoding="utf-8")
+          if 'import logoSrc from "./assets/logo.png";' not in text:
+              text = text.replace(
+                  'import { startPublishedPlansUx } from "./publishedPlansUx";\n',
+                  'import { startPublishedPlansUx } from "./publishedPlansUx";\nimport logoSrc from "./assets/logo.png";\n',
+                  1,
+              )
+          old = '''        <div\n          style={{\n            width: 42,\n            height: 42,\n            margin: "0 auto 14px",\n            border: "3px solid rgba(255,255,255,.18)",\n            borderTopColor: "#fff",\n            borderRadius: "50%",\n            animation: "spin .8s linear infinite",\n          }}\n        />'''
+          new = '''        <img\n          src={logoSrc}\n          alt="Fifty Fit"\n          width={72}\n          height={72}\n          style={{\n            display: "block",\n            objectFit: "contain",\n            margin: "0 auto 14px",\n            animation: "fiftyLogoIn .62s cubic-bezier(.22,.8,.3,1) both",\n          }}\n        />'''
+          if old in text:
+              text = text.replace(old, new, 1)
+              text = text.replace(
+                  '<style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>',
+                  '<style>{`@keyframes fiftyLogoIn { 0% { opacity: 0; transform: scale(.9); } 55% { opacity: 1; transform: scale(1.03); } 100% { opacity: 1; transform: scale(1); } }`}</style>',
+                  1,
+              )
+          else:
+              raise SystemExit("StartupShell anchor not found")
+          main.write_text(text, encoding="utf-8")
+          changed = True
+
+          # Move the nutrition food-selection sheet above the Android keyboard.
+          app = Path("src/App.jsx")
+          text = app.read_text(encoding="utf-8")
+          old_padding = 'style={{ paddingBottom: selected ? 200 : 0 }}'
+          new_padding = 'style={{ paddingBottom: selected ? "calc(200px + var(--ff-keyboard-height, 0px))" : 0 }}'
+          if old_padding in text:
+              text = text.replace(old_padding, new_padding, 1)
+          else:
+              raise SystemExit("FoodPicker padding anchor not found")
+
+          old_sheet = '''            position: "fixed",\n            bottom: 0,\n            left: "50%",'''
+          new_sheet = '''            position: "fixed",\n            bottom: "var(--ff-keyboard-height, 0px)",\n            left: "50%",\n            transition: "bottom 120ms ease-out",'''
+          if old_sheet in text:
+              text = text.replace(old_sheet, new_sheet, 1)
+          else:
+              raise SystemExit("FoodPicker sheet anchor not found")
+          app.write_text(text, encoding="utf-8")
+          changed = True
+
+          # Keep the patch idempotent.
+          if not changed:
+              raise SystemExit("No changes were applied")
+
+      - name: Add keyboard-height bridge and commit
+        shell: python
+        run: |
+          from pathlib import Path
+
+          main = Path("src/main.jsx")
+          text = main.read_text(encoding="utf-8")
+          marker = 'applySystemBarColors();\nsetTimeout(applySystemBarColors, 400);'
+          bridge = '''\n\n// Keyboard bridge for fixed bottom sheets (especially FoodPicker on Android).\nfunction syncKeyboardHeight() {\n  const vv = window.visualViewport;\n  const keyboardHeight = vv\n    ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))\n    : 0;\n  document.documentElement.style.setProperty(\n    "--ff-keyboard-height",\n    `${keyboardHeight}px`,\n  );\n}\nif (typeof window !== "undefined") {\n  syncKeyboardHeight();\n  window.visualViewport?.addEventListener("resize", syncKeyboardHeight);\n  window.visualViewport?.addEventListener("scroll", syncKeyboardHeight);\n  window.addEventListener("resize", syncKeyboardHeight);\n}\n'''
+          if 'function syncKeyboardHeight()' not in text:
+              if marker not in text:
+                  raise SystemExit("System bar anchor not found")
+              text = text.replace(marker, marker + bridge, 1)
+              main.write_text(text, encoding="utf-8")
+
+      - name: Commit changes when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No source changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.jsx src/App.jsx
+          git commit -m "feat: lightweight startup and keyboard-safe food picker"
+          git push

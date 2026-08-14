@@ -8676,7 +8676,7 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
   };
 
   return (
-    <div dir={ar ? "rtl" : "ltr"} style={{ paddingBottom: selected ? 200 : 0 }}>
+    <div dir={ar ? "rtl" : "ltr"} style={{ paddingBottom: selected ? "calc(200px + var(--ff-keyboard-height, 0px))" : 0 }}>
       <TopBar
         title={ar ? `إضافة لـ${mealName}` : `Add to ${mealName}`}
         onBack={back}
@@ -8760,8 +8760,9 @@ function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
         <div
           style={{
             position: "fixed",
-            bottom: 0,
+            bottom: "var(--ff-keyboard-height, 0px)",
             left: "50%",
+            transition: "bottom 120ms ease-out",
             transform: "translateX(-50%)",
             width: "100%",
             maxWidth: 430,

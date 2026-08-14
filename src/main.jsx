@@ -1,6 +1,7 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { startPublishedPlansUx } from "./publishedPlansUx";
+import logoSrc from "./assets/logo.png";
 
 
 // Keep Android system bars black (matches app chrome after Cap 7 edge-to-edge margins).
@@ -20,6 +21,25 @@ async function applySystemBarColors() {
 // Splash / Cap bridge can overwrite bar style once; re-apply after settle.
 applySystemBarColors();
 setTimeout(applySystemBarColors, 400);
+
+// Keyboard bridge for fixed bottom sheets (especially FoodPicker on Android).
+function syncKeyboardHeight() {
+  const vv = window.visualViewport;
+  const keyboardHeight = vv
+    ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
+    : 0;
+  document.documentElement.style.setProperty(
+    "--ff-keyboard-height",
+    `${keyboardHeight}px`,
+  );
+}
+if (typeof window !== "undefined") {
+  syncKeyboardHeight();
+  window.visualViewport?.addEventListener("resize", syncKeyboardHeight);
+  window.visualViewport?.addEventListener("scroll", syncKeyboardHeight);
+  window.addEventListener("resize", syncKeyboardHeight);
+}
+
 setTimeout(applySystemBarColors, 1200);
 
 const App = React.lazy(() => import("./App.jsx"));
@@ -74,20 +94,21 @@ function StartupShell() {
       }}
     >
       <div style={{ textAlign: "center", padding: 24 }}>
-        <div
+        <img
+          src={logoSrc}
+          alt="Fifty Fit"
+          width={72}
+          height={72}
           style={{
-            width: 42,
-            height: 42,
+            display: "block",
+            objectFit: "contain",
             margin: "0 auto 14px",
-            border: "3px solid rgba(255,255,255,.18)",
-            borderTopColor: "#fff",
-            borderRadius: "50%",
-            animation: "spin .8s linear infinite",
+            animation: "fiftyLogoIn .62s cubic-bezier(.22,.8,.3,1) both",
           }}
         />
         <div style={{ fontWeight: 800, fontSize: 18 }}>Fifty</div>
       </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes fiftyLogoIn { 0% { opacity: 0; transform: scale(.9); } 55% { opacity: 1; transform: scale(1.03); } 100% { opacity: 1; transform: scale(1); } }`}</style>
     </div>
   );
 }

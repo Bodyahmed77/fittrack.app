@@ -7,17 +7,17 @@ ROOT.mkdir(parents=True, exist_ok=True)
 (ROOT / "TikTokWebViewPlugin.java").write_text(r'''package com.bodyahmed77.fiftyfit;
 
 import android.content.Intent;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.JSObject;
 import com.getcapacitor.PluginMethod;
 
 @CapacitorPlugin(name = "TikTokWebView")
 public class TikTokWebViewPlugin extends Plugin {
     @PluginMethod
     public void open(PluginCall call) {
-        String url = call.getString("url", "");
+        String url = call.getString("url");
         if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
             call.reject("A valid http(s) URL is required");
             return;
@@ -38,12 +38,11 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.View;
 import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -89,7 +88,7 @@ public class TikTokWebViewActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String u = request.getUrl().toString();
                 // Keep all web navigation inside the app. Never hand off to
-                // tiktok://, intent://, or other external-app schemes.
+                // tiktok://, intent://, or any other external app scheme.
                 if (!(u.startsWith("http://") || u.startsWith("https://"))) return true;
                 view.loadUrl(u);
                 return true;
@@ -177,13 +176,12 @@ public class MainActivity extends BridgeActivity {
 
 manifest = Path("android/app/src/main/AndroidManifest.xml")
 text = manifest.read_text(encoding="utf-8")
-needle = '    <application'
 if 'TikTokWebViewActivity' not in text:
     marker = text.find('</application>')
     if marker < 0:
         raise SystemExit('AndroidManifest application closing tag not found')
     activity = '        <activity android:name=".TikTokWebViewActivity" android:exported="false" android:screenOrientation="portrait"/>\n'
     text = text[:marker] + activity + text[marker:]
-    manifest.write_text(text, encoding="utf-8")
+    manifest.write_text(text, encoding='utf-8')
 
 print('Injected native in-app TikTok WebView plugin')

@@ -47,8 +47,7 @@ export const EXERCISE_IMAGES = {
   burpees: "burpees",
 };
 
-// Direct TikTok URLs are kept for the normal in-app WebView.
-// Numeric IDs use TikTok's public /video/<id> page URL, not the official player.
+// TikTok video IDs are canonical IDs for TikTok's official Player v1 embed.
 export const EXERCISE_VIDEOS = {
   bench_press: "https://www.tiktok.com/video/7603190204740013313",
   incline_db_press: "https://www.tiktok.com/video/7267987124610239762",

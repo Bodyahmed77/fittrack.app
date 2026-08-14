@@ -3139,12 +3139,22 @@ function registerFullScreenVideoClose(fn) {
 
 function isTikTokVideoRef(value) {
   const raw = String(value || "").trim();
-  return /(?:^|https?:\/\/)(?:www\.|m\.|vt\.)?tiktok\.com/i.test(raw) || /^\d+$/.test(raw);
+  return /(?:^|https?:\/\/)(?:www\.|m\.|vt\.)?tiktok\.com/i.test(raw) || /^\d{15,}$/.test(raw);
+}
+
+function getTikTokPostId(value) {
+  const raw = String(value || "").trim();
+  if (/^\d{15,}$/.test(raw)) return raw;
+  const match = raw.match(/\/video\/(\d{15,})/i);
+  return match?.[1] || null;
 }
 
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+  const tikTokPostId = getTikTokPostId(videoId);
+  const embedSrc = tikTokPostId
+    ? `https://www.tiktok.com/player/v1/${tikTokPostId}?autoplay=1&controls=1&progress_bar=1&play_button=1&volume_control=1&fullscreen_button=1&timestamp=1&music_info=0&description=0&rel=0&native_context_menu=0`
+    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 
   useEffect(() => {
     setVideoLoaded(false);
@@ -3234,22 +3244,6 @@ function FullScreenVideoViewer({ videoId, ar, onClose }) {
   );
 }
 
-async function openTikTokVideo(tikTokUrl, ar) {
-  const raw = String(tikTokUrl || "").trim();
-  if (!raw) return;
-  try {
-    const { openTikTokWebView } = await import("./tiktokWebView");
-    await openTikTokWebView(raw);
-  } catch (error) {
-    console.error("[TikTok] in-app viewer failed", error);
-    throw new Error(
-      ar
-        ? "تعذر فتح فيديو التمرين داخل التطبيق."
-        : "Could not open the exercise video inside the app.",
-    );
-  }
-}
-
 function VideoPlayer({ videoId, ar }) {
   const { C } = useUI();
   const [open, setOpen] = useState(false);
@@ -3258,18 +3252,7 @@ function VideoPlayer({ videoId, ar }) {
   if (!videoId) return null;
 
   const isTikTok = isTikTokVideoRef(videoId);
-  const handleWatch = async () => {
-    if (isTikTok) {
-      try {
-        await openTikTokVideo(String(videoId), ar);
-      } catch (error) {
-        // Keep the error in the app; do not redirect to a native/social app.
-        console.warn(error);
-      }
-      return;
-    }
-    setOpen(true);
-  };
+  const handleWatch = () => setOpen(true);
 
   return (
     <>
@@ -6110,8 +6093,7 @@ function WorkoutScreen({
           {/* Dynamic 7-day window anchored on today so the strip advances
               as calendar days pass (not a fixed dead-end range). */}
           {Array.from({ length: 7 }, (_, i) => {
-            const offset = i - 2; // [today-2 ... today+4]
-            const iso = dateKey(offset);
+            const iso = addDays(mondayOf(dateKey(0)), i);
             const calendarDay = weekdayOf(iso);
             const d = planDayForDate(data, iso);
             const isSelected = iso === selectedDate;

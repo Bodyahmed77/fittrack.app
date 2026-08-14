@@ -11,12 +11,9 @@
       * { -webkit-tap-highlight-color: transparent; }
     </style>
     <script>
-      /* Android runtime fixes:
-         - keep the legacy paywall planIds lookup defined;
-         - keep the AI drawer above the real visible keyboard boundary;
-         - keep TikTok inside the existing full-screen iframe/WebView without
-           rewriting the supplied URL into the official player or an author-less URL.
-      */
+      /* Fifty Fit Android runtime guards.
+       * Launch blockers only: AI keyboard placement + exact TikTok URL fallback.
+       */
       (function () {
         try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
 
@@ -28,37 +25,91 @@
           } catch (_) { return 0; }
         }
 
+        function findAiDrawer() {
+          var target = document.activeElement;
+          if (!target) return null;
+          var placeholder = String(target.getAttribute && target.getAttribute("placeholder") || "").toLowerCase();
+          if (!placeholder.includes("اكتب سؤالك") && !placeholder.includes("ask anything")) return null;
+
+          var node = target;
+          for (var i = 0; node && i < 10; i++, node = node.parentElement) {
+            var cs = window.getComputedStyle(node);
+            if (cs.position === "fixed" && Number.parseInt(cs.zIndex || "0", 10) >= 1000) return node;
+          }
+          return null;
+        }
+
         function syncAiDrawer() {
           try {
             var inset = keyboardInset();
-            var candidates = document.querySelectorAll("div");
-            for (var i = 0; i < candidates.length; i++) {
-              var el = candidates[i];
-              var cs = window.getComputedStyle(el);
-              if (cs.position !== "absolute") continue;
-              if (!el.parentElement) continue;
-              var parentStyle = window.getComputedStyle(el.parentElement);
-              if (parentStyle.position !== "fixed" || parentStyle.zIndex !== "1200") continue;
-              if (!String(cs.width || "").includes("360px")) continue;
-              el.style.setProperty("bottom", inset + "px", "important");
-              el.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
-              el.style.setProperty("max-height", "calc(100% - " + inset + "px)", "important");
+            var drawer = findAiDrawer();
+            if (!drawer) {
+              var candidates = document.querySelectorAll("div");
+              for (var i = 0; i < candidates.length; i++) {
+                var el = candidates[i];
+                var cs = window.getComputedStyle(el);
+                if (cs.position !== "fixed") continue;
+                var z = Number.parseInt(cs.zIndex || "0", 10);
+                if (z < 1000) continue;
+                if (el.querySelector && el.querySelector('textarea[placeholder*="اكتب سؤالك"], textarea[placeholder*="Ask anything"], input[placeholder*="اكتب سؤالك"], input[placeholder*="Ask anything"]')) {
+                  drawer = el;
+                  break;
+                }
+              }
             }
+            if (!drawer) return;
+
+            drawer.style.setProperty("bottom", inset + "px", "important");
+            drawer.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
+            drawer.style.setProperty("max-height", "calc(100% - " + inset + "px)", "important");
+            drawer.style.setProperty("padding-bottom", "0px", "important");
           } catch (_) {}
         }
 
-        function keepTikTokInsideIframe() {
+        var shownTikTok = new WeakSet();
+        function keepTikTokInsideViewer() {
           try {
             var frames = document.querySelectorAll("iframe");
             for (var i = 0; i < frames.length; i++) {
               var frame = frames[i];
               var raw = frame.getAttribute("src") || "";
-              if (!/tiktok\.com/i.test(raw)) continue;
-              // The app supplies the exact public TikTok web URL. Keep it intact.
-              // Do NOT rewrite it to /video/<id> or /player/v1/<id>.
+              if (!/^https?:\\/\\/(www\\.)?tiktok\\.com/i.test(raw)) continue;
+
+              /* Keep the exact URL supplied by Fifty Fit. Never rewrite to the official player. */
               frame.removeAttribute("sandbox");
               frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
               frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
+              frame.setAttribute("loading", "eager");
+
+              if (shownTikTok.has(frame)) continue;
+              shownTikTok.add(frame);
+
+              var parent = frame.parentElement;
+              if (!parent) continue;
+
+              var fallback = document.createElement("div");
+              fallback.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#080808;color:#fff;z-index:4;padding:24px;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s";
+              fallback.innerHTML = '<div style="max-width:300px"><div style="font-size:16px;font-weight:800;margin-bottom:8px">TikTok video could not load inside the viewer.</div><div style="font-size:12px;opacity:.65;margin-bottom:16px">Open the same TikTok link like a normal browser page.</div><button type="button" style="border:0;border-radius:12px;padding:12px 18px;font-weight:800;background:#fff;color:#000;cursor:pointer">Open video</button></div>';
+              var button = fallback.querySelector("button");
+              button.addEventListener("click", function () {
+                try { window.open(raw, "_blank", "noopener,noreferrer"); } catch (_) { window.location.href = raw; }
+              });
+              parent.style.position = parent.style.position || "relative";
+              parent.appendChild(fallback);
+
+              setTimeout(function () {
+                if (!frame.isConnected) return;
+                try {
+                  var doc = frame.contentDocument;
+                  var loadedText = String(doc && doc.body && doc.body.innerText || "").trim();
+                  if (!loadedText || loadedText.length < 30) {
+                    fallback.style.opacity = "1";
+                    fallback.style.pointerEvents = "auto";
+                  }
+                } catch (_) {
+                  /* Cross-origin frame: inability to inspect is expected; leave the viewer visible. */
+                }
+              }, 6500);
             }
           } catch (_) {}
         }
@@ -71,29 +122,19 @@
           }
           window.addEventListener("resize", syncAiDrawer, { passive: true });
           window.addEventListener("orientationchange", syncAiDrawer, { passive: true });
-          document.addEventListener("focusin", function (event) {
-            var target = event.target;
-            var placeholder = String(target?.getAttribute?.("placeholder") || "").toLowerCase();
-            if (placeholder.includes("اكتب سؤالك") || placeholder.includes("ask anything")) {
-              setTimeout(syncAiDrawer, 40);
-              setTimeout(syncAiDrawer, 180);
-              setTimeout(syncAiDrawer, 400);
-            }
+          document.addEventListener("focusin", function () {
+            setTimeout(syncAiDrawer, 30);
+            setTimeout(syncAiDrawer, 140);
+            setTimeout(syncAiDrawer, 350);
           }, true);
 
           var observer = new MutationObserver(function () {
             syncAiDrawer();
-            keepTikTokInsideIframe();
+            keepTikTokInsideViewer();
           });
-          observer.observe(document.documentElement, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ["src", "style"]
-          });
+          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
           setTimeout(syncAiDrawer, 0);
-          setTimeout(syncAiDrawer, 300);
-          setTimeout(keepTikTokInsideIframe, 0);
+          setTimeout(keepTikTokInsideViewer, 0);
         } catch (_) {}
       })();
     </script>
@@ -102,6 +143,11 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-    <script type="module" src="/src/android-ui-fixes.js"></script>
+    <script type="module">
+      import { startPlanNotificationBridge } from "/src/planNotifications.js";
+      import { startPublishedPlansUx } from "/src/publishedPlansUx.js";
+      startPlanNotificationBridge();
+      startPublishedPlansUx();
+    </script>
   </body>
 </html>

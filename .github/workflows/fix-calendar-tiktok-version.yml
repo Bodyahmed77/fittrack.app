@@ -17,96 +17,77 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply source fixes and bump Play release
+      - name: Patch current source
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           import re
-          from urllib.request import Request, urlopen
 
           app = Path('src/App.jsx')
           text = app.read_text(encoding='utf-8')
 
-          # Calendar strip: keep the whole current Monday-Sunday week visible.
-          # This prevents older days in the same week from disappearing just
-          # because the user completed another day or because the rolling
-          # today-2..today+4 window advanced.
-          start_marker = '          {/* Dynamic 7-day window anchored on today so the strip advances\n'
-          start = text.find(start_marker)
-          if start < 0:
-              raise SystemExit('Workout calendar marker not found')
-          end_marker = '          })}\n        </div>\n      </div>\n\n      <div style={{ padding: "18px 18px 6px" }}>'
-          end = text.find(end_marker, start)
-          if end < 0:
-              raise SystemExit('Workout calendar end marker not found')
-          old_block = text[start:end + len('          })')]
-          new_block = '''          {/* Stable Monday-Sunday week strip: all days in the current week\n              remain visible while completion status updates independently. */}\n          {Array.from({ length: 7 }, (_, i) => {\n            const iso = addDays(mondayOf(dateKey(0)), i);\n            const calendarDay = weekdayOf(iso);\n            const d = planDayForDate(data, iso);\n            const isSelected = iso === selectedDate;\n            const isToday = iso === dateKey(0);\n            const isActiveDay =\n              d === activeDay && iso >= (data.workoutStartDate || iso);\n            const status = dayStatus(data, d, iso);\n            const isDone = status === "done";\n            const isMissed = status === "missed";\n            const bg = isSelected\n              ? isDone\n                ? C.positive\n                : isMissed\n                ? C.danger\n                : C.green\n              : isDone\n              ? C.positive\n              : isMissed\n              ? C.dangerSoft\n              : C.card2;\n            const fg = isSelected\n              ? isDone || isMissed\n                ? "#fff"\n                : C.onAccent\n              : isDone\n              ? "#fff"\n              : isMissed\n              ? C.danger\n              : isToday\n              ? C.green\n              : C.text;\n            return (\n              <button\n                key={iso}\n                onClick={() => {\n                  setSelectedDay(d);\n                  setSelectedIso(iso);\n                }}\n                style={{\n                  minWidth: 44,\n                  padding: "10px 0",\n                  borderRadius: 12,\n                  cursor: "pointer",\n                  border:\n                    (isToday || isActiveDay) && !isSelected\n                      ? `1px solid ${C.green}`\n                      : "1px solid transparent",\n                  background: bg,\n                  display: "flex",\n                  flexDirection: "column",\n                  alignItems: "center",\n                  justifyContent: "center",\n                  gap: 4,\n                  position: "relative",\n                }}\n              >\n                <span\n                  style={{\n                    fontSize: 11,\n                    color:\n                      isSelected && (isDone || isMissed)\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isDone\n                        ? C.positive\n                        : isMissed\n                        ? C.danger\n                        : C.sub,\n                    fontWeight: 600,\n                  }}\n                >\n                  {ar ? DAY_LABELS_AR[calendarDay] : calendarDay}\n                </span>\n                <span\n                  style={{\n                    fontSize: 13,\n                    color: fg,\n                    fontWeight: 700,\n                  }}\n                >\n                  {Number(iso.slice(8, 10))}\n                </span>\n                {isDone && (\n                  <Check\n                    size={12}\n                    color="#fff"\n                    strokeWidth={3}\n                    style={{ position: "absolute", top: 2, right: 5 }}\n                  />\n                )}\n                {isMissed && <span style={{ fontSize: 9, color: fg }}>!</span>}\n              </button>\n            );\n          })}'''
-          text = text[:start] + new_block + text[end + len('          })'):]
+          old = 'const offset = i - 2; // [today-2 ... today+4]\n            const iso = dateKey(offset);'
+          if old not in text:
+              raise SystemExit('calendar anchor missing')
+          text = text.replace(old, 'const iso = addDays(mondayOf(dateKey(0)), i);', 1)
 
-          # TikTok: use TikTok's official Player v1 inside our own fullscreen\n          # viewer instead of the TikTok watch page/native WebView. The official\n          # player is designed for iframe embedding and accepts the post ID.\n          # Deleted/unavailable TikToks get a friendly in-app message rather than\n          # showing a raw 404 page or launching another app.\n          video_start = text.find('// In-app exercise video player.')
-          video_end = text.find('/* ============================== EXERCISE VISUAL ============================== */', video_start)
-          if video_start < 0 or video_end < 0:
-              raise SystemExit('Video player block boundaries not found')
-          new_video = r'''// In-app exercise video player.\n// TikTok videos use TikTok's official Player v1 embed inside a fullscreen\n// overlay. YouTube videos keep the existing no-cookie embed path.\nlet __closeFullScreenVideo = null;\nfunction registerFullScreenVideoClose(fn) {\n  __closeFullScreenVideo = fn;\n}\n\nfunction isTikTokVideoRef(value) {\n  const raw = String(value || "").trim();\n  return /(?:^|https?:\\/\\/)(?:www\\.|m\\.|vt\\.)?tiktok\\.com/i.test(raw) || /^\\d{15,}$/.test(raw);\n}\n\nfunction getTikTokPostId(value) {\n  const raw = String(value || "").trim();\n  if (/^\\d{15,}$/.test(raw)) return raw;\n  const match = raw.match(/\\/video\\/(\\d{15,})/i);\n  return match?.[1] || null;\n}\n\nfunction FullScreenVideoViewer({ videoId, ar, onClose }) {\n  const [ready, setReady] = useState(false);\n  const [failed, setFailed] = useState(false);\n  const isTikTok = isTikTokVideoRef(videoId);\n  const tikTokPostId = getTikTokPostId(videoId);\n  const isTikTokPlayable = isTikTok && !!tikTokPostId;\n  const embedSrc = isTikTokPlayable\n    ? `https://www.tiktok.com/player/v1/${tikTokPostId}?autoplay=1&controls=1&progress_bar=1&play_button=1&volume_control=1&fullscreen_button=1&timestamp=1&music_info=0&description=0&rel=0&native_context_menu=0`\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;\n\n  useEffect(() => {\n    setReady(false);\n    setFailed(false);\n    registerFullScreenVideoClose(() => {\n      onClose();\n      return true;\n    });\n    const timeout = window.setTimeout(() => {\n      if (isTikTokPlayable && !ready) setFailed(true);\n    }, 12000);\n    return () => {\n      window.clearTimeout(timeout);\n      registerFullScreenVideoClose(null);\n    };\n  }, [onClose, videoId, isTikTokPlayable, ready]);\n\n  useEffect(() => {\n    if (!isTikTokPlayable) return undefined;\n    const onMessage = (event) => {\n      if (event.origin !== "https://www.tiktok.com") return;\n      const data = event.data || {};\n      if (data?.["x-tiktok-player"] === true && data?.type === "onPlayerReady") {\n        setReady(true);\n        setFailed(false);\n      }\n    };\n    window.addEventListener("message", onMessage);\n    return () => window.removeEventListener("message", onMessage);\n  }, [isTikTokPlayable]);\n\n  return (\n    <div\n      role="dialog"\n      aria-modal="true"\n      aria-label={ar ? "مشغل الفيديو" : "Video player"}\n      style={{\n        position: "fixed",\n        inset: 0,\n        zIndex: 4000,\n        background: "#000",\n        display: "flex",\n        flexDirection: "column",\n        paddingTop: "env(safe-area-inset-top)",\n        paddingBottom: "env(safe-area-inset-bottom)",\n      }}\n    >\n      <div style={{\n        flexShrink: 0,\n        display: "flex",\n        alignItems: "center",\n        justifyContent: "space-between",\n        padding: "10px 12px",\n        gap: 8,\n      }}>\n        <div style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>\n          {ar ? "فيديو التمرين" : "Exercise video"}\n        </div>\n        <button\n          type="button"\n          onClick={onClose}\n          aria-label={ar ? "إغلاق" : "Close"}\n          style={{\n            width: 36,\n            height: 36,\n            borderRadius: "50%",\n            border: "none",\n            background: "rgba(255,255,255,0.15)",\n            color: "#fff",\n            display: "flex",\n            alignItems: "center",\n            justifyContent: "center",\n          }}\n        >\n          <X size={18} color="#fff" />\n        </button>\n      </div>\n      <div style={{ flex: 1, minHeight: 0, position: "relative", width: "100%", background: "#000" }}>\n        {!failed && (\n          <iframe\n            src={embedSrc}\n            onLoad={() => !isTikTokPlayable && setReady(true)}\n            loading="eager"\n            title={ar ? "فيديو التمرين" : "Exercise video"}\n            referrerPolicy="strict-origin-when-cross-origin"\n            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}\n            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"\n            allowFullScreen\n          />\n        )}\n        {!ready && !failed && (\n          <div style={{\n            position: "absolute",\n            inset: 0,\n            zIndex: 1,\n            display: "flex",\n            alignItems: "center",\n            justifyContent: "center",\n            background: "#000",\n            color: "#fff",\n            fontSize: 13,\n            fontWeight: 600,\n            pointerEvents: "none",\n          }}>\n            {ar ? "جاري تحميل الفيديو…" : "Loading video…"}\n          </div>\n        )}\n        {failed && (\n          <div style={{\n            position: "absolute",\n            inset: 0,\n            display: "flex",\n            flexDirection: "column",\n            alignItems: "center",\n            justifyContent: "center",\n            gap: 10,\n            padding: 24,\n            textAlign: "center",\n            color: "#fff",\n          }}>\n            <div style={{ fontSize: 16, fontWeight: 800 }}>\n              {ar ? "الفيديو مش متاح حاليًا" : "Video unavailable right now"}\n            </div>\n            <div style={{ color: "#a3a3a3", fontSize: 12.5, lineHeight: 1.5, maxWidth: 300 }}>\n              {ar ? "الفيديو ده ممكن يكون اتحذف أو مش متاح للتشغيل المضمّن. جرّب فيديو تاني." : "This video may have been removed or may not allow embedded playback. Try another exercise video."}\n            </div>\n            <button type="button" onClick={() => { setFailed(false); setReady(false); }} style={{ marginTop: 4, padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700 }}>\n              {ar ? "إعادة المحاولة" : "Retry"}\n            </button>\n          </div>\n        )}\n      </div>\n    </div>\n  );\n}\n\nfunction VideoPlayer({ videoId, ar }) {\n  const { C } = useUI();\n  const [open, setOpen] = useState(false);\n  if (!videoId) return null;\n  const isTikTok = isTikTokVideoRef(videoId);\n  const handleWatch = () => setOpen(true);\n  return (\n    <>\n      <div style={{ marginBottom: 14, width: "100%", display: "flex", justifyContent: "center" }}>\n        <button\n          type="button"\n          onClick={handleWatch}\n          style={{\n            width: "100%",\n            maxWidth: 360,\n            aspectRatio: "9/16",\n            background: C.card2,\n            border: `1px solid ${C.border}`,\n            borderRadius: 14,\n            cursor: "pointer",\n            display: "flex",\n            flexDirection: "column",\n            alignItems: "center",\n            justifyContent: "center",\n            gap: 10,\n            overflow: "hidden",\n            position: "relative",\n          }}\n        >\n          {!isTikTok && (\n            <img\n              src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}\n              alt=""\n              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.6 }}\n            />\n          )}\n          <div style={{ position: "relative", width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center" }}>\n            <div style={{ width: 0, height: 0, borderTop: "11px solid transparent", borderBottom: "11px solid transparent", borderLeft: "18px solid #000", marginLeft: 4 }} />\n          </div>\n          <span style={{ position: "relative", color: "#fff", fontSize: 13, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}>\n            {ar ? "مشاهدة الفيديو" : "Watch Video"}\n          </span>\n        </button>\n      </div>\n      {open && <FullScreenVideoViewer videoId={videoId} ar={ar} onClose={() => setOpen(false)} />}\n    </>\n  );\n}\n\n'''
-          new_video = new_video.replace('\\n', '\n')
-          text = text[:video_start] + new_video + text[video_end:]
+          old = 'function isTikTokVideoRef(value) {\n  const raw = String(value || "").trim();\n  return /(?:^|https?:\\/\\/)(?:www\\.|m\\.|vt\\.)?tiktok\\.com/i.test(raw) || /^\\d+$/.test(raw);\n}\n'
+          new = 'function isTikTokVideoRef(value) {\n  const raw = String(value || "").trim();\n  return /(?:^|https?:\\/\\/)(?:www\\.|m\\.|vt\\.)?tiktok\\.com/i.test(raw) || /^\\d{15,}$/.test(raw);\n}\n\nfunction getTikTokPostId(value) {\n  const raw = String(value || "").trim();\n  if (/^\\d{15,}$/.test(raw)) return raw;\n  const match = raw.match(/\\/video\\/(\\d{15,})/i);\n  return match?.[1] || null;\n}\n'
+          if old not in text:
+              raise SystemExit('tiktok ref anchor missing')
+          text = text.replace(old, new, 1)
+
+          old = '  const [videoLoaded, setVideoLoaded] = useState(false);\n  const embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;'
+          new = '  const [videoLoaded, setVideoLoaded] = useState(false);\n  const tikTokPostId = getTikTokPostId(videoId);\n  const embedSrc = tikTokPostId\n    ? `https://www.tiktok.com/player/v1/${tikTokPostId}?autoplay=1&controls=1&progress_bar=1&play_button=1&volume_control=1&fullscreen_button=1&timestamp=1&music_info=0&description=0&rel=0&native_context_menu=0`\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;'
+          if old not in text:
+              raise SystemExit('viewer embed anchor missing')
+          text = text.replace(old, new, 1)
+
+          old = 'async function openTikTokVideo(tikTokUrl, ar) {\n  const raw = String(tikTokUrl || "").trim();\n  if (!raw) return;\n  try {\n    const { openTikTokWebView } = await import("./tiktokWebView");\n    await openTikTokWebView(raw);\n  } catch (error) {\n    console.error("[TikTok] in-app viewer failed", error);\n    throw new Error(\n      ar\n        ? "تعذر فتح فيديو التمرين داخل التطبيق."\n        : "Could not open the exercise video inside the app.",\n    );\n  }\n}\n\n'
+          if old not in text:
+              raise SystemExit('old tiktok function missing')
+          text = text.replace(old, '', 1)
+
+          old = '  const isTikTok = isTikTokVideoRef(videoId);\n  const handleWatch = async () => {\n    if (isTikTok) {\n      try {\n        await openTikTokVideo(String(videoId), ar);\n      } catch (error) {\n        // Keep the error in the app; do not redirect to a native/social app.\n        console.warn(error);\n      }\n      return;\n    }\n    setOpen(true);\n  };'
+          new = '  const isTikTok = isTikTokVideoRef(videoId);\n  const handleWatch = () => setOpen(true);'
+          if old not in text:
+              raise SystemExit('watch handler anchor missing')
+          text = text.replace(old, new, 1)
 
           app.write_text(text, encoding='utf-8')
 
-          # Normalize direct TikTok links to plain post IDs where possible so
-          # the official player always receives the canonical identifier.
           cfg = Path('src/config.js')
           cfg_text = cfg.read_text(encoding='utf-8')
-          for key in [
-              'bench_press','incline_db_press','tricep_pushdown','zigzag_tricep_ext',
-              'overhead_ext','lat_pulldown','barbell_row','seated_row',
-              'single_arm_seated_row','bicep_curl','behind_body_bicep_curl',
-              'hammer_curl','supported_db_curl','squat','hack_squat','leg_press',
-              'leg_extension','abduction','reverse_curl','face_pull','lunges',
-              'leg_curl','calf_raise','ohp','lateral_raise','rear_delt_fly',
-              'shrugs','deadlift','crunches','jump_rope'
-          ]:
-              pat = re.compile(rf'(\s+{re.escape(key)}:\s+")https://www\.tiktok\.com/(?:@[^/]+/)?video/(\d+)(")')
-              cfg_text = pat.sub(r'\1\2\3', cfg_text)
-          cfg_text = cfg_text.replace(
-              '// Direct TikTok URLs are kept for the normal in-app WebView.\n// Numeric IDs use TikTok\'s public /video/<id> page URL, not the official player.',
-              '// TikTok video IDs are the canonical input for TikTok\'s official Player v1 embed.'
-          )
-
-          # Resolve short-link TikToks to canonical IDs when GitHub Actions can
-          # follow the redirect. Keep the original short link only if TikTok does
-          # not expose a final /video/<id> URL from the runner.
-          short_keys = {
-              'treadmill': 'https://vt.tiktok.com/ZS4T2HfCY/',
-              'bike': 'https://vt.tiktok.com/ZS4T249MW/',
-              'burpees': 'https://vt.tiktok.com/ZS4TjS16a/',
+          direct = {
+            'bench_press':'7603190204740013313','incline_db_press':'7267987124610239762',
+            'tricep_pushdown':'7586888221125070094','zigzag_tricep_ext':'7586888221125070094',
+            'overhead_ext':'7527210325834206486','lat_pulldown':'7665886081329532174',
+            'barbell_row':'7532789627212631314','seated_row':'7639010632561478934',
+            'single_arm_seated_row':'7639010632561478934','bicep_curl':'7636460964870720788',
+            'behind_body_bicep_curl':'7636460964870720788','hammer_curl':'7623849292461051156',
+            'supported_db_curl':'7636460964870720788','squat':'7513352117692665094',
+            'hack_squat':'7513352117692665094','leg_press':'7545454872586423574',
+            'leg_extension':'7564750740061752598','abduction':'7419086233487281415',
+            'reverse_curl':'7214952400631778566','face_pull':'7474058570451946757',
+            'lunges':'7353289956699229472','leg_curl':'7521556521390460166',
+            'calf_raise':'7602285498962349342','ohp':'7663674671677705488',
+            'lateral_raise':'7486685939025054981','rear_delt_fly':'7630410819259387158',
+            'shrugs':'7500002250526395653','deadlift':'7380964646062263558',
+            'crunches':'7654453038815399171','jump_rope':'7358498825012661537'
           }
-          for key, url in short_keys.items():
-              try:
-                  req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                  with urlopen(req, timeout=20) as resp:
-                      final_url = resp.geturl()
-                  m = re.search(r'/video/(\d+)', final_url)
-                  if m:
-                      cfg_text = re.sub(rf'(\s+{re.escape(key)}:\s+")[^"]+("(?:,))', rf'\1{m.group(1)}\2', cfg_text)
-                      print(f'{key}: resolved to {m.group(1)}')
-                  else:
-                      print(f'{key}: could not resolve to a /video/<id> URL, keeping existing value')
-              except Exception as exc:
-                  print(f'{key}: resolve failed ({exc}), keeping existing value')
-
+          for key, value in direct.items():
+              cfg_text = re.sub(rf'(\\s+{re.escape(key)}:\\s+")[^"]+("[,])', rf'\\1{value}\\2', cfg_text)
+          cfg_text = cfg_text.replace('// Direct TikTok URLs are kept for the normal in-app WebView.\n// Numeric IDs use TikTok\'s public /video/<id> page URL, not the official player.', '// TikTok video IDs are canonical IDs for TikTok\'s official Player v1 embed.')
           cfg.write_text(cfg_text, encoding='utf-8')
-          print('SOURCE_FIX_DONE')
+          print('PATCH_OK')
           PY
 
-          # Remove this one-time workflow after applying the patch so future
-          # builds are normal source builds.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/App.jsx src/config.js
           git rm -f .github/workflows/fix-calendar-tiktok-version.yml
           git add -A
-          git commit -m "fix: stabilize workout week and use official TikTok player"
+          git commit -m "fix: stable workout week and official TikTok player"
           git push origin HEAD:main

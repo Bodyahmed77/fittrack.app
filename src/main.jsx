@@ -1,5 +1,6 @@
 import React, { Suspense } from "react";
 import { createRoot } from "react-dom/client";
+import { startPublishedPlansUx } from "./publishedPlansUx";
 
 
 // Keep Android system bars black (matches app chrome after Cap 7 edge-to-edge margins).
@@ -90,6 +91,8 @@ function StartupShell() {
     </div>
   );
 }
+
+startPublishedPlansUx();
 
 createRoot(document.getElementById("root")).render(
   <ErrorBoundary>

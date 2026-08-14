@@ -21,7 +21,19 @@ jobs:
         if: ${{ hashFiles('scripts/apply-launch-root-fixes.py') != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/apply-launch-root-fixes.py
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("scripts/apply-launch-root-fixes.py")
+          s = p.read_text(encoding="utf-8")
+          old = "viewer_pattern.subn(viewer_replacement, text, count=1)"
+          new = "viewer_pattern.subn(lambda _match: viewer_replacement, text, count=1)"
+          if old in s:
+              s = s.replace(old, new, 1)
+              p.write_text(s, encoding="utf-8")
+              print("Fixed migration regex replacement mode")
+          PY
+          python3 scripts/apply-launch-root-fixes.py
       # END ONE-TIME LAUNCH ROOT FIX MIGRATION
       - name: Set up Node.js
         uses: actions/setup-node@v4

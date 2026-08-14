@@ -1,8 +1,8 @@
-import React, { Suspense } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { startPublishedPlansUx } from "./publishedPlansUx";
 import logoSrc from "./assets/logo.png";
-
+import { Keyboard } from "@capacitor/keyboard";
 
 // Keep Android system bars black (matches app chrome after Cap 7 edge-to-edge margins).
 async function applySystemBarColors() {
@@ -18,29 +18,30 @@ async function applySystemBarColors() {
     console.warn("[SystemBars] status bar color apply failed", e);
   }
 }
-// Splash / Cap bridge can overwrite bar style once; re-apply after settle.
 applySystemBarColors();
 setTimeout(applySystemBarColors, 400);
-
-// Keyboard bridge for fixed bottom sheets (especially FoodPicker on Android).
-function syncKeyboardHeight() {
-  const vv = window.visualViewport;
-  const keyboardHeight = vv
-    ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
-    : 0;
-  document.documentElement.style.setProperty(
-    "--ff-keyboard-height",
-    `${keyboardHeight}px`,
-  );
-}
-if (typeof window !== "undefined") {
-  syncKeyboardHeight();
-  window.visualViewport?.addEventListener("resize", syncKeyboardHeight);
-  window.visualViewport?.addEventListener("scroll", syncKeyboardHeight);
-  window.addEventListener("resize", syncKeyboardHeight);
-}
-
 setTimeout(applySystemBarColors, 1200);
+
+// Android keyboard bridge. Do not rely on visualViewport alone: Android
+// WebView versions can report stale innerHeight/visualViewport values while
+// the IME is open. Capacitor gives the actual keyboard height, so fixed bottom
+// sheets can sit directly on the keyboard with no hidden Save/Add controls.
+function setKeyboardHeight(height) {
+  const px = Math.max(0, Number(height) || 0);
+  document.documentElement.style.setProperty("--ff-keyboard-height", `${px}px`);
+}
+
+if (typeof window !== "undefined") {
+  setKeyboardHeight(0);
+  Keyboard.addListener("keyboardWillShow", (event) => {
+    setKeyboardHeight(event?.keyboardHeight);
+  });
+  Keyboard.addListener("keyboardDidShow", (event) => {
+    setKeyboardHeight(event?.keyboardHeight);
+  });
+  Keyboard.addListener("keyboardWillHide", () => setKeyboardHeight(0));
+  Keyboard.addListener("keyboardDidHide", () => setKeyboardHeight(0));
+}
 
 const App = React.lazy(() => import("./App.jsx"));
 
@@ -113,12 +114,23 @@ function StartupShell() {
   );
 }
 
+function StartupGate({ children }) {
+  const [minimumTimeElapsed, setMinimumTimeElapsed] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMinimumTimeElapsed(true), 900);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return minimumTimeElapsed ? children : <StartupShell />;
+}
+
 startPublishedPlansUx();
 
 createRoot(document.getElementById("root")).render(
   <ErrorBoundary>
-    <Suspense fallback={<StartupShell />}>
-      <App />
-    </Suspense>
+    <StartupGate>
+      <Suspense fallback={<StartupShell />}>
+        <App />
+      </Suspense>
+    </StartupGate>
   </ErrorBoundary>,
 );

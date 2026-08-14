@@ -38,8 +38,6 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          # Use Capacitor's in-app WebView for normal third-party pages such as TikTok.
-          # This keeps the page inside the app without using TikTok's official player.
           npm install @capacitor/inappbrowser@2.5.5 --no-save
 
       - name: Extract Google Web Client ID
@@ -49,6 +47,16 @@ jobs:
 
       - name: Build the web app
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/patch-launch-readiness.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace(
+              'viewer_pattern.subn(viewer_replacement, text, count=1)',
+              'viewer_pattern.subn(lambda _m: viewer_replacement, text, count=1)',
+          )
+          p.write_text(s, encoding='utf-8')
+          PY
           python3 scripts/patch-launch-readiness.py
           npm run build
 
@@ -90,7 +98,6 @@ jobs:
               text=text.replace("dependencies {", "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
           if "com.google.gms.google-services" not in text:
               text += "\napply plugin: 'com.google.gms.google-services'\n"
-          # Keep WebView-hosted language selection independent of Play language splits.
           if "enableSplit = false" not in text:
               text += "\nandroid {\n    bundle {\n        language { enableSplit = false }\n    }\n}\n"
           ab.write_text(text,encoding='utf-8')

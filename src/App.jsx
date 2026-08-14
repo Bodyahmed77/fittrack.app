@@ -9920,7 +9920,7 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   const [reportTarget, setReportTarget] = useState(null);
   const [reportReason, setReportReason] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
-  const keyboardInset = 0;
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const listRef = useRef(null);
   const inputBarRef = useRef(null);
 
@@ -9938,9 +9938,34 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
   }, [open]);
 
   useEffect(() => {
-    try {
-      import("@capacitor/keyboard").then(({ Keyboard }) => Keyboard.setResizeMode?.({ mode: "native" })).catch(() => {});
-    } catch {}
+    if (!open) return undefined;
+    let cancelled = false;
+    let handles = [];
+    import("@capacitor/keyboard")
+      .then(async ({ Keyboard }) => {
+        if (cancelled) return;
+        const onShow = (info) => {
+          setKeyboardInset(Math.max(0, Number(info?.keyboardHeight) || 0));
+        };
+        const onHide = () => setKeyboardInset(0);
+        const registered = await Promise.all([
+          Keyboard.addListener("keyboardWillShow", onShow),
+          Keyboard.addListener("keyboardDidShow", onShow),
+          Keyboard.addListener("keyboardWillHide", onHide),
+          Keyboard.addListener("keyboardDidHide", onHide),
+        ]);
+        if (cancelled) {
+          registered.forEach((h) => { try { h?.remove?.(); } catch {} });
+          return;
+        }
+        handles = registered;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      setKeyboardInset(0);
+      handles.forEach((h) => { try { h?.remove?.(); } catch {} });
+    };
   }, [open]);
 
   useEffect(() => {
@@ -10159,15 +10184,15 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
         style={{
           position: "absolute",
           top: 0,
-          // Lift entire drawer above the soft keyboard (dynamic inset).
-          bottom: 0,
+          // Lift the entire drawer above the live keyboard height.
+          bottom: keyboardInset,
           width: "min(360px, 92vw)",
           background: C.bg,
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
           overscrollBehavior: "contain",
-          transition: "none",
+          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",
           ...panelSide,
         }}
       >

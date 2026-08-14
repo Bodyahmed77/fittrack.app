@@ -93,10 +93,11 @@ function fiftyFitHardeningPlugin() {
       requirePatch(!videoSegment.includes("tiktok.com/player/v1/"), "TikTok official player disabled");
       requirePatch(!/tiktok\.com\/oembed/i.test(videoSegment), "TikTok oEmbed resolver disabled");
 
-      // Keep native Android keyboard resize as the single source of truth.
-      out = out.replace(
-        /const \[keyboardInset, setKeyboardInset\] = useState\([^)]*\);/,
-        'const [keyboardInset, setKeyboardInset] = useState(0);',
+      // AI Coach keyboard: validate real keyboard tracking; do not rewrite
+      // the source back to a dead zero inset during the production build.
+      requirePatch(
+        !/const keyboardInset = 0;/.test(out) && /\[keyboardInset, setKeyboardInset\] = useState/.test(out),
+        "AI Coach keyboard inset must be tracked, not hardcoded",
       );
 
       // Do not turn real Google Play billing errors into fake preview purchases.

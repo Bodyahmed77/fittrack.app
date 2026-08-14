@@ -2,7 +2,7 @@ name: Build Fifty Fit Android Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/cardio-tiktok-release-20260814]
   workflow_dispatch:
 
 permissions:

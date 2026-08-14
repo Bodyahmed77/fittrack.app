@@ -38,9 +38,9 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          # Browser is used for TikTok's normal page in an Android Custom Tab.
-          # Keep the repository lockfile untouched for this launch-only native integration.
-          npm install @capacitor/browser@7.0.5 --no-save
+          # Use Capacitor's in-app WebView for normal third-party pages such as TikTok.
+          # This keeps the page inside the app without using TikTok's official player.
+          npm install @capacitor/inappbrowser@2.5.5 --no-save
 
       - name: Extract Google Web Client ID
         env:

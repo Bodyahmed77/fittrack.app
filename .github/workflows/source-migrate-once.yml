@@ -1,9 +1,9 @@
 name: Source migration once
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply source fixes and commit source
+      - name: Apply source-level fixes and commit source
         shell: bash
         run: |
           set -euo pipefail
@@ -26,101 +26,128 @@ jobs:
 
           app = Path('src/App.jsx')
           text = app.read_text(encoding='utf-8')
+          changed = False
 
-          # TikTok must stay inside Fifty Fit. Use the native in-app WebView
-          # bridge with the original stored URL; never launch TikTok app.
-          text = text.replace('import { Browser } from "@capacitor/browser";\n', '', 1)
+          # TikTok: route the original stored URL to the in-app native WebView,
+          # never to Browser.open / the external TikTok application.
+          if 'import { Browser } from "@capacitor/browser";' in text:
+              text = text.replace('import { Browser } from "@capacitor/browser";\n', '', 1)
+              changed = True
           pattern = re.compile(r'async function openTikTokVideo\(tikTokUrl, ar\) \{.*?\n\}\n\nfunction VideoPlayer', re.S)
           replacement = '''async function openTikTokVideo(tikTokUrl, ar) {\n  const raw = String(tikTokUrl || "").trim();\n  if (!raw) return;\n  try {\n    const { openTikTokWebView } = await import("./tiktokWebView");\n    await openTikTokWebView(raw);\n  } catch (error) {\n    console.error("[TikTok] in-app viewer failed", error);\n    throw new Error(\n      ar\n        ? "تعذر فتح فيديو التمرين داخل التطبيق."\n        : "Could not open the exercise video inside the app.",\n    );\n  }\n}\n\nfunction VideoPlayer'''
-          text, n = pattern.subn(replacement, text, count=1)
+          text2, n = pattern.subn(replacement, text, count=1)
           if n != 1:
-              raise SystemExit('TikTok viewer migration anchor not found')
+              raise SystemExit('TikTok viewer function anchor not found')
+          if text2 != text:
+              text = text2
+              changed = True
 
-          # Cardio: finish must persist completion and XP atomically in one
-          # snapshot. The old flow persisted the completed log, then awardXp()
-          # used a stale data closure and overwrote that log with old timer data.
-          old = '''  const persist = useCallback(\n    async (finished, cardioStartedAt = startedAt) => {\n      const next = clone(data);\n      if (!next.logs[logDate]) next.logs[logDate] = {};\n      next.logs[logDate][exerciseId] = {\n        sets: [{ weight: 0, reps: "15 min", done: finished }],\n        finished,\n        cardioStartedAt: finished ? null : cardioStartedAt || null,\n        cardioCompletedAt: finished ? Date.now() : null,\n      };\n      const ok = await setData(next);\n      if (ok === false) throw new Error("Cardio persistence failed");\n    },\n    [data, exerciseId, logDate, setData, startedAt],\n  );'''
-          new = '''  const persist = useCallback(\n    async (finished, cardioStartedAt = startedAt, xpAmount = 0) => {\n      const next = clone(data);\n      if (!next.logs[logDate]) next.logs[logDate] = {};\n      next.logs[logDate][exerciseId] = {\n        sets: [{ weight: 0, reps: "15 min", done: finished }],\n        finished,\n        cardioStartedAt: finished ? null : cardioStartedAt || null,\n        cardioCompletedAt: finished ? Date.now() : null,\n      };\n      if (xpAmount) {\n        next.profile = next.profile || {};\n        next.profile.xp = Number(next.profile.xp || 0) + Number(xpAmount || 0);\n        next.profile.level = Number(next.profile.level || 1);\n        next.profile.xpMax = Number(next.profile.xpMax || 500);\n        while (next.profile.xp >= next.profile.xpMax) {\n          next.profile.xp -= next.profile.xpMax;\n          next.profile.level += 1;\n          next.profile.xpMax = Math.round(next.profile.xpMax * 1.15);\n        }\n      }\n      const ok = await setData(next);\n      if (ok === false) throw new Error("Cardio persistence failed");\n    },\n    [data, exerciseId, logDate, setData, startedAt],\n  );'''
-          if old not in text:
-              raise SystemExit('Cardio persist anchor not found')
-          text = text.replace(old, new, 1)
-          old = 'await persist(true, null);\n        setStartedAt(null);\n        setNow(Date.now());\n        try { awardXp(35); } catch {}'
-          new = 'await persist(true, null, 35);\n        setStartedAt(null);\n        setNow(Date.now());'
-          if old not in text:
-              raise SystemExit('Cardio finish anchor not found')
-          text = text.replace(old, new, 1)
+          # NutritionPlanScreen currently derives the visible day solely from
+          # today's date and renders the tabs as non-interactive divs. Replace
+          # only that screen's targeted snippets, keeping all other UI intact.
+          if 'const [selectedDayIndex, setSelectedDayIndex] = useState(0);' not in text:
+              state_marker = 'function NutritionPlanScreen({ data, back }) {'
+              pos = text.find(state_marker)
+              if pos < 0: raise SystemExit('NutritionPlanScreen not found')
+              state_anchor = 'const [log, setLog] = useState(() => data.customNutritionLog || {});'
+              anchor_pos = text.find(state_anchor, pos)
+              if anchor_pos < 0: raise SystemExit('Nutrition state anchor not found')
+              insert_at = anchor_pos + len(state_anchor)
+              text = text[:insert_at] + '\n  const [selectedDayIndex, setSelectedDayIndex] = useState(0);' + text[insert_at:]
+              changed = True
 
-          # Nutrition: selectable plan days. Food-completion state is keyed by
-          # plan-day rather than today's date so each day is independent.
-          old = 'const [log, setLog] = useState(() => data.customNutritionLog || {}); const [saving, setSaving] = useState(false); const [requested, setRequested] = useState(!!data.nutritionPlanRequestedAt);'
-          new = old + '\n  const [selectedDayIndex, setSelectedDayIndex] = useState(0);'
-          if old not in text:
-              raise SystemExit('Nutrition state anchor not found')
-          text = text.replace(old, new, 1)
-          parse_line = '  const parseItems = (items, mealId) => Array.isArray(items) ? items.map((x,i) => ({ id:x.id || `${mealId}-${i}`, name:x.name || x.title || `Food ${i+1}`, nameAr:x.nameAr || x.name || x.titleAr || x.title || `أكلة ${i+1}`, quantity:x.quantity ?? x.amount ?? \'\', kcal:Number(x.kcal || 0), protein:Number(x.protein || 0), carbs:Number(x.carbs || 0), fat:Number(x.fat || 0) })) : String(items || \'\').split(/\\n+/).map(x=>x.trim()).filter(Boolean).map((line,i)=>{ const a=line.split(\'|\').map(x=>x.trim()); return {id:`${mealId}-${i}-${a[0]}`,name:a[0],nameAr:a[0],quantity:a[1]||\'\',kcal:Number(a[2]||0),protein:Number(a[3]||0),carbs:Number(a[4]||0),fat:Number(a[5]||0)}; });'
-          if parse_line not in text:
-              raise SystemExit('Nutrition parse anchor not found')
-          insert = '''\n  const computedTodayDayIndex = plan?.days?.length\n    ? Math.max(0, Math.min(plan.days.length - 1, (() => {\n        const start = plan.startDate || today;\n        const diff = Math.max(0, Math.floor((new Date(today + "T00:00:00").getTime() - new Date(start + "T00:00:00").getTime()) / 86400000));\n        return Number.isFinite(diff) ? diff : 0;\n      })()))\n    : 0;\n  useEffect(() => {\n    if (plan) setSelectedDayIndex(computedTodayDayIndex);\n  }, [plan?.startDate, plan?.days?.length, computedTodayDayIndex]);'''
-          text = text.replace(parse_line, parse_line + insert, 1)
-          old = '  const start=plan.startDate || today; const diff=Math.max(0,Math.floor((new Date(today+\'T00:00:00\')-new Date(start+\'T00:00:00\'))/86400000)); const dayIndex=Math.min(6,Number.isFinite(diff)?diff%7:0); const day=plan.days?.[dayIndex] || plan.days?.[0] || {meals:[]}; const checked=log[today] || {}; const meals=day.meals || [];'
-          new = '  const dayIndex=Math.max(0,Math.min((plan.days?.length || 1)-1,selectedDayIndex)); const day=plan.days?.[dayIndex] || plan.days?.[0] || {meals:[]}; const logKey=`${plan.startDate || today}:day-${dayIndex}`; const checked=log[logKey] || (dayIndex===computedTodayDayIndex ? (log[today] || {}) : {}); const meals=day.meals || [];'
-          if old not in text:
-              raise SystemExit('Nutrition day-calculation anchor not found')
-          text = text.replace(old, new, 1)
-          old = '  const toggle=async id=>{if(!auth.currentUser||saving)return;const next={...log,[today]:{...(log[today]||{}),[id]:!checked[id]}};if(!next[today][id])delete next[today][id];setLog(next);setSaving(true);try{await setDoc(doc(db,\'users\',auth.currentUser.uid),{customNutritionLog:next},{merge:true});}catch{setLog(log);}finally{setSaving(false);}};'
-          new = '  const toggle=async id=>{if(!auth.currentUser||saving)return;const next={...log,[logKey]:{...(log[logKey]||{}),[id]:!checked[id]}};if(!next[logKey][id])delete next[logKey][id];setLog(next);setSaving(true);try{await setDoc(doc(db,\'users\',auth.currentUser.uid),{customNutritionLog:next},{merge:true});}catch{setLog(log);}finally{setSaving(false);}};'
-          if old not in text:
-              raise SystemExit('Nutrition toggle anchor not found')
-          text = text.replace(old, new, 1)
-          old = '<div style={{display:\'flex\',gap:6,overflowX:\'auto\',paddingBottom:8}}>{(plan.days||[]).map((d,i)=><div key={i} style={{minWidth:72,padding:\'9px 7px\',borderRadius:11,background:i===dayIndex?C.green:C.card2,color:i===dayIndex?C.onAccent:C.sub,textAlign:\'center\',fontSize:11,fontWeight:800}}>{ar?(d.titleAr||`اليوم ${i+1}`):(d.title||`Day ${i+1}`)}</div>)}</div>'
-          new = '<div style={{display:\'flex\',gap:6,overflowX:\'auto\',paddingBottom:8}}>{(plan.days||[]).map((d,i)=><button key={i} type="button" onClick={()=>setSelectedDayIndex(i)} style={{minWidth:72,padding:\'9px 7px\',borderRadius:11,background:i===dayIndex?C.green:C.card2,color:i===dayIndex?C.onAccent:C.sub,textAlign:\'center\',fontSize:11,fontWeight:800,border:\'none\',cursor:\'pointer\',flexShrink:0}}>{ar?(d.titleAr||`اليوم ${i+1}`):(d.title||`Day ${i+1}`)}</button>)}</div>'
-          if old not in text:
-              raise SystemExit('Nutrition day-tab anchor not found')
-          text = text.replace(old, new, 1)
+          # Find only the NutritionPlanScreen body and patch the existing one-line
+          # day calculation, toggle, and tabs.
+          start = text.find('function NutritionPlanScreen({ data, back }) {')
+          end = text.find('\nfunction ', start + 20)
+          if start < 0 or end < 0: raise SystemExit('NutritionPlanScreen boundaries not found')
+          block = text[start:end]
 
-          # Meals screen: show admin-assigned custom plan targets even for Free.
-          old = '  const targets = data.dailyTargets;\n  const kcalTarget = targets?.kcal || 2000;'
-          new = '''  const customTodayPlanIndex = customNutritionPlan?.days?.length\n    ? Math.max(0, Math.min(customNutritionPlan.days.length - 1, (() => {\n        const start = customNutritionPlan.startDate || today;\n        const diff = Math.max(0, Math.floor((new Date(today + "T00:00:00").getTime() - new Date(start + "T00:00:00").getTime()) / 86400000));\n        return Number.isFinite(diff) ? diff : 0;\n      })()))\n    : 0;\n  const targets = customNutritionPlan?.days?.[customTodayPlanIndex] || data.dailyTargets;\n  const kcalTarget = targets?.kcal || targets?.targetKcal || 2000;'''
-          if old not in text:
-              raise SystemExit('Meals target anchor not found')
-          text = text.replace(old, new, 1)
-          old = '        {!pro ? ('
-          new = '        {!customNutritionPlan && !pro ? ('
-          if old not in text:
-              raise SystemExit('Meals Pro gate anchor not found')
-          text = text.replace(old, new, 1)
+          if 'computedTodayDayIndex' not in block:
+              parse_idx = block.find('const parseItems =')
+              if parse_idx < 0: raise SystemExit('Nutrition parseItems not found')
+              parse_end = block.find(';', parse_idx)
+              if parse_end < 0: raise SystemExit('Nutrition parseItems terminator not found')
+              insert = '''\n  const computedTodayDayIndex = plan?.days?.length\n    ? Math.max(0, Math.min(plan.days.length - 1, (() => {\n        const startDate = plan.startDate || today;\n        const diff = Math.max(0, Math.floor((new Date(today + "T00:00:00").getTime() - new Date(startDate + "T00:00:00").getTime()) / 86400000));\n        return Number.isFinite(diff) ? diff : 0;\n      })()))\n    : 0;\n  useEffect(() => {\n    if (plan) setSelectedDayIndex(computedTodayDayIndex);\n  }, [plan?.startDate, plan?.days?.length, computedTodayDayIndex]);'''
+              block = block[:parse_end+1] + insert + block[parse_end+1:]
+              changed = True
+
+          old_day = re.compile(r"  const start=plan\.startDate \|\| today;.*? const day=plan\.days\?\.\[dayIndex\].*? const checked=log\[today\] \|\| \{\}; const meals=day\.meals \|\| \[\];")
+          new_day = '  const dayIndex = Math.max(0, Math.min((plan.days?.length || 1) - 1, selectedDayIndex)); const day = plan.days?.[dayIndex] || plan.days?.[0] || {meals:[]}; const logKey = `${plan.startDate || today}:day-${dayIndex}`; const checked = log[logKey] || (dayIndex === computedTodayDayIndex ? (log[today] || {}) : {}); const meals = day.meals || [];'
+          block2, n = old_day.subn(new_day, block, count=1)
+          if n == 1:
+              block = block2
+              changed = True
+
+          old_toggle = re.compile(r"  const toggle=async id=>\{.*?\};")
+          new_toggle = '  const toggle=async id=>{if(!auth.currentUser||saving)return;const next={...log,[logKey]:{...(log[logKey]||{}),[id]:!checked[id]}};if(!next[logKey][id])delete next[logKey][id];setLog(next);setSaving(true);try{await setDoc(doc(db,\'users\',auth.currentUser.uid),{customNutritionLog:next},{merge:true});}catch{setLog(log);}finally{setSaving(false);}};'
+          block2, n = old_toggle.subn(new_toggle, block, count=1)
+          if n == 1:
+              block = block2
+              changed = True
+
+          old_tabs = re.compile(r"<div style=\{\{display:'flex',gap:6,overflowX:'auto',paddingBottom:8\}\}>\{\(plan\.days\|\|\[\]\)\.map\(\(d,i\)=>.*?</div>", re.S)
+          new_tabs = '<div style={{display:\'flex\',gap:6,overflowX:\'auto\',paddingBottom:8}}>{(plan.days||[]).map((d,i)=><button key={i} type="button" onClick={()=>setSelectedDayIndex(i)} style={{minWidth:72,padding:\'9px 7px\',borderRadius:11,background:i===dayIndex?C.green:C.card2,color:i===dayIndex?C.onAccent:C.sub,textAlign:\'center\',fontSize:11,fontWeight:800,border:\'none\',cursor:\'pointer\',flexShrink:0}}>{ar?(d.titleAr||`اليوم ${i+1}`):(d.title||`Day ${i+1}`)}</button>)}</div>'
+          block2, n = old_tabs.subn(new_tabs, block, count=1)
+          if n == 1:
+              block = block2
+              changed = True
+
+          text = text[:start] + block + text[end:]
+
+          # Make admin-assigned custom nutrition plans visible in Meals for Free
+          # users, while preserving the existing Pro paywall when no plan exists.
+          meals_start = text.find('function MealsScreen({')
+          meals_end = text.find('\nfunction ', meals_start + 20)
+          if meals_start >= 0 and meals_end > meals_start:
+              meals = text[meals_start:meals_end]
+              old = '  const targets = data.dailyTargets;\n  const kcalTarget = targets?.kcal || 2000;'
+              new = '''  const customTodayPlanIndex = customNutritionPlan?.days?.length\n    ? Math.max(0, Math.min(customNutritionPlan.days.length - 1, (() => {\n        const startDate = customNutritionPlan.startDate || today;\n        const diff = Math.max(0, Math.floor((new Date(today + "T00:00:00").getTime() - new Date(startDate + "T00:00:00").getTime()) / 86400000));\n        return Number.isFinite(diff) ? diff : 0;\n      })()))\n    : 0;\n  const targets = customNutritionPlan?.days?.[customTodayPlanIndex] || data.dailyTargets;\n  const kcalTarget = targets?.kcal || targets?.targetKcal || 2000;'''
+              if old in meals:
+                  meals = meals.replace(old, new, 1)
+                  changed = True
+              if '        {!pro ? (' in meals:
+                  meals = meals.replace('        {!pro ? (', '        {!customNutritionPlan && !pro ? (', 1)
+                  changed = True
+              text = text[:meals_start] + meals + text[meals_end:]
 
           app.write_text(text, encoding='utf-8')
 
+          # Prevent the in-app WebView from creating windows or using JS to open
+          # a non-http(s) target that could escape to the TikTok app.
           bridge = Path('scripts/inject-tiktok-webview.py')
           bt = bridge.read_text(encoding='utf-8')
           if 's.setSupportMultipleWindows(false);' not in bt:
-              marker='        s.setMediaPlaybackRequiresUserGesture(false);\n'
-              if marker not in bt:
-                  raise SystemExit('TikTok bridge settings anchor not found')
+              marker = '        s.setMediaPlaybackRequiresUserGesture(false);\n'
+              if marker not in bt: raise SystemExit('TikTok bridge settings anchor not found')
               bt = bt.replace(marker, marker + '        s.setSupportMultipleWindows(false);\n        s.setJavaScriptCanOpenWindowsAutomatically(false);\n', 1)
               bridge.write_text(bt, encoding='utf-8')
+              changed = True
 
-          # Remove the one-time migration workflow itself later using the
-          # ChatGPT GitHub connector; this runner only commits source files.
-          print('CARDIO_OK', 'await persist(true, null, 35)' in text)
-          print('NUTRITION_OK', 'setSelectedDayIndex(i)' in text)
-          print('TIKTOK_OK', 'openTikTokWebView' in text)
-          print('FREE_CUSTOM_PLAN_OK', '!customNutritionPlan && !pro' in text)
-          assert 'await persist(true, null, 35)' in text
-          assert 'setSelectedDayIndex(i)' in text
+          # This script must never recreate a build-time rewrite script.
+          release = Path('scripts/release-fixes-v7.py')
+          if release.exists():
+              release.unlink()
+              changed = True
+
+          print('CHANGED', changed)
+          print('TIKTOK_BRIDGE', 'openTikTokWebView' in text)
+          print('NUTRITION_SELECT', 'setSelectedDayIndex(i)' in text)
+          print('CARDIO_ALREADY_ATOMIC', 'await persist(true, null, 35)' in text)
+          print('V7_REMOVED', not release.exists())
           assert 'openTikTokWebView' in text
-          assert '!customNutritionPlan && !pro' in text
+          assert 'setSelectedDayIndex(i)' in text
+          assert 'await persist(true, null, 35)' in text
+          assert not release.exists()
           PY
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/App.jsx scripts/inject-tiktok-webview.py
-          if test -f scripts/release-fixes-v7.py; then git rm scripts/release-fixes-v7.py; fi
           git add -A
           if git diff --cached --quiet; then
-            echo "Source migration already applied."
+            echo "Source fixes already applied."
           else
-            git commit -m "fix: make cardio completion atomic and nutrition days selectable"
+            git commit -m "fix: selectable nutrition days and in-app TikTok viewer"
             git push origin HEAD:main
           fi

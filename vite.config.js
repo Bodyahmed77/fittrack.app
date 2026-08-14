@@ -80,17 +80,47 @@ function fiftyFitHardeningPlugin() {
       );
       out = out.slice(0, bodyWeightStart) + bodyWeightSegment + out.slice(mealsStart);
 
-      // Do not make the production build depend on one specific TikTok player
-      // implementation. TikTok handling is runtime/native behavior and may use
-      // the native in-app WebView bridge or another supported in-app surface.
-      // The old build gate was brittle: it stopped every release whenever the
-      // viewer implementation changed shape. Keep only the safety checks that
-      // must never regress into known-bad oEmbed/offical-player code in the
-      // source currently being built.
+      // The current workout week source has one stale reference left from the
+      // old rolling-window implementation. It crashes the Workout tab at
+      // runtime because `offset` no longer exists in the callback scope.
+      // Normalize it at the same source-transform stage used for the existing
+      // release hardening so the built APK/AAB cannot ship that crash.
+      out = out.replace(
+        "const isToday = offset === 0;",
+        "const isToday = iso === today;",
+      );
+      requirePatch(
+        !out.includes("const isToday = offset === 0;"),
+        "Workout calendar stale offset reference removed",
+      );
+
+      // Keep TikTok completely inside Fifty Fit. The configured URL is the
+      // original normal TikTok URL; open it through the injected native WebView
+      // activity instead of TikTok Player v1, an iframe, Custom Tabs, or the
+      // external TikTok app. The native activity keeps http(s) navigation in-app.
       const videoStart = out.indexOf("function FullScreenVideoViewer");
       const exerciseVisualStart = out.indexOf("/* ============================== EXERCISE VISUAL", videoStart);
       requirePatch(videoStart >= 0 && exerciseVisualStart > videoStart, "video player section");
-      const videoSegment = out.slice(videoStart, exerciseVisualStart);
+      const videoSegmentStart = videoStart;
+      const videoSegmentEnd = exerciseVisualStart;
+      let videoSegment = out.slice(videoSegmentStart, videoSegmentEnd);
+      videoSegment = videoSegment.replace(
+        "  const tikTokPostId = getTikTokPostId(videoId);\n  const embedSrc = tikTokPostId\n    ? `https://www.tiktok.com/player/v1/${tikTokPostId}?autoplay=1&controls=1&progress_bar=1&play_button=1&volume_control=1&fullscreen_button=1&timestamp=1&music_info=0&description=0&rel=0&native_context_menu=0`\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;",
+        "  const isTikTok = isTikTokVideoRef(videoId);\n  const embedSrc = isTikTok\n    ? String(videoId)\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;",
+      );
+      videoSegment = videoSegment.replace(
+        "  const handleWatch = () => setOpen(true);",
+        "  const handleWatch = async () => {\n    if (isTikTok) {\n      try {\n        const { openTikTokWebView } = await import(\"./tiktokWebView\");\n        await openTikTokWebView(String(videoId));\n      } catch (error) {\n        console.error(\"[TikTok] in-app WebView failed\", error);\n      }\n      return;\n    }\n    setOpen(true);\n  };",
+      );
+      out = out.slice(0, videoSegmentStart) + videoSegment + out.slice(videoSegmentEnd);
+      requirePatch(
+        !videoSegment.includes("tiktok.com/player/v1/"),
+        "TikTok official player disabled",
+      );
+      requirePatch(
+        videoSegment.includes("openTikTokWebView(String(videoId))"),
+        "TikTok native WebView flow",
+      );
       requirePatch(!/tiktok\.com\/oembed/i.test(videoSegment), "TikTok oEmbed resolver disabled");
 
       // AI Coach keyboard: validate real keyboard tracking; do not rewrite

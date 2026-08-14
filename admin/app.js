@@ -192,8 +192,8 @@ function renderCustomerDetail() {
 
 function renderTrainingEditor() {
   const editor = document.getElementById("editor");
-  const allowed = !!currentCustomer.entitlements?.trainingPro;
-  editor.innerHTML = `<section class="panel plan-editor"><div class="panel-head"><div><h2>Custom Training</h2><p class="muted">This plan starts from the date below and runs Day 1 → Day 7.</p></div><button id="save-training" class="primary">Publish plan</button></div>${!allowed ? '<div class="notice">Training Pro is not active. The plan is saved only when the customer has Training Pro.</div>' : ''}<div class="form-grid"><label>Plan name<input id="training-title" value="${esc(planDraft.title)}"/></label><label>Start date<input id="training-start" type="date" value="${esc(planDraft.startDate)}"/></label></div><div class="day-tabs">${DAY_NAMES.map((d,i)=>`<button class="day-tab ${i===activeDay?'active':''}" data-day="${i}">${d}</button>`).join("")}</div><div id="training-day"></div></section>`;
+  const allowed = true;
+  editor.innerHTML = `<section class="panel plan-editor"><div class="panel-head"><div><h2>Custom Training</h2><p class="muted">This plan starts from the date below and runs Day 1 → Day 7.</p></div><button id="save-training" class="primary">Publish plan</button></div><div class="form-grid"><label>Plan name<input id="training-title" value="${esc(planDraft.title)}"/></label><label>Start date<input id="training-start" type="date" value="${esc(planDraft.startDate)}"/></label></div><div class="day-tabs">${DAY_NAMES.map((d,i)=>`<button class="day-tab ${i===activeDay?'active':''}" data-day="${i}">${d}</button>`).join("")}</div><div id="training-day"></div></section>`;
   document.getElementById("training-title").oninput = (e) => planDraft.title = e.target.value;
   document.getElementById("training-start").onchange = (e) => planDraft.startDate = e.target.value;
   document.querySelectorAll("[data-day]").forEach((b) => b.onclick = () => { activeDay = Number(b.dataset.day); renderTrainingEditor(); });
@@ -214,7 +214,6 @@ function exerciseEditorRow(x, i) {
   return `<div class="exercise-row"><select data-ex-field="${i}:id">${EXERCISES.map(([id,en,ar])=>`<option value="${id}" ${id===x.id?'selected':''}>${esc(en)} — ${esc(ar)}</option>`).join("")}</select><input data-ex-field="${i}:targetSets" type="number" min="1" max="10" value="${esc(x.targetSets || 3)}"/><input data-ex-field="${i}:targetReps" value="${esc(x.targetReps || '8-12')}"/><button data-remove-ex="${i}" class="icon-danger">×</button></div>`;
 }
 async function saveTraining() {
-  if (!currentCustomer.entitlements?.trainingPro) return alert("Training Pro is not active for this customer.");
   const payload = { ...normalizeTraining(planDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
   await setDoc(doc(db,"users",currentCustomer.id), { customTrainingPlan: payload, workoutStartDate: payload.startDate }, { merge: true });
   const userLang = String(currentCustomer?.settings?.language || currentCustomer?.settings?.lang || currentCustomer?.account?.language || currentCustomer?.account?.lang || "en").toLowerCase();
@@ -238,8 +237,8 @@ async function saveTraining() {
 
 function renderNutritionEditor() {
   const editor = document.getElementById("editor");
-  const allowed = !!currentCustomer.entitlements?.nutritionPro;
-  editor.innerHTML = `<section class="panel plan-editor"><div class="panel-head"><div><h2>Custom Nutrition</h2><p class="muted">Build the customer's real meal plan. It appears as a premium in-app plan, separate from food logging.</p></div><button id="save-nutrition" class="primary">Publish plan</button></div>${!allowed ? '<div class="notice">Nutrition Pro is not active. The plan cannot be published until the subscription is active.</div>' : ''}<div class="form-grid"><label>Plan name<input id="nutrition-title" value="${esc(nutritionDraft.title)}"/></label><label>Start date<input id="nutrition-start" type="date" value="${esc(nutritionDraft.startDate)}"/></label></div><div class="day-tabs">${DAY_NAMES.map((d,i)=>`<button class="day-tab ${i===activeDay?'active':''}" data-nut-day="${i}">${d}</button>`).join("")}</div><div id="nutrition-day"></div></section>`;
+  const allowed = true;
+  editor.innerHTML = `<section class="panel plan-editor"><div class="panel-head"><div><h2>Custom Nutrition</h2><p class="muted">Build the customer's real meal plan. It appears as a premium in-app plan, separate from food logging.</p></div><button id="save-nutrition" class="primary">Publish plan</button></div><div class="form-grid"><label>Plan name<input id="nutrition-title" value="${esc(nutritionDraft.title)}"/></label><label>Start date<input id="nutrition-start" type="date" value="${esc(nutritionDraft.startDate)}"/></label></div><div class="day-tabs">${DAY_NAMES.map((d,i)=>`<button class="day-tab ${i===activeDay?'active':''}" data-nut-day="${i}">${d}</button>`).join("")}</div><div id="nutrition-day"></div></section>`;
   document.getElementById("nutrition-title").oninput = (e) => nutritionDraft.title = e.target.value;
   document.getElementById("nutrition-start").onchange = (e) => nutritionDraft.startDate = e.target.value;
   document.querySelectorAll("[data-nut-day]").forEach((b) => b.onclick = () => { activeDay = Number(b.dataset.nutDay); renderNutritionEditor(); });
@@ -255,7 +254,6 @@ function renderNutritionDay() {
   document.querySelectorAll("[data-meal-note]").forEach((x)=>x.oninput=(e)=>day.meals[Number(x.dataset.mealNote)].note=e.target.value);
 }
 async function saveNutrition() {
-  if (!currentCustomer.entitlements?.nutritionPro) return alert("Nutrition Pro is not active for this customer.");
   const payload = { ...normalizeNutrition(nutritionDraft), updatedAt: new Date().toISOString(), assignedBy: currentUser.uid };
   await setDoc(doc(db,"users",currentCustomer.id), { customNutritionPlan: payload }, { merge: true });
   const userLang = String(currentCustomer?.settings?.language || currentCustomer?.settings?.lang || currentCustomer?.account?.language || currentCustomer?.account?.lang || "en").toLowerCase();

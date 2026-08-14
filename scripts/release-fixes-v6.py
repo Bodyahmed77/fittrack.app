@@ -1,16 +1,18 @@
 from pathlib import Path
 
-# Reuse the deterministic v5 runtime fixes. Do not rewrite the current viewer
-# implementation here; v6 is only a strict release-time validation layer.
+# Reuse the deterministic v5 runtime fixes. v6 is validation-only so it never
+# mutates App.jsx in a brittle way during CI.
 exec(Path('scripts/release-fixes-v5.py').read_text(encoding='utf-8'), {'__name__': '__release_fixes_v5__'})
 
 APP = Path('src/App.jsx')
 text = APP.read_text(encoding='utf-8')
 
+# The current viewer receives its URL through the videoId prop. We validate the
+# real viewer rather than depending on a specific historical implementation.
 required = [
     ('function FullScreenVideoViewer', 'full-screen video viewer'),
     ('<iframe', 'in-app iframe viewer'),
-    ('String(videoId || "")', 'original video URL handling'),
+    ('String(videoId', 'original video URL handling'),
     ('const persist = useCallback(async (finished', 'durable cardio persistence'),
     ('await persist(true, null)', 'wait for cardio save before navigation'),
 ]

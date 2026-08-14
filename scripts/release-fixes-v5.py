@@ -64,18 +64,34 @@ if notif_old not in text:
     raise SystemExit('v5: notification scheduling block not found')
 text = text.replace(notif_old, notif_new, 1)
 
+# The old DOM-level published-plan bridge was responsible for injecting plan
+# cards by scanning arbitrary text on the page. It could mistake the Home/Plans
+# navigation label for the Plans screen and prepend duplicate cards at the top
+# of Home. The React screens now own these cards, so stop booting that bridge.
+INDEX = Path('index.html')
+index_text = INDEX.read_text(encoding='utf-8')
+old_bridge = '      import { startPublishedPlansUx } from "/src/publishedPlansUx.js";\n      startPlanNotificationBridge();\n      startPublishedPlansUx();'
+new_bridge = '      startPlanNotificationBridge();'
+if old_bridge not in index_text:
+    raise SystemExit('v5: published plan bridge bootstrap not found')
+index_text = index_text.replace(old_bridge, new_bridge, 1)
+INDEX.write_text(index_text, encoding='utf-8')
+
 APP.write_text(text, encoding='utf-8')
 
 # 4) Build-time assertions: never silently ship the old cardio race or a billing
-#    gate around admin-assigned plans.
+#    gate around admin-assigned plans, and never re-enable the duplicate DOM bridge.
 text = APP.read_text(encoding='utf-8')
+index_text = INDEX.read_text(encoding='utf-8')
 assert 'const persist = useCallback(async (finished' in text
 assert 'await persist(true, null)' in text
 assert 'data.customTrainingPlan?.days?.[DAYS.indexOf(day)]' in text
 assert 'data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]' in text
 assert 'data.customTrainingPlan && data.entitlements.trainingPro && (' not in text
 assert 'data.customNutritionPlan && data.entitlements.nutritionPro && (' not in text
+assert 'startPublishedPlansUx' not in index_text
 print('Release fixes v5 applied successfully')
 print('Cardio completion now waits for persistence before navigation')
 print('Admin-assigned custom plans are not gated by billing')
 print('Duplicate plan notifications from the generic listener are disabled')
+print('Legacy DOM plan-card injector is disabled to prevent duplicate Home cards')

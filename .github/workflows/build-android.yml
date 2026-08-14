@@ -36,7 +36,11 @@ jobs:
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # Browser is used for TikTok's normal page in an Android Custom Tab.
+          # Keep the repository lockfile untouched for this launch-only native integration.
+          npm install @capacitor/browser@7.0.5 --no-save
 
       - name: Extract Google Web Client ID
         env:
@@ -44,7 +48,9 @@ jobs:
         run: python3 scripts/extract-google-web-client-id.py
 
       - name: Build the web app
-        run: npm run build
+        run: |
+          python3 scripts/patch-launch-readiness.py
+          npm run build
 
       - name: Add the Android platform
         run: npx cap add android || true
@@ -84,6 +90,9 @@ jobs:
               text=text.replace("dependencies {", "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
           if "com.google.gms.google-services" not in text:
               text += "\napply plugin: 'com.google.gms.google-services'\n"
+          # Keep WebView-hosted language selection independent of Play language splits.
+          if "enableSplit = false" not in text:
+              text += "\nandroid {\n    bundle {\n        language { enableSplit = false }\n    }\n}\n"
           ab.write_text(text,encoding='utf-8')
           PY
 
@@ -103,24 +112,41 @@ jobs:
           print('Android target/compile SDK = 36')
           PY
 
+      - name: Set monotonic Play version code
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          p=Path('android/app/build.gradle')
+          text=p.read_text(encoding='utf-8')
+          run_number=int(os.environ.get('GITHUB_RUN_NUMBER','1'))
+          version_code=1000 + run_number
+          if 'defaultConfig {' not in text:
+              raise SystemExit('defaultConfig block not found')
+          text=re.sub(r'\n\s*versionCode\s+\d+', '', text)
+          text=re.sub(r'\n\s*versionName\s+"[^"]*"', '', text)
+          text=text.replace('defaultConfig {', f'defaultConfig {{\n        versionCode {version_code}\n        versionName "1.0.{run_number}"', 1)
+          p.write_text(text,encoding='utf-8')
+          print(f'Play versionCode={version_code}, versionName=1.0.{run_number}')
+          PY
+
       - name: Generate app assets and sync Capacitor
         run: |
           npx capacitor-assets generate --android
           npx cap sync android
 
-      - name: Inject Android system UI
-        run: python3 scripts/inject-android-system-ui.py
-
-      - name: Inject Google OAuth deep link
-        run: python3 scripts/inject-google-auth-deeplink.py
-
       - name: Verify Android release configuration
         working-directory: android
         run: |
           grep -n "targetSdkVersion\|compileSdkVersion" variables.gradle
-          grep -n "namespace\|applicationId" app/build.gradle
+          grep -n "namespace\|applicationId\|versionCode\|versionName" app/build.gradle
           test "$(grep -o 'applicationId "[^"]*"' app/build.gradle | head -n1 | cut -d'"' -f2)" = "com.bodyahmed77.fiftyfit"
           test "$(grep -o 'namespace "[^"]*"' app/build.gradle | head -n1 | cut -d'"' -f2)" = "com.bodyahmed77.fiftyfit"
+          test -s app/src/main/assets/public/index.html
+          echo "Capacitor web assets are present in the Android base module."
 
       - name: Decode release signing keystore
         env:

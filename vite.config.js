@@ -95,25 +95,26 @@ function fiftyFitHardeningPlugin() {
       );
       out = out.slice(0, bodyWeightStart) + bodyWeightSegment + out.slice(mealsStart);
 
-      // TikTok numeric IDs and full TikTok video URLs must use the official
-      // player URL inside the WebView, never the raw URL/ID in an iframe.
+      // TikTok pages are not reliably embeddable in an iframe. The launch build
+      // deliberately uses Capacitor Browser/Android Custom Tabs for the normal
+      // TikTok URL, keeping the user in the app context without using TikTok's
+      // official player endpoint or an oEmbed resolver.
       const videoStart = out.indexOf("function FullScreenVideoViewer");
       const exerciseVisualStart = out.indexOf("/* ============================== EXERCISE VISUAL", videoStart);
       requirePatch(videoStart >= 0 && exerciseVisualStart > videoStart, "video player section");
-      let videoSegment = out.slice(videoStart, exerciseVisualStart);
-      videoSegment = videoSegment.replace(
-        "const embedSrc = isTikTok\n    ? String(videoId || \"\")\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;",
-        "const tikTokId = extractTikTokVideoId(videoId);\n  const embedSrc = isTikTok && tikTokId\n    ? `https://www.tiktok.com/player/v1/${tikTokId}?controls=1&autoplay=1&playsinline=1&description=0&music_info=0`\n    : isTikTok\n    ? String(videoId || \"\")\n    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;",
-      );
-      videoSegment = videoSegment.replace(
-        'const isTikTok = /^\\d+$/.test(videoId);',
-        'const isTikTok = /tiktok\\.com/i.test(String(videoId || "")) || /^\\d+$/.test(String(videoId || ""));',
+      const videoSegment = out.slice(videoStart, exerciseVisualStart);
+      requirePatch(
+        videoSegment.includes('Browser.open({ url: tikTokUrl'),
+        "TikTok native browser flow",
       );
       requirePatch(
-        videoSegment.includes("https://www.tiktok.com/player/v1/${tikTokId}"),
-        "TikTok official player URL",
+        !videoSegment.includes("tiktok.com/player/v1/"),
+        "TikTok official player disabled",
       );
-      out = out.slice(0, videoStart) + videoSegment + out.slice(exerciseVisualStart);
+      requirePatch(
+        !videoSegment.includes("oembed"),
+        "TikTok oEmbed resolver disabled",
+      );
 
       // Keep native Android keyboard resize as the single source of truth. The
       // AI drawer already uses the WebView resize behavior; avoid stale manual
@@ -157,9 +158,6 @@ export default defineConfig({
     rollupOptions: {
       external: ["capacitor-billing", "@capacitor-community/in-app-review"],
       output: {
-        // Code-split large third-party libs into separate cacheable chunks.
-        // Keeps the initial bundle small and improves first-load performance
-        // on mobile — each vendor chunk is loaded lazily as needed.
         manualChunks: {
           react: ["react", "react-dom"],
           recharts: ["recharts"],
@@ -168,8 +166,6 @@ export default defineConfig({
         },
       },
     },
-    // Recharts & Firebase are intentionally large; raise the warning threshold
-    // so the build stays clean while still splitting the biggest libraries.
     chunkSizeWarningLimit: 900,
   },
 });

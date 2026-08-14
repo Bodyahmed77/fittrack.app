@@ -1,0 +1,89 @@
+name: Final source cleanup once
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fix current source deterministically
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          app = Path('src/App.jsx')
+          text = app.read_text(encoding='utf-8')
+
+          # The cardio source is already using the atomic persistence fix. Keep
+          # this as an invariant because this is the exact state needed for the
+          # outer green check and for stopping the old timer record.
+          if 'await persist(true, null, 35)' not in text:
+              raise SystemExit('Expected atomic cardio completion fix is missing')
+
+          # The current nutrition source has the selected-day state. Repair only
+          # the malformed toggle line introduced by the earlier migration; do
+          # not replace the whole screen or rewrite unrelated UI.
+          start = text.find('function NutritionPlanScreen({ data, back }) {')
+          end = text.find('\nfunction FoodPickerScreen', start + 20)
+          if start < 0 or end < 0:
+              raise SystemExit('NutritionPlanScreen boundaries not found')
+          block = text[start:end]
+
+          toggle_pattern = re.compile(r'  const toggle=async id=>.*?\n  return <div', re.S)
+          clean_toggle = '''  const toggle=async id=>{\n    if(!auth.currentUser || saving) return;\n    const next={...log,[logKey]:{...(log[logKey]||{}),[id]:!checked[id]}};\n    if(!next[logKey][id]) delete next[logKey][id];\n    setLog(next);\n    setSaving(true);\n    try {\n      await setDoc(doc(db,'users',auth.currentUser.uid),{customNutritionLog:next},{merge:true});\n    } catch {\n      setLog(log);\n    } finally {\n      setSaving(false);\n    }\n  };\n  return <div'''
+          block2, n = toggle_pattern.subn(clean_toggle, block, count=1)
+          if n != 1:
+              raise SystemExit('Malformed nutrition toggle anchor not found')
+          block = block2
+
+          # Selected day must remain clickable and independent of today's date.
+          if 'const [selectedDayIndex, setSelectedDayIndex] = useState(0);' not in block:
+              raise SystemExit('selectedDayIndex state is missing')
+          if 'onClick={()=>setSelectedDayIndex(i)}' not in block:
+              raise SystemExit('nutrition day buttons are not interactive')
+          if 'const dayIndex=Math.max(0,Math.min((plan.days?.length || 1)-1,selectedDayIndex))' not in block:
+              raise SystemExit('nutrition selected day calculation is missing')
+
+          text = text[:start] + block + text[end:]
+
+          # The TikTok source must be fully in-app and use the original URL.
+          if 'openTikTokWebView' not in text:
+              raise SystemExit('TikTok in-app bridge is missing')
+          if 'Browser.open({' in text:
+              raise SystemExit('External Browser.open TikTok path still present')
+          if 'import { Browser } from "@capacitor/browser";' in text:
+              raise SystemExit('Browser import still present')
+
+          app.write_text(text, encoding='utf-8')
+          print('Nutrition toggle repaired')
+          print('Cardio atomic completion verified')
+          print('TikTok in-app bridge verified')
+          PY
+
+          if test -f scripts/release-fixes-v7.py; then
+            rm scripts/release-fixes-v7.py
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes needed."
+          else
+            git commit -m "fix: repair nutrition day toggle and verify launch source"
+            git push origin HEAD:main
+          fi

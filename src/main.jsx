@@ -31,9 +31,6 @@ function syncKeyboardFromViewport() {
     setKeyboardHeight(0);
     return;
   }
-  // When Android uses adjustResize, innerHeight shrinks with the keyboard and
-  // this delta becomes ~0. When the WebView is not resized, visualViewport
-  // shrinks while innerHeight stays large, giving us the actual overlay inset.
   const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
   setKeyboardHeight(inset);
 }
@@ -41,18 +38,29 @@ function syncKeyboardFromViewport() {
 function keepFocusedFieldVisible() {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   const el = document.activeElement;
-  if (!el || !["INPUT", "TEXTAREA"].includes(el.tagName) && !el.isContentEditable) return;
+  if (
+    !el ||
+    (!["INPUT", "TEXTAREA"].includes(el.tagName) && !el.isContentEditable)
+  )
+    return;
+
   const vv = window.visualViewport;
-  const visibleBottom = (vv?.height || window.innerHeight) - 14;
+  const visibleBottom = (vv?.height || window.innerHeight) - 16;
   const rect = el.getBoundingClientRect();
+
   if (rect.bottom > visibleBottom) {
-    window.scrollBy({ top: rect.bottom - visibleBottom + 24, behavior: "smooth" });
+    // Never use smooth scrolling here. Android can emit several viewport/focus
+    // events during one keyboard transition; animated scrolling on every event
+    // causes the visible up/down glitch seen on some devices.
+    el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
   }
 }
 
 if (typeof window !== "undefined") {
   setKeyboardHeight(0);
   let syncFrame = 0;
+  let focusTimer = 0;
+
   const scheduleKeyboardSync = () => {
     cancelAnimationFrame(syncFrame);
     syncFrame = requestAnimationFrame(() => {
@@ -64,27 +72,35 @@ if (typeof window !== "undefined") {
   window.addEventListener("resize", scheduleKeyboardSync, { passive: true });
   window.visualViewport?.addEventListener("resize", scheduleKeyboardSync, { passive: true });
   window.visualViewport?.addEventListener("scroll", scheduleKeyboardSync, { passive: true });
-  document.addEventListener(
-    "focusin",
-    () => {
-      window.setTimeout(scheduleKeyboardSync, 120);
-      window.setTimeout(scheduleKeyboardSync, 320);
-    },
-    true,
-  );
 
-  const onNativeShow = () => {
-    window.setTimeout(scheduleKeyboardSync, 80);
-    window.setTimeout(scheduleKeyboardSync, 250);
+  const onFocusIn = () => {
+    window.clearTimeout(focusTimer);
+    focusTimer = window.setTimeout(scheduleKeyboardSync, 180);
   };
-  const onNativeHide = () => window.setTimeout(scheduleKeyboardSync, 80);
+  document.addEventListener("focusin", onFocusIn, true);
 
-  Keyboard.addListener("keyboardWillShow", onNativeShow);
-  Keyboard.addListener("keyboardDidShow", onNativeShow);
-  Keyboard.addListener("keyboardWillHide", onNativeHide);
-  Keyboard.addListener("keyboardDidHide", onNativeHide);
+  let keyboardShowHandle;
+  let keyboardHideHandle;
+  try {
+    keyboardShowHandle = Keyboard.addListener("keyboardDidShow", scheduleKeyboardSync);
+    keyboardHideHandle = Keyboard.addListener("keyboardDidHide", () => {
+      window.setTimeout(scheduleKeyboardSync, 60);
+    });
+  } catch (e) {
+    console.warn("[Keyboard] native listener registration failed", e);
+  }
 
   window.setTimeout(scheduleKeyboardSync, 0);
+
+  // This entry point is mounted once for the app lifetime. The handles are kept
+  // so hot-reload/dev environments can still clean them up if the module is
+  // re-executed.
+  window.addEventListener("beforeunload", () => {
+    window.clearTimeout(focusTimer);
+    cancelAnimationFrame(syncFrame);
+    keyboardShowHandle?.remove?.();
+    keyboardHideHandle?.remove?.();
+  }, { once: true });
 }
 
 const App = React.lazy(() => import("./App.jsx"));

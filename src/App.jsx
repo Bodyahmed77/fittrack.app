@@ -2706,6 +2706,20 @@ function useAppData(uid) {
   return { data, setData, setVerifiedEntitlements, loaded, notifications };
 }
 
+function nutritionCycleState(plan, todayIso = dateKey(0)) {
+  const length = Array.isArray(plan?.days) && plan.days.length ? plan.days.length : 7;
+  const startIso = plan?.startDate || todayIso;
+  const startMs = new Date(`${startIso}T00:00:00`).getTime();
+  const todayMs = new Date(`${todayIso}T00:00:00`).getTime();
+  const elapsed = Number.isFinite(startMs) && Number.isFinite(todayMs)
+    ? Math.max(0, Math.floor((todayMs - startMs) / 86400000))
+    : 0;
+  const cycleNumber = Math.floor(elapsed / length);
+  const dayIndex = elapsed % length;
+  const cycleStartIso = addDays(startIso, cycleNumber * length);
+  return { length, cycleNumber, dayIndex, cycleStartIso };
+}
+
 function isCustomTrainingPlanActive(data) {
   return !!data?.customTrainingPlan && data.customTrainingPlanActive === true;
 }
@@ -8023,11 +8037,7 @@ function MealsScreen({ data, setData, back, showToast, go }) {
   const plan = data.nutritionPlan;
   const customNutritionPlan = data.customNutritionPlan;
   const customTodayPlanIndex = customNutritionPlan?.days?.length
-    ? Math.max(0, Math.min(customNutritionPlan.days.length - 1, (() => {
-        const start = customNutritionPlan.startDate || today;
-        const diff = Math.max(0, Math.floor((new Date(today + "T00:00:00").getTime() - new Date(start + "T00:00:00").getTime()) / 86400000));
-        return Number.isFinite(diff) ? diff : 0;
-      })()))
+    ? nutritionCycleState(customNutritionPlan, today).dayIndex
     : 0;
   const targets = customNutritionPlan?.days?.[customTodayPlanIndex] || data.dailyTargets;
   const kcalTarget = targets?.kcal || targets?.targetKcal || 2000;
@@ -8531,13 +8541,8 @@ function NutritionPlanScreen({ data, back }) {
   const [log, setLog] = useState(() => data.customNutritionLog || {}); const [saving, setSaving] = useState(false); const [requested, setRequested] = useState(!!data.nutritionPlanRequestedAt);
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   const parseItems = (items, mealId) => Array.isArray(items) ? items.map((x,i) => ({ id:x.id || `${mealId}-${i}`, name:x.name || x.title || `Food ${i+1}`, nameAr:x.nameAr || x.name || x.titleAr || x.title || `أكلة ${i+1}`, quantity:x.quantity ?? x.amount ?? '', kcal:Number(x.kcal || 0), protein:Number(x.protein || 0), carbs:Number(x.carbs || 0), fat:Number(x.fat || 0) })) : String(items || '').split(/\n+/).map(x=>x.trim()).filter(Boolean).map((line,i)=>{ const a=line.split('|').map(x=>x.trim()); return {id:`${mealId}-${i}-${a[0]}`,name:a[0],nameAr:a[0],quantity:a[1]||'',kcal:Number(a[2]||0),protein:Number(a[3]||0),carbs:Number(a[4]||0),fat:Number(a[5]||0)}; });
-  const computedTodayDayIndex = plan?.days?.length
-    ? Math.max(0, Math.min(plan.days.length - 1, (() => {
-        const start = plan.startDate || today;
-        const diff = Math.max(0, Math.floor((new Date(today + "T00:00:00").getTime() - new Date(start + "T00:00:00").getTime()) / 86400000));
-        return Number.isFinite(diff) ? diff : 0;
-      })()))
-    : 0;
+  const cycle = nutritionCycleState(plan, today);
+  const computedTodayDayIndex = cycle.dayIndex;
   useEffect(() => {
     if (plan) setSelectedDayIndex(computedTodayDayIndex);
   }, [plan?.startDate, plan?.days?.length, computedTodayDayIndex]);
@@ -8545,8 +8550,24 @@ function NutritionPlanScreen({ data, back }) {
     const request = async () => { if (requested || !auth.currentUser) return; setRequested(true); try { await setDoc(doc(db,'users',auth.currentUser.uid), { nutritionPlanRequestedAt:new Date().toISOString(), nutritionPlanRequestStatus:'pending' }, {merge:true}); } catch { setRequested(false); } };
     return <div dir={ar?'rtl':'ltr'}><TopBar title={ar?'خطتك الغذائية':'Your Nutrition Plan'} onBack={back}/><div style={{padding:'0 18px 28px'}}><Card style={{background:C.greenSoft,border:`1px solid ${C.green}55`,padding:22,textAlign:'center'}}><div style={{fontSize:42}}>🍽️</div><div style={{color:C.text,fontSize:20,fontWeight:900,marginTop:8}}>{ar?'خطتك الغذائية الخاصة':'Your Personalized Nutrition Plan'}</div><div style={{color:C.sub,fontSize:13,lineHeight:1.6,margin:'8px 0 18px'}}>{ar?'فريق Fifty Fit هيجهز لك خطة مناسبة لهدفك وتظهر هنا داخل التطبيق.':'The Fifty Fit team will prepare your personalized plan and deliver it directly inside the app.'}</div><button onClick={request} disabled={requested} style={{width:'100%',border:'none',borderRadius:14,padding:'13px 16px',background:requested?C.card2:C.green,color:requested?C.sub:C.onAccent,fontWeight:900}}>{requested?(ar?'✓ تم إرسال الطلب':'✓ Request sent'):(ar?'اطلب خطتك الغذائية':'Request my nutrition plan')}</button>{requested&&<div style={{color:C.sub,fontSize:11,marginTop:10}}>{ar?'هنبلغك أول ما خطتك تجهز.':"We'll let you know when your plan is ready."}</div>}</Card></div></div>;
   }
-  const dayIndex=Math.max(0,Math.min((plan.days?.length || 1)-1,selectedDayIndex)); const day=plan.days?.[dayIndex] || plan.days?.[0] || {meals:[]}; const logKey=`${plan.startDate || today}:day-${dayIndex}`; const checked=log[logKey] || (dayIndex===computedTodayDayIndex ? (log[today] || {}) : {}); const meals=day.meals || [];
-  const foods=meals.flatMap(m=>parseItems(m.items,m.id)); const consumed=foods.filter(f=>checked[f.id]).reduce((a,f)=>({kcal:a.kcal+f.kcal,protein:a.protein+f.protein,carbs:a.carbs+f.carbs,fat:a.fat+f.fat}),{kcal:0,protein:0,carbs:0,fat:0}); const targets={kcal:Number(day.targetKcal||0),protein:Number(day.targetProtein||0),carbs:Number(day.targetCarbs||0),fat:Number(day.targetFat||0)}; const pct=(v,t)=>t>0?Math.min(100,Math.round(v/t*100)):0;
+  const dayIndex=((selectedDayIndex % cycle.length) + cycle.length) % cycle.length;
+  const day=plan.days?.[dayIndex] || plan.days?.[0] || {meals:[]};
+  const selectedCycleDate=addDays(cycle.cycleStartIso, dayIndex);
+  const selectedDateLabel=new Date(selectedCycleDate + "T00:00:00").toLocaleDateString(ar ? "ar-EG" : "en-US", {weekday:"long", day:"numeric", month:"long"});
+  const logKey=`${cycle.cycleStartIso}:day-${dayIndex}`;
+  const legacyLogKey=`${plan.startDate || today}:day-${dayIndex}`;
+  const checked=log[logKey] || (cycle.cycleNumber===0 ? (log[legacyLogKey] || log[today] || {}) : {});
+  const meals=day.meals || [];
+  const foods=meals.flatMap(m=>parseItems(m.items,m.id));
+  const dayCompleted=foods.length>0 && foods.every(f=>!!checked[f.id]);
+  const getDayStatus=(i)=>{
+    const date=addDays(cycle.cycleStartIso,i);
+    const d=plan.days?.[i] || {meals:[]};
+    const dayFoods=(d.meals||[]).flatMap(m=>parseItems(m.items,m.id));
+    const dayChecked=log[`${cycle.cycleStartIso}:day-${i}`] || (cycle.cycleNumber===0 ? (log[`${plan.startDate || today}:day-${i}`] || {}) : {});
+    const complete=dayFoods.length>0 && dayFoods.every(f=>!!dayChecked[f.id]);
+    return {date,complete,missed:date<today&&!complete};
+  }; const consumed=foods.filter(f=>checked[f.id]).reduce((a,f)=>({kcal:a.kcal+f.kcal,protein:a.protein+f.protein,carbs:a.carbs+f.carbs,fat:a.fat+f.fat}),{kcal:0,protein:0,carbs:0,fat:0}); const targets={kcal:Number(day.targetKcal||0),protein:Number(day.targetProtein||0),carbs:Number(day.targetCarbs||0),fat:Number(day.targetFat||0)}; const pct=(v,t)=>t>0?Math.min(100,Math.round(v/t*100)):0;
   const toggle=async id=>{
     if(!auth.currentUser || saving) return;
     const next={...log,[logKey]:{...(log[logKey]||{}),[id]:!checked[id]}};
@@ -8561,7 +8582,7 @@ function NutritionPlanScreen({ data, back }) {
       setSaving(false);
     }
   };
-  return <div dir={ar?'rtl':'ltr'}><TopBar title={ar?'خطتك الغذائية':'Your Nutrition Plan'} onBack={back}/><div style={{padding:'0 18px 28px'}}><Card style={{background:C.greenSoft,border:`1px solid ${C.green}55`,marginBottom:12}}><div style={{color:C.text,fontSize:19,fontWeight:900}}>{ar?(plan.titleAr||'خطتك الغذائية'):(plan.title||'Your Nutrition Plan')}</div><div style={{color:C.sub,fontSize:12,marginTop:5}}>{ar?'خطة مخصصة لك من فريق Fifty Fit':'A plan prepared for you by the Fifty Fit team'}</div><div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginTop:14}}>{[['🔥',ar?'السعرات':'Calories',consumed.kcal,targets.kcal,'kcal'],['💪',ar?'البروتين':'Protein',consumed.protein,targets.protein,'g'],['🍞',ar?'الكارب':'Carbs',consumed.carbs,targets.carbs,'g'],['🥑',ar?'الدهون':'Fat',consumed.fat,targets.fat,'g']].map(([icon,label,value,target,unit])=><div key={label} style={{background:C.card2,borderRadius:12,padding:11}}><div style={{color:C.sub2,fontSize:10,fontWeight:800}}>{icon} {label}</div><div style={{color:C.text,fontSize:16,fontWeight:900,marginTop:3}}>{Math.round(value)}{unit==='kcal'?'':'g'} <span style={{color:C.sub2,fontSize:10}}>/ {target||'—'}{target?(unit==='kcal'?' kcal':'g'):''}</span></div><div style={{height:5,background:C.border,borderRadius:99,marginTop:7,overflow:'hidden'}}><div style={{width:`${pct(value,target)}%`,height:'100%',background:C.green,borderRadius:99,transition:'width .25s ease'}}/></div></div>)}</div></Card><div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8}}>{(plan.days||[]).map((d,i)=><button key={i} type="button" onClick={()=>setSelectedDayIndex(i)} style={{minWidth:72,padding:'9px 7px',borderRadius:11,background:i===dayIndex?C.green:C.card2,color:i===dayIndex?C.onAccent:C.sub,textAlign:'center',fontSize:11,fontWeight:800,border:'none',cursor:'pointer',flexShrink:0}}>{ar?(d.titleAr||`اليوم ${i+1}`):(d.title||`Day ${i+1}`)}</button>)}</div>{meals.map(meal=>{const items=parseItems(meal.items,meal.id);if(!items.length)return null;return <Card key={meal.id} style={{marginBottom:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><div><div style={{color:C.text,fontWeight:900,fontSize:15}}>{ar?(meal.titleAr||meal.title):meal.title}</div>{meal.note&&<div style={{color:C.sub,fontSize:11,marginTop:3}}>{meal.note}</div>}</div><span style={{color:C.sub2,fontSize:11}}>{items.length} {ar?'عناصر':'items'}</span></div>{items.map(food=>{const done=!!checked[food.id];return <button key={food.id} onClick={()=>toggle(food.id)} style={{width:'100%',display:'flex',alignItems:'center',gap:11,padding:'11px 4px',border:'none',borderTop:`1px solid ${C.border}`,background:'transparent',color:C.text,textAlign:ar?'right':'left'}}><div style={{width:24,height:24,borderRadius:7,border:`1.5px solid ${done?C.green:C.border}`,background:done?C.green:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{done&&<Check size={15} color={C.onAccent} strokeWidth={3}/>}</div><div style={{flex:1,opacity:done?.65:1}}><div style={{fontWeight:800,fontSize:13.5,textDecoration:done?'line-through':'none'}}>{ar?food.nameAr:food.name}</div><div style={{color:C.sub,fontSize:10.5,marginTop:2}}>{food.quantity}{food.kcal?` · ${food.kcal} kcal · P ${food.protein}g · C ${food.carbs}g · F ${food.fat}g`:''}</div></div></button>})}</Card>})}<div style={{color:C.sub2,fontSize:10.5,textAlign:'center',padding:'8px 12px'}}>{ar?'علّم على كل أكلة أكلتها فعلاً — الحساب بيتحدث تلقائيًا.':'Check only the food you actually ate — your daily totals update automatically.'}</div></div></div>;
+  return <div dir={ar?'rtl':'ltr'}><TopBar title={ar?'خطتك الغذائية':'Your Nutrition Plan'} onBack={back}/><div style={{padding:'0 18px 28px'}}><Card style={{background:C.greenSoft,border:`1px solid ${C.green}55`,marginBottom:12}}><div style={{color:C.text,fontSize:19,fontWeight:900}}>{ar?(plan.titleAr||'خطتك الغذائية'):(plan.title||'Your Nutrition Plan')}</div><div style={{color:C.sub,fontSize:12,marginTop:5}}>{ar?'خطة مخصصة لك من فريق Fifty Fit':'A plan prepared for you by the Fifty Fit team'}</div><div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8,marginTop:14}}>{[['🔥',ar?'السعرات':'Calories',consumed.kcal,targets.kcal,'kcal'],['💪',ar?'البروتين':'Protein',consumed.protein,targets.protein,'g'],['🍞',ar?'الكارب':'Carbs',consumed.carbs,targets.carbs,'g'],['🥑',ar?'الدهون':'Fat',consumed.fat,targets.fat,'g']].map(([icon,label,value,target,unit])=><div key={label} style={{background:C.card2,borderRadius:12,padding:11}}><div style={{color:C.sub2,fontSize:10,fontWeight:800}}>{icon} {label}</div><div style={{color:C.text,fontSize:16,fontWeight:900,marginTop:3}}>{Math.round(value)}{unit==='kcal'?'':'g'} <span style={{color:C.sub2,fontSize:10}}>/ {target||'—'}{target?(unit==='kcal'?' kcal':'g'):''}</span></div><div style={{height:5,background:C.border,borderRadius:99,marginTop:7,overflow:'hidden'}}><div style={{width:`${pct(value,target)}%`,height:'100%',background:C.green,borderRadius:99,transition:'width .25s ease'}}/></div></div>)}</div></Card><div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:8}}>{(plan.days||[]).map((d,i)=>{const status=getDayStatus(i);const wd=weekdayOf(status.date);const dateNum=new Date(status.date+"T00:00:00").getDate();const disabled=status.date>today;return <button key={i} type="button" onClick={()=>!disabled&&setSelectedDayIndex(i)} disabled={disabled} style={{minWidth:76,padding:'8px 7px',borderRadius:11,background:status.complete?C.positive:(status.missed?C.dangerSoft:(i===dayIndex?C.green:C.card2)),color:status.complete?'#fff':(status.missed?C.danger:(i===dayIndex?C.onAccent:C.sub)),textAlign:'center',fontSize:10.5,fontWeight:800,border:`1px solid ${status.complete?C.positive:(status.missed?C.danger+'66':C.border)}`,cursor:disabled?'default':'pointer',flexShrink:0,opacity:disabled?0.55:1}}><div>{ar?DAY_LABELS_AR[DAYS[wd]]:new Date(status.date+"T00:00:00").toLocaleDateString('en-US',{weekday:'short'})}</div><div style={{fontSize:14,fontWeight:900,marginTop:2}}>{dateNum}</div><div style={{fontSize:10,marginTop:2}}>{status.complete?'✓':status.missed?'!':status.date===today?(ar?'اليوم':'Today'):''}</div></button>})}</div><div style={{color:C.sub,fontSize:12,fontWeight:800,marginBottom:10}}>{selectedDateLabel}</div>{dayCompleted&&<div style={{marginBottom:10,padding:"10px 12px",borderRadius:12,background:C.greenSoft,border:`1px solid ${C.green}55`,color:C.text,fontSize:12.5,fontWeight:800,textAlign:'center'}}>{cycle.dayIndex===cycle.length-1?(ar?'تم إكمال اليوم السابع ✅ بكرة الخطة هتبدأ من اليوم الأول.':'Day 7 completed ✅ Tomorrow the plan restarts from day 1.'):(ar?'تم إكمال اليوم ✅ بكرة هتبدأ اليوم التالي.':'Day completed ✅ Tomorrow the next day starts automatically.')}</div>}{meals.map(meal=>{const items=parseItems(meal.items,meal.id);if(!items.length)return null;return <Card key={meal.id} style={{marginBottom:10}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><div><div style={{color:C.text,fontWeight:900,fontSize:15}}>{ar?(meal.titleAr||meal.title):meal.title}</div>{meal.note&&<div style={{color:C.sub,fontSize:11,marginTop:3}}>{meal.note}</div>}</div><span style={{color:C.sub2,fontSize:11}}>{items.length} {ar?'عناصر':'items'}</span></div>{items.map(food=>{const done=!!checked[food.id];return <button key={food.id} onClick={()=>toggle(food.id)} style={{width:'100%',display:'flex',alignItems:'center',gap:11,padding:'11px 4px',border:'none',borderTop:`1px solid ${C.border}`,background:'transparent',color:C.text,textAlign:ar?'right':'left'}}><div style={{width:24,height:24,borderRadius:7,border:`1.5px solid ${done?C.green:C.border}`,background:done?C.green:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{done&&<Check size={15} color={C.onAccent} strokeWidth={3}/>}</div><div style={{flex:1,opacity:done?.65:1}}><div style={{fontWeight:800,fontSize:13.5,textDecoration:done?'line-through':'none'}}>{ar?food.nameAr:food.name}</div><div style={{color:C.sub,fontSize:10.5,marginTop:2}}>{food.quantity}{food.kcal?` · ${food.kcal} kcal · P ${food.protein}g · C ${food.carbs}g · F ${food.fat}g`:''}</div></div></button>})}</Card>})}<div style={{color:C.sub2,fontSize:10.5,textAlign:'center',padding:'8px 12px'}}>{ar?'علّم على كل أكلة أكلتها فعلاً — الحساب بيتحدث تلقائيًا.':'Check only the food you actually ate — your daily totals update automatically.'}</div></div></div>;
 }
 
 function FoodPickerScreen({ data, setData, back, mealId, showToast }) {
@@ -8825,7 +8846,7 @@ function PlansScreen({ data, setData, go, showToast }) {
               const next = clone(data);
               next.customTrainingPlanActive = true;
               next.activePlanId = null;
-              next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);
+              next.activePlanId = null;
               next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);
               setData(next);
               showToast(ar ? "تم تفعيل خطة التدريب المخصصة" : "Personalized training plan activated");
@@ -8890,7 +8911,7 @@ function PlansScreen({ data, setData, go, showToast }) {
         }}
       >
         {Object.values(PLAN_TEMPLATES).map((p) => {
-          const isActive = !customTrainingPlanActive && data.activePlanId === p.id;
+          const isActive = !customTrainingActive && data.activePlanId === p.id;
           const locked = p.pro && !pro;
           return (
             <Card
@@ -9304,6 +9325,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         const personalizedPlan = buildPersonalizedProPlan(next);
         next.proPlan = personalizedPlan;
         next.activePlanId = personalizedPlan.workoutPlanId;
+      next.customTrainingPlanActive = false;
       }
       if (next.entitlements.nutritionPro) {
         const personalizedPlan = buildPersonalizedProPlan(next);
@@ -10932,6 +10954,7 @@ function GoalsScreen({ data, setData, back, showToast }) {
     const next = clone(data);
     next.account.goal = goal;
     if (pro && chosen) next.activePlanId = chosen.planId;
+      next.customTrainingPlanActive = false;
     setData(next);
     showToast(
       pro

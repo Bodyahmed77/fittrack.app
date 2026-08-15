@@ -11,25 +11,15 @@
 //     (ACTIVE or IN_GRACE_PERIOD)
 // A fabricated or arbitrary purchaseToken is rejected by Google's API
 // (404/400) and NO entitlement is written.
-//
-// Known limitation (documented, not hidden): the currently pinned
-// `capacitor-billing@6.0.2` client plugin does not support passing an
-// obfuscated account id into launchBillingFlow, so Google's API cannot by
-// itself prove WHICH app user purchased a token — only that the token is
-// real, unconsumed by a *different* entitlement grant, and for the right
-// product. This function closes that remaining gap at the database layer:
-// a purchase token can only ever be claimed by ONE uid, enforced by a
-// unique constraint (see migration). First verified claim wins; a second
-// user presenting the same real token is rejected. See the audit report
-// for the recommended follow-up (plugin upgrade + setObfuscatedAccountId)
-// to bind purchases to a uid at Google's side too.
 
 import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
+// Canonical Android package for the current Fifty Fit Play listing.
+// Do not fall back to the retired com.fittrack.app package.
 const ANDROID_PACKAGE_NAME =
-  Deno.env.get("ANDROID_PACKAGE_NAME") || "com.fittrack.app";
+  Deno.env.get("ANDROID_PACKAGE_NAME") || "com.bodyahmed77.fiftyfit";
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -38,8 +28,6 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Client-reported product key -> the entitlement row(s) it should grant.
-// "both_pro" is a single Play product that grants two independent rows.
 const PRODUCT_KEY_MAP: Record<
   string,
   ReadonlyArray<"ai_coach_pro" | "training_pro" | "nutrition_pro">
@@ -50,11 +38,6 @@ const PRODUCT_KEY_MAP: Record<
   both_pro: ["training_pro", "nutrition_pro"],
 };
 
-// Play subscription states that mean "the user should have access right now".
-// ON_HOLD / CANCELED (already lapsed) / EXPIRED / PAUSED / PENDING do NOT
-// grant entitlement. A user-cancelled-but-not-yet-expired subscription is
-// still ACTIVE until its expiry — Play keeps reporting ACTIVE for that
-// window, so no special-casing is needed here.
 const ENTITLING_STATES = new Set([
   "SUBSCRIPTION_STATE_ACTIVE",
   "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
@@ -68,7 +51,6 @@ function json(status: number, body: Record<string, unknown>) {
 }
 
 function log(event: string, extra: Record<string, unknown> = {}) {
-  // Never log purchaseToken, service-account keys, or OAuth access tokens.
   try {
     console.log("[VERIFY_PURCHASE]", event, JSON.stringify(extra));
   } catch {
@@ -90,17 +72,6 @@ async function verifyFirebaseIdToken(idToken: string) {
   if (!uid) throw new Error("No uid in token");
   return String(uid);
 }
-
-// ============================================================
-// Google Play Developer API access via a service account.
-// Deno Edge Functions have no Google Cloud SDK, so this signs the
-// service-account JWT assertion by hand (RS256, using `jose`, already a
-// project dependency) and exchanges it for a short-lived OAuth access
-// token via Google's token endpoint. Nothing here is cached across
-// invocations by design — each verification gets a fresh token; the
-// alternative (caching across warm isolates) is a minor cost optimization
-// not worth the added complexity for this volume.
-// ============================================================
 
 type ServiceAccountKey = {
   client_email: string;
@@ -132,8 +103,6 @@ function loadServiceAccountKey(): ServiceAccountKey | null {
 }
 
 async function getPlayAccessToken(key: ServiceAccountKey): Promise<string> {
-  // Google service-account PEM keys are PKCS#8. jose needs a CryptoKey,
-  // not the raw PEM string.
   const pem = key.private_key
     .replace(/-----BEGIN PRIVATE KEY-----/, "")
     .replace(/-----END PRIVATE KEY-----/, "")
@@ -170,11 +139,7 @@ async function getPlayAccessToken(key: ServiceAccountKey): Promise<string> {
     },
   );
 
-  if (!tokenRes.ok) {
-    // Never log the response body — Google's OAuth error payloads can
-    // occasionally echo back parts of the request.
-    throw new Error(`oauth_token_exchange_failed_${tokenRes.status}`);
-  }
+  if (!tokenRes.ok) throw new Error(`oauth_token_exchange_failed_${tokenRes.status}`);
   const tokenData = await tokenRes.json();
   const accessToken = tokenData?.access_token;
   if (!accessToken || typeof accessToken !== "string") {
@@ -187,13 +152,9 @@ type PlayVerifyResult =
   | { ok: true; state: string; lineItemProductIds: string[]; expiryTime: string | null }
   | { ok: false; reason: "not_found" | "provider_error" | "config_missing" };
 
-async function verifyWithGooglePlay(
-  purchaseToken: string,
-): Promise<PlayVerifyResult> {
+async function verifyWithGooglePlay(purchaseToken: string): Promise<PlayVerifyResult> {
   const key = loadServiceAccountKey();
-  if (!key) {
-    return { ok: false, reason: "config_missing" };
-  }
+  if (!key) return { ok: false, reason: "config_missing" };
 
   let accessToken: string;
   try {
@@ -212,9 +173,7 @@ async function verifyWithGooglePlay(
 
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   } catch (e) {
     log("play_api_network_error", {
       detail: String((e as Error)?.message || e).slice(0, 80),
@@ -223,8 +182,6 @@ async function verifyWithGooglePlay(
   }
 
   if (res.status === 404 || res.status === 400) {
-    // Google does not recognize this token for this package — this is the
-    // exact case a fabricated/arbitrary token must land in.
     log("play_token_not_found", { status: res.status });
     return { ok: false, reason: "not_found" };
   }
@@ -240,27 +197,19 @@ async function verifyWithGooglePlay(
     .map((li: { productId?: string }) => String(li?.productId || ""))
     .filter(Boolean);
   const expiryTime =
-    typeof lineItems?.[0]?.expiryTime === "string"
-      ? lineItems[0].expiryTime
-      : null;
+    typeof lineItems?.[0]?.expiryTime === "string" ? lineItems[0].expiryTime : null;
 
   return { ok: true, state, lineItemProductIds, expiryTime };
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-  if (req.method !== "POST") {
-    return json(405, { error: "method_not_allowed" });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json(405, { error: "method_not_allowed" });
 
-  // ---- Auth: Firebase ID token from Authorization header.
   const authHeader = req.headers.get("Authorization") || "";
   const m = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!m) {
-    return json(401, { error: "unauthenticated", message: "Missing Bearer token" });
-  }
+  if (!m) return json(401, { error: "unauthenticated", message: "Missing Bearer token" });
+
   let uid: string;
   try {
     uid = await verifyFirebaseIdToken(m[1].trim());
@@ -275,34 +224,22 @@ Deno.serve(async (req) => {
     body = {};
   }
 
-  // ---- Validate the shape of the reported purchase (not proof of anything
-  // yet — just enough to know what to ask Google about).
   const productId = typeof body.productId === "string" ? body.productId.trim() : "";
-  const purchaseToken =
-    typeof body.purchaseToken === "string" ? body.purchaseToken.trim() : "";
-
+  const purchaseToken = typeof body.purchaseToken === "string" ? body.purchaseToken.trim() : "";
   if (!productId || !purchaseToken) {
     return json(400, { error: "bad_request", message: "productId and purchaseToken are required" });
   }
+
   const grantedKeys = PRODUCT_KEY_MAP[productId];
-  if (!grantedKeys) {
-    return json(400, { error: "bad_request", message: "Unknown product" });
-  }
+  if (!grantedKeys) return json(400, { error: "bad_request", message: "Unknown product" });
 
-  // ---- REAL verification against the Google Play Developer API.
-  // Nothing below writes an entitlement until this returns ok:true with a
-  // matching product and an entitling subscription state.
   const verification = await verifyWithGooglePlay(purchaseToken);
-
   if (!verification.ok) {
     if (verification.reason === "config_missing") {
-      // Explicit, loud failure — this must never silently fall back to
-      // trusting the client. See required Supabase secret in the audit doc.
       log("verification_unavailable_missing_config", {});
       return json(503, {
         error: "verification_unavailable",
-        message:
-          "Purchase verification is not configured on the server. No entitlement was granted.",
+        message: "Purchase verification is not configured on the server. No entitlement was granted.",
       });
     }
     if (verification.reason === "not_found") {
@@ -319,8 +256,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  // ---- The token is real. Now confirm it is for the product being
-  // claimed and that Play still considers it entitling.
   const productMatches = verification.lineItemProductIds.includes(productId);
   if (!productMatches) {
     log("purchase_rejected_product_mismatch", {
@@ -343,7 +278,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  // ---- Genuinely verified. Write the entitlement(s).
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) {
@@ -352,47 +286,31 @@ Deno.serve(async (req) => {
   const sb = createClient(supabaseUrl, serviceKey);
 
   try {
-    // Atomic claim + grant in one DB transaction (see migration
-    // claim_and_grant_entitlements). If any entitlement write fails, the
-    // token claim is rolled back too — no orphaned claims, no partial
-    // both_pro grants.
-    const expiresAt = verification.expiryTime; // null for non-expiring/lifetime-style; present for subs
-    const { data: grant, error: grantErr } = await sb.rpc(
-      "claim_and_grant_entitlements",
-      {
-        p_uid: uid,
-        p_purchase_token: purchaseToken,
-        p_product_keys: [...grantedKeys],
-        p_expires_at: expiresAt,
-      },
-    );
+    const expiresAt = verification.expiryTime;
+    const { data: grant, error: grantErr } = await sb.rpc("claim_and_grant_entitlements", {
+      p_uid: uid,
+      p_purchase_token: purchaseToken,
+      p_product_keys: [...grantedKeys],
+      p_expires_at: expiresAt,
+    });
     if (grantErr) {
       log("claim_and_grant_failed", { uid, code: grantErr.code });
-      return json(500, {
-        error: "entitlement_write_failed",
-        message: "Could not activate subscription",
-      });
+      return json(500, { error: "entitlement_write_failed", message: "Could not activate subscription" });
     }
+
     const grantRow = (grant || {}) as {
       ok?: boolean;
-      claimed?: boolean;
-      error?: string;
       activated?: string[];
     };
     if (!grantRow.ok) {
-      // Token already claimed by a DIFFERENT uid — reject, do not grant.
       log("token_already_claimed_by_other_uid", { uid, productId });
       return json(409, {
         error: "purchase_already_claimed",
-        message:
-          "This purchase has already been activated on a different account.",
+        message: "This purchase has already been activated on a different account.",
       });
     }
 
-    const activated = Array.isArray(grantRow.activated)
-      ? grantRow.activated
-      : [...grantedKeys];
-
+    const activated = Array.isArray(grantRow.activated) ? grantRow.activated : [...grantedKeys];
     log("purchase_verified_and_granted", {
       uid,
       productId,

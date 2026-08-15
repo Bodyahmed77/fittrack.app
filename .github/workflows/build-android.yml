@@ -115,6 +115,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
           root=Path('android')
           rb=root/'build.gradle'
           ab=root/'app'/'build.gradle'
@@ -137,13 +138,28 @@ jobs:
           text=vg.read_text(encoding='utf-8')
           if 'rgcfaIncludeGoogle' not in text:
               if 'ext {' in text:
-                  text=text.replace('ext {', "ext {\n    rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = '1.3.0'", 1)
+                  text=text.replace('ext {', "ext {\n    rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = '1.3.0'\n    androidxCredentialsPlayServicesAuthVersion = '1.3.0'\n    librariesIdentityGoogleidVersion = '1.1.1'", 1)
               else:
-                  text += "\next.rgcfaIncludeGoogle = true\next.androidxCredentialsVersion = '1.3.0'\n"
+                  text += "\next.rgcfaIncludeGoogle = true\next.androidxCredentialsVersion = '1.3.0'\next.androidxCredentialsPlayServicesAuthVersion = '1.3.0'\next.librariesIdentityGoogleidVersion = '1.1.1'\n"
           else:
               text=text.replace("rgcfaIncludeGoogle = false", "rgcfaIncludeGoogle = true")
           if 'androidxCredentialsVersion' not in text:
               text=text.replace('rgcfaIncludeGoogle = true', "rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = '1.3.0'", 1)
+          # androidx.credentials:credentials and androidx.credentials:credentials-play-services-auth
+          # are released in lockstep by Google and are documented to require the identical version.
+          # A skewed pair (e.g. credentials 1.3.0 with credentials-play-services-auth left at the
+          # plugin's default 1.2.0-rc01) compiles and links fine, and is the most likely — but not
+          # yet runtime-confirmed — explanation for Credential Manager silently failing to register
+          # a provider (the "no_credentials" symptom). Pin them to the same version regardless, since
+          # this matches Google's documented requirement independent of whether it is the sole cause.
+          if 'androidxCredentialsPlayServicesAuthVersion' not in text:
+              text=text.replace("androidxCredentialsVersion = '1.3.0'", "androidxCredentialsVersion = '1.3.0'\n    androidxCredentialsPlayServicesAuthVersion = '1.3.0'", 1)
+          else:
+              text=re.sub(r"androidxCredentialsPlayServicesAuthVersion\s*=\s*'[^']*'", "androidxCredentialsPlayServicesAuthVersion = '1.3.0'", text)
+          if 'librariesIdentityGoogleidVersion' not in text:
+              text=text.replace("androidxCredentialsPlayServicesAuthVersion = '1.3.0'", "androidxCredentialsPlayServicesAuthVersion = '1.3.0'\n    librariesIdentityGoogleidVersion = '1.1.1'", 1)
+          else:
+              text=re.sub(r"librariesIdentityGoogleidVersion\s*=\s*'[^']*'", "librariesIdentityGoogleidVersion = '1.1.1'", text)
           vg.write_text(text,encoding='utf-8')
           print('Firebase Authentication Google native dependencies enabled')
           PY
@@ -199,13 +215,24 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          grep -n "targetSdkVersion\|compileSdkVersion\|rgcfaIncludeGoogle\|androidxCredentialsVersion" variables.gradle
+          grep -n "targetSdkVersion\|compileSdkVersion\|rgcfaIncludeGoogle\|androidxCredentialsVersion\|androidxCredentialsPlayServicesAuthVersion\|librariesIdentityGoogleidVersion" variables.gradle
           grep -n "namespace\|applicationId\|versionCode\|versionName" app/build.gradle
           test "$(grep -o 'applicationId "[^"]*"' app/build.gradle | head -n1 | cut -d'"' -f2)" = "com.bodyahmed77.fiftyfit"
           test "$(grep -o 'namespace "[^"]*"' app/build.gradle | head -n1 | cut -d'"' -f2)" = "com.bodyahmed77.fiftyfit"
           test -s app/src/main/assets/public/index.html
           test -s app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewPlugin.java
           test -s app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java
+          # androidx.credentials:credentials and androidx.credentials:credentials-play-services-auth
+          # are documented by Google to always ship in lockstep at the identical version. A skewed
+          # pair silently breaks Credential Manager provider registration at runtime without failing
+          # the build, and is the strongest current explanation for Google Sign-In "no_credentials" —
+          # pending confirmation against a real device/Play release, not yet proven from source alone.
+          creds_ver="$(grep -o "androidxCredentialsVersion = '[^']*'" variables.gradle | head -n1 | cut -d"'" -f2)"
+          creds_psa_ver="$(grep -o "androidxCredentialsPlayServicesAuthVersion = '[^']*'" variables.gradle | head -n1 | cut -d"'" -f2)"
+          test -n "$creds_ver"
+          test -n "$creds_psa_ver"
+          test "$creds_ver" = "$creds_psa_ver"
+          echo "androidx.credentials version pair OK: credentials=$creds_ver credentials-play-services-auth=$creds_psa_ver"
 
       - name: Verify release artifacts will use identical web assets
         working-directory: android

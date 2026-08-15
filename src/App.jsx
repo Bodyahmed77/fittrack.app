@@ -4793,7 +4793,7 @@ function GeneratingPlan({ steps, activeIdx }) {
 function OnboardingScreen({ data, setData, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => ((data.account.phone || "").trim() ? 1 : 0));
   const [phone, setPhone] = useState(data.account.phone || "");
   const [gender, setGender] = useState("");
   const [age, setAge] = useState("");
@@ -4834,7 +4834,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
     : ["Phone", "Gender", "Age", "Height", "Weight", "Goal", "Activity", "Schedule"];
   const total = steps.length;
 
-  const next = () => {
+  const next = async () => {
     setErr("");
     if (step === 0 && (!phone.trim() || phone.trim().replace(/\D/g, "").length < 8)) {
       setErr(ar ? "اكتب رقم تليفون صحيح" : "Enter a valid phone number");
@@ -4861,14 +4861,14 @@ function OnboardingScreen({ data, setData, go, showToast }) {
       return;
     }
     if (step < total - 1) setStep(step + 1);
-    else finish();
+    else await finish();
   };
   const prev = () => {
     setErr("");
     if (step > 0) setStep(step - 1);
   };
 
-  const finish = () => {
+  const finish = async () => {
     const next = clone(data);
     next.account = {
       ...next.account,
@@ -4900,7 +4900,11 @@ function OnboardingScreen({ data, setData, go, showToast }) {
         fat: tdeeResult.fat,
       };
     next.onboarded = true;
-    setData(next);
+    const saved = await setData(next);
+    if (!saved) {
+      setErr(ar ? "تعذر حفظ بياناتك — تحقق من الإنترنت وحاول مرة تانية" : "Couldn’t save your profile — check your connection and try again");
+      return;
+    }
     setGenerating(true);
   };
 
@@ -12381,10 +12385,12 @@ function AdminScreen({ back, showToast }) {
         expires.setDate(expires.getDate() + 30);
         next.entitlements.trainingPro = true;
         next.entitlements.nutritionPro = true;
+        next.entitlements.aiCoachPro = true;
         next.entitlements.proExpiresAt = expires.toISOString().slice(0, 10);
       } else {
         next.entitlements.trainingPro = false;
         next.entitlements.nutritionPro = false;
+        next.entitlements.aiCoachPro = false;
         next.entitlements.proExpiresAt = null;
       }
       await setDoc(result.ref, next);

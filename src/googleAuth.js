@@ -293,6 +293,11 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     result?.credential?.idToken ||
     result?.credential?.id_token ||
     result?.idToken;
+  const accessToken =
+    result?.credential?.accessToken ||
+    result?.credential?.access_token ||
+    result?.accessToken ||
+    null;
 
   if (!idToken) {
     const err = new Error("Could not get a Google ID token from native sign-in");
@@ -300,8 +305,20 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     throw err;
   }
 
-  const credential = GoogleAuthProvider.credential(idToken);
-  const userCred = await signInWithCredential(auth, credential);
+  const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+
+  let userCred;
+  try {
+    userCred = await signInWithCredential(auth, credential);
+  } catch (firebaseError) {
+    const mapped = mapAuthError(firebaseError);
+    mapped.firebaseAuthCode = String(
+      firebaseError?.code || firebaseError?.errorCode || "",
+    );
+    mapped.firebaseAuthMessage = String(firebaseError?.message || firebaseError || "");
+    mapped.message = `Google Sign-In failed after account selection [${mapped.firebaseAuthCode || "unknown"}]: ${mapped.firebaseAuthMessage}`;
+    throw mapped;
+  }
 
   try {
     await ensureUserDoc(userCred, localLang, createInitialState);
@@ -365,12 +382,17 @@ export async function reauthenticateWithGoogleFlow(user) {
         result?.credential?.idToken ||
         result?.credential?.id_token ||
         result?.idToken;
+      const accessToken =
+        result?.credential?.accessToken ||
+        result?.credential?.access_token ||
+        result?.accessToken ||
+        null;
       if (!idToken) {
         const err = new Error("Could not get Google credential for reauth");
         err.code = "no_id_token";
         throw err;
       }
-      const credential = GoogleAuthProvider.credential(idToken);
+      const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
       return reauthenticateWithCredential(user, credential);
     }
 

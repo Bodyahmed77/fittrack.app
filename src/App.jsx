@@ -11095,6 +11095,18 @@ function NotificationsScreen({ back, onOpen }) {
     } catch {}
   };
 
+  const clearAllNotifications = async () => {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !rows.length) return;
+    try {
+      await Promise.all(
+        rows.map((notification) =>
+          deleteDoc(doc(db, "users", uid, "notifications", notification.id)),
+        ),
+      );
+    } catch {}
+  };
+
   const openNotification = async (notification) => {
     await markRead(notification);
     const target = notification?.route?.screen || notification?.screen;
@@ -11108,6 +11120,30 @@ function NotificationsScreen({ back, onOpen }) {
   return (
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "الإشعارات" : "Notifications"} onBack={back} />
+      <div style={{ padding: "0 18px", marginTop: -2, marginBottom: 2, display: "flex", justifyContent: ar ? "flex-start" : "flex-start" }}>
+        <button
+          type="button"
+          onClick={clearAllNotifications}
+          disabled={!rows.length}
+          style={{
+            border: `1px solid ${C.border}`,
+            background: "transparent",
+            color: rows.length ? C.danger : C.sub2,
+            borderRadius: 10,
+            padding: "7px 10px",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: rows.length ? "pointer" : "default",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            opacity: rows.length ? 1 : 0.55,
+          }}
+        >
+          <Trash2 size={14} />
+          {ar ? "مسح جميع الإشعارات" : "Clear all notifications"}
+        </button>
+      </div>
       <div style={{ padding: "0 18px 24px", display: "flex", flexDirection: "column", gap: 10 }}>
         {loading ? (
           <Card style={{ textAlign: "center", padding: 34, color: C.sub }}>{ar ? "جاري تحميل الإشعارات…" : "Loading notifications…"}</Card>

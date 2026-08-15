@@ -132,7 +132,16 @@ function normalizeSkuDetails(result) {
   if (result.productDetails && typeof result.productDetails === "object") {
     return result.productDetails;
   }
-  return result;
+  if (Array.isArray(result.productDetailsList) && result.productDetailsList.length) {
+    return result.productDetailsList[0];
+  }
+  if (Array.isArray(result.productDetails) && result.productDetails.length) {
+    return result.productDetails[0];
+  }
+  if (Array.isArray(result)) {
+    return result[0] || null;
+  }
+  return null;
 }
 
 function localizedDisplayPrice(details) {
@@ -142,11 +151,33 @@ function localizedDisplayPrice(details) {
     details.localizedPrice,
     details.priceString,
     details.displayPrice,
+    details.price,
   ];
   for (const candidate of candidates) {
     if (candidate != null && String(candidate).trim()) return String(candidate).trim();
   }
-  return details.price != null ? String(details.price).trim() : null;
+  return null;
+}
+
+async function queryModernProductDetailsForProduct(billing, productId) {
+  if (!billing || typeof billing.queryProductDetails !== "function") return null;
+  const result = await billing.queryProductDetails({
+    product: productId,
+    type: "SUBS",
+  });
+  const details = normalizeSkuDetails(result);
+  if (!details) return null;
+  return {
+    ...details,
+    productId: details.productId || details.sku || details.id || productId,
+    formattedPrice: localizedDisplayPrice(details),
+    priceCurrencyCode:
+      details.priceCurrencyCode ||
+      details.price_currency_code ||
+      details.currencyCode ||
+      null,
+    source: "productDetails",
+  };
 }
 
 async function querySkuDetailsForProduct(billing, productId) {
@@ -169,7 +200,25 @@ async function querySkuDetailsForProduct(billing, productId) {
     ...details,
     productId: details.productId || details.sku || details.id || productId,
     formattedPrice: localizedDisplayPrice(details),
+    priceCurrencyCode:
+      details.priceCurrencyCode ||
+      details.price_currency_code ||
+      details.currencyCode ||
+      null,
+    source: "skuDetails",
   };
+}
+
+async function queryAnyProductDetails(billing, productId) {
+  if (typeof billing?.queryProductDetails === "function") {
+    try {
+      const modern = await queryModernProductDetailsForProduct(billing, productId);
+      if (modern) return modern;
+    } catch (e) {
+      console.warn("[Billing] queryProductDetails failed", productId, e);
+    }
+  }
+  return querySkuDetailsForProduct(billing, productId);
 }
 
 export async function queryProducts() {
@@ -195,13 +244,21 @@ export async function queryProducts() {
 
     for (const id of ids) {
       try {
-        const details = await querySkuDetailsForProduct(billing, id);
-        if (details) {
+        const details = await queryAnyProductDetails(billing, id);
+        if (details && localizedDisplayPrice(details)) {
           products.push(details);
+        } else if (details) {
+          unfetched.push({
+            productId: id,
+            statusCode: "PRICE_MISSING",
+            message: "Google Play returned product details without a localized price",
+            priceCurrencyCode: details.priceCurrencyCode || null,
+          });
         } else {
           unfetched.push({
             productId: id,
-            message: "querySkuDetails returned no product details",
+            statusCode: "NO_PRODUCT_DETAILS",
+            message: "Google Play returned no product details for this subscription",
           });
         }
       } catch (e) {
@@ -214,9 +271,29 @@ export async function queryProducts() {
       }
     }
 
-    // Google Play's localized/formatted value is the only source used for
-    // displayed subscription prices. Never infer currency from app language.
+    // Never infer currency from language/region. Only localized Play prices
+    // are written into the paywall catalog.
     setPlayStorePricing(products);
+
+    if (typeof window !== "undefined") {
+      try {
+        window.__fiftyFitBillingDiagnostics = {
+          productCount: products.length,
+          unfetched,
+          firstProduct: products[0]
+            ? {
+                productId: products[0].productId,
+                formattedPrice: products[0].formattedPrice,
+                priceCurrencyCode: products[0].priceCurrencyCode || null,
+                source: products[0].source || null,
+              }
+            : null,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {
+        /* ignore */
+      }
+    }
 
     return {
       preview: false,
@@ -224,10 +301,23 @@ export async function queryProducts() {
       unfetched,
     };
   } catch (e) {
+    const error = billingError(e, "billing_query_failed");
+    if (typeof window !== "undefined") {
+      try {
+        window.__fiftyFitBillingDiagnostics = {
+          productCount: 0,
+          unfetched: [],
+          error: { code: error.code, message: error.message },
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {
+        /* ignore */
+      }
+    }
     return {
       preview: false,
       products: [],
-      error: billingError(e, "billing_query_failed"),
+      error,
     };
   }
 }
@@ -268,6 +358,21 @@ export async function purchase(planId, durationId) {
 
   try {
     await ensureBillingConnection(billing);
+
+    // Refresh the exact selected product before launching purchase. This also
+    // guarantees the UI and purchase path are using the same Play catalog.
+    try {
+      const selected = await queryAnyProductDetails(billing, productId);
+      if (!selected || !localizedDisplayPrice(selected)) {
+        const err = new Error(
+          `Google Play did not return an available localized product for ${productId}`,
+        );
+        err.code = "product_unavailable";
+        throw err;
+      }
+    } catch (queryError) {
+      throw billingError(queryError, "product_unavailable");
+    }
 
     const result = await billing.launchBillingFlow({
       product: productId,

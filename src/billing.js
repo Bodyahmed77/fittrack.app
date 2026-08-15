@@ -1,9 +1,8 @@
 // ============================================================
 // Google Play Billing Wrapper (capacitor-billing)
 // ============================================================
-// Defensive production wrapper around Google Play Billing.
-// The native billing plugin is the only source of purchase state.
-// Server verification happens separately in registerPurchase.js.
+// Native Google Play Billing is the source of purchase state.
+// Product IDs and prices come from Google Play at runtime.
 
 import { BILLING_PRODUCTS } from "./config";
 
@@ -26,12 +25,14 @@ async function getPlugin() {
 async function ensureBillingConnection(billing) {
   if (!billing || typeof billing.startConnection !== "function") return;
   if (billingConnected) return;
+
   try {
     const result = await billing.startConnection();
     const responseCode =
       result?.responseCode ??
       result?.billingResponseCode ??
       result?.response?.responseCode;
+
     if (responseCode != null && String(responseCode) !== "0") {
       throw billingError(
         {
@@ -41,6 +42,7 @@ async function ensureBillingConnection(billing) {
         "billing_connection_failed",
       );
     }
+
     billingConnected = true;
   } catch (e) {
     billingConnected = false;
@@ -74,15 +76,8 @@ export function allProductIds() {
 function purchaseProducts(purchase) {
   const products = purchase?.products || purchase?.productIds;
   if (Array.isArray(products)) return products.filter(Boolean);
-  const product = purchase?.productId || purchase?.product;
+  const product = purchase?.productId || purchase?.product || purchase?.sku;
   return product ? [product] : [];
-}
-
-function isPurchased(purchase) {
-  if (!purchase || typeof purchase !== "object") return false;
-  const state = purchase.purchaseState ?? purchase.purchase?.purchaseState;
-  const token = extractPurchaseToken(purchase);
-  return (state === 1 || state === "1") && !!token;
 }
 
 function extractPurchaseToken(purchase) {
@@ -95,6 +90,16 @@ function extractPurchaseToken(purchase) {
     purchase.result?.purchaseToken ||
     purchase.result?.purchase?.purchaseToken;
   return typeof token === "string" && token ? token : null;
+}
+
+function isPurchased(purchase) {
+  if (!purchase || typeof purchase !== "object") return false;
+  const token = extractPurchaseToken(purchase);
+  if (!token) return false;
+
+  const state = purchase.purchaseState ?? purchase.purchase?.purchaseState;
+  if (state == null) return true;
+  return state === 1 || state === "1";
 }
 
 function billingError(e, fallbackCode = "billing_error") {
@@ -120,51 +125,41 @@ function billingError(e, fallbackCode = "billing_error") {
   return err;
 }
 
-function normalizeProductList(result) {
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result?.products)) return result.products;
-  if (Array.isArray(result?.list)) return result.list;
-  if (Array.isArray(result?.productDetails)) return result.productDetails;
-  return [];
+function normalizeSkuDetails(result) {
+  if (!result || typeof result !== "object") return null;
+  if (result.value === "web") return result;
+  if (result.productId || result.sku || result.id || result.price) return result;
+  if (result.productDetails && typeof result.productDetails === "object") {
+    return result.productDetails;
+  }
+  return result;
 }
 
-function productMatches(product, productId) {
-  const ids = [
-    product?.productId,
-    product?.product,
-    product?.sku,
-    product?.id,
-  ].filter(Boolean);
-  return ids.includes(productId);
+function skuMatches(details, productId) {
+  if (!details || typeof details !== "object") return false;
+  return [details.productId, details.product, details.sku, details.id]
+    .filter(Boolean)
+    .includes(productId);
 }
 
-function extractOfferToken(product) {
-  const candidates = [
-    ...(Array.isArray(product?.subscriptionOfferDetails)
-      ? product.subscriptionOfferDetails
-      : []),
-    ...(Array.isArray(product?.subscriptionOffers) ? product.subscriptionOffers : []),
-    ...(Array.isArray(product?.offers) ? product.offers : []),
-    ...(Array.isArray(product?.basePlanOffers) ? product.basePlanOffers : []),
-  ];
-
-  for (const offer of candidates) {
-    const token =
-      offer?.offerToken ||
-      offer?.offer_token ||
-      offer?.token ||
-      offer?.offer?.offerToken ||
-      offer?.offer?.offer_token;
-    if (typeof token === "string" && token) return token;
+/**
+ * capacitor-billing 8.x exposes the Android catalog through querySkuDetails
+ * with ONE product id per call. Keep this wrapper aligned with that public API.
+ */
+async function querySkuDetailsForProduct(billing, productId) {
+  if (!billing || typeof billing.querySkuDetails !== "function") {
+    throw Object.assign(
+      new Error("capacitor-billing querySkuDetails is unavailable"),
+      { code: "billing_query_unsupported" },
+    );
   }
 
-  return (
-    product?.offerToken ||
-    product?.offer_token ||
-    product?.basePlanOfferToken ||
-    product?.base_plan_offer_token ||
-    null
-  );
+  const result = await billing.querySkuDetails({
+    product: productId,
+    type: "SUBS",
+  });
+
+  return normalizeSkuDetails(result);
 }
 
 export async function queryProducts() {
@@ -185,31 +180,41 @@ export async function queryProducts() {
   try {
     await ensureBillingConnection(billing);
 
-    let result = null;
-    if (typeof billing.queryProductDetails === "function") {
-      result = await billing.queryProductDetails({ products: ids, type: "SUBS" });
-    } else if (typeof billing.querySkuDetails === "function") {
-      result = await billing.querySkuDetails({ product: ids, type: "SUBS" });
-    } else {
-      return {
-        preview: false,
-        products: [],
-        unsupported: true,
-        error: Object.assign(
-          new Error("Google Play product query is unavailable in this billing build"),
-          { code: "billing_query_unsupported" },
-        ),
-      };
+    const products = [];
+    const unfetched = [];
+
+    for (const id of ids) {
+      try {
+        const details = await querySkuDetailsForProduct(billing, id);
+        if (details) {
+          products.push(details);
+        } else {
+          unfetched.push({
+            productId: id,
+            message: "querySkuDetails returned no product details",
+          });
+        }
+      } catch (e) {
+        unfetched.push({
+          productId: id,
+          statusCode:
+            e?.responseCode ?? e?.billingResponseCode ?? e?.code ?? "query_failed",
+          message: e?.message || String(e),
+        });
+      }
     }
 
-    const list = normalizeProductList(result);
     return {
       preview: false,
-      products: list,
-      unfetched: result?.unfetchedProducts || result?.unfetched || [],
+      products,
+      unfetched,
     };
   } catch (e) {
-    return { preview: false, products: [], error: billingError(e, "billing_query_failed") };
+    return {
+      preview: false,
+      products: [],
+      error: billingError(e, "billing_query_failed"),
+    };
   }
 }
 
@@ -229,15 +234,20 @@ export async function purchase(planId, durationId) {
     return {
       success: false,
       preview: false,
-      error: Object.assign(new Error("A Google Play purchase is already in progress"), {
-        code: "billing_busy",
-      }),
+      error: Object.assign(
+        new Error("A Google Play purchase is already in progress"),
+        { code: "billing_busy" },
+      ),
     };
   }
 
   const billing = await getPlugin();
   if (!billing) {
-    return { success: false, preview: true, message: "Billing is unavailable outside Android" };
+    return {
+      success: false,
+      preview: true,
+      message: "Billing is unavailable outside Android",
+    };
   }
 
   purchaseInFlight = true;
@@ -245,46 +255,25 @@ export async function purchase(planId, durationId) {
   try {
     await ensureBillingConnection(billing);
 
-    let offerToken = null;
-    if (typeof billing.queryProductDetails === "function" || typeof billing.querySkuDetails === "function") {
-      const catalog = await queryProducts();
-      if (catalog?.error) {
-        return { success: false, preview: false, error: catalog.error };
-      }
-      const list = Array.isArray(catalog?.products) ? catalog.products : [];
-      const product = list.find((p) => productMatches(p, productId));
-
-      if (!product) {
-        const unfetched = Array.isArray(catalog?.unfetched) ? catalog.unfetched : [];
-        const detail = unfetched.find(
-          (p) =>
-            p?.productId === productId ||
-            p?.product === productId ||
-            p?.id === productId,
-        );
-        const reason =
-          detail?.statusCode ??
-          detail?.billingResponseCode ??
-          detail?.responseCode ??
-          detail?.message ??
-          "product_not_returned_by_google_play";
-        return {
-          success: false,
-          preview: false,
-          error: Object.assign(
-            new Error(`Google Play product unavailable: ${productId} (${reason})`),
-            { code: "product_unavailable", productId, reason },
-          ),
-        };
-      }
-
-      offerToken = extractOfferToken(product);
+    const details = await querySkuDetailsForProduct(billing, productId);
+    if (!skuMatches(details, productId) && details?.value !== "web") {
+      return {
+        success: false,
+        preview: false,
+        error: Object.assign(
+          new Error(`Google Play product unavailable: ${productId}`),
+          { code: "product_unavailable", productId },
+        ),
+      };
     }
 
-    const launchArgs = { product: productId, type: "SUBS" };
-    if (offerToken) launchArgs.offerToken = offerToken;
-
-    const result = await billing.launchBillingFlow(launchArgs);
+    // capacitor-billing 8.1.0 documents launchBillingFlow with the product
+    // id and product type. The plugin handles the Android subscription offer
+    // internally for this SKU/base-plan setup.
+    const result = await billing.launchBillingFlow({
+      product: productId,
+      type: "SUBS",
+    });
 
     const responseCode =
       result?.responseCode ??
@@ -305,27 +294,21 @@ export async function purchase(planId, durationId) {
       };
     }
 
-    if (!isPurchased(result)) {
+    const token = extractPurchaseToken(result);
+    if (!token) {
       return {
         success: false,
         preview: false,
         pending: !!result?.pending,
         cancelled: !!result?.cancelled || !!result?.canceled,
         error: Object.assign(
-          new Error("Google Play purchase was not completed"),
-          { code: result?.pending ? "purchase_pending" : "purchase_not_completed" },
+          new Error("Google Play did not return a purchase token"),
+          {
+            code: result?.pending
+              ? "purchase_pending"
+              : "purchase_not_completed",
+          },
         ),
-      };
-    }
-
-    const token = extractPurchaseToken(result);
-    if (!token) {
-      return {
-        success: false,
-        preview: false,
-        error: Object.assign(new Error("Google Play purchase token is missing"), {
-          code: "purchase_token_missing",
-        }),
       };
     }
 
@@ -333,13 +316,21 @@ export async function purchase(planId, durationId) {
       try {
         await billing.sendAck({ purchaseToken: token });
       } catch (ackErr) {
-        return { success: false, preview: false, error: billingError(ackErr, "ack_failed") };
+        return {
+          success: false,
+          preview: false,
+          error: billingError(ackErr, "ack_failed"),
+        };
       }
     } else if (typeof billing.acknowledgePurchase === "function") {
       try {
         await billing.acknowledgePurchase({ purchaseToken: token });
       } catch (ackErr) {
-        return { success: false, preview: false, error: billingError(ackErr, "ack_failed") };
+        return {
+          success: false,
+          preview: false,
+          error: billingError(ackErr, "ack_failed"),
+        };
       }
     } else {
       return {
@@ -401,7 +392,10 @@ export async function restorePurchases() {
       };
     }
 
-    const activePurchases = (Array.isArray(purchases) ? purchases : []).filter(isPurchased);
+    const activePurchases = (Array.isArray(purchases) ? purchases : []).filter(
+      isPurchased,
+    );
+
     const idToPlan = {};
     Object.entries(BILLING_PRODUCTS || {}).forEach(([plan, entry]) => {
       if (typeof entry === "string") {

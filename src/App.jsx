@@ -2577,6 +2577,7 @@ function freshState() {
     // External admin-managed plans. These remain separate from billing entitlements;
     // Firestore rules allow only authorized admins to publish them.
     customTrainingPlan: null,
+    customTrainingPlanActive: false,
     customNutritionPlan: null,
   };
 }
@@ -2626,6 +2627,7 @@ function useAppData(uid) {
           },
           customPlan: parsed.customPlan || {},
           customTrainingPlan: parsed.customTrainingPlan || null,
+          customTrainingPlanActive: parsed.customTrainingPlanActive !== false,
           customNutritionPlan: parsed.customNutritionPlan || null,
         };
         setDataRaw(merged);
@@ -2704,12 +2706,17 @@ function useAppData(uid) {
   return { data, setData, setVerifiedEntitlements, loaded, notifications };
 }
 
+function isCustomTrainingPlanActive(data) {
+  return !!data?.customTrainingPlan && data.customTrainingPlanActive !== false;
+}
+
 /* ============================== EXERCISE MERGE HELPERS ============================== */
 function getMergedExercises(data, day) {
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const customTrainingDay =
-    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];
+  const customTrainingDay = isCustomTrainingPlanActive(data)
+    ? data.customTrainingPlan?.days?.[DAYS.indexOf(day)]
+    : null;
   const base = customTrainingDay
     ? (customTrainingDay.exercises || []).map((e) => ({
         ...EX[e.id],
@@ -2730,8 +2737,9 @@ function getUsableExercises(data, day) {
   // Otherwise use the selected built-in plan and preserve the existing free cap.
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const customTrainingDay =
-    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];
+  const customTrainingDay = isCustomTrainingPlanActive(data)
+    ? data.customTrainingPlan?.days?.[DAYS.indexOf(day)]
+    : null;
   const base = customTrainingDay
     ? (customTrainingDay.exercises || []).map((e) => ({
         ...EX[e.id],
@@ -5950,8 +5958,9 @@ function WorkoutScreen({
   const ar = lang === "ar";
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const assignedCustomDay =
-    data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)];
+  const assignedCustomDay = isCustomTrainingPlanActive(data)
+    ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]
+    : null;
   const daySchedule = assignedCustomDay || activePlan.schedule[selectedDay];
   const dayTitle = ar ? daySchedule.titleAr : daySchedule.title;
   const { list: exercises, lockedCount } = getUsableExercises(
@@ -6090,6 +6099,8 @@ function WorkoutScreen({
                   justifyContent: "center",
                   gap: 4,
                   position: "relative",
+                  opacity: 1,
+                  visibility: "visible",
                 }}
               >
                 <span
@@ -8806,13 +8817,23 @@ function PlansScreen({ data, setData, go, showToast }) {
   const { C, lang } = useUI();
   const ar = lang === "ar";
   const pro = data.entitlements.trainingPro;
+  const customTrainingActive = isCustomTrainingPlanActive(data);
   return (
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "الخطط" : "Plans"} />
       {data.customTrainingPlan && (
         <div style={{ padding: "0 18px 10px" }}>
           <Card
-            onClick={() => go("workout")}
+            onClick={() => {
+              if (customTrainingActive) {
+                go("workout");
+                return;
+              }
+              const next = clone(data);
+              next.customTrainingPlanActive = true;
+              setData(next);
+              showToast(ar ? "تم تفعيل خطة التدريب المخصصة" : "Personalized training plan activated");
+            }}
             style={{
               background: C.greenSoft,
               border: `1.5px solid ${C.green}66`,
@@ -8829,7 +8850,7 @@ function PlansScreen({ data, setData, go, showToast }) {
               {ar ? `تبدأ ${data.customTrainingPlan.startDate || dateKey(0)}` : `Starts ${data.customTrainingPlan.startDate || dateKey(0)}`}
             </div>
             <div style={{ color: C.text, fontSize: 11.5, fontWeight: 800, marginTop: 9 }}>
-              {ar ? "فتح خطة التدريب ←" : "Open Training Plan →"}
+              {customTrainingActive ? (ar ? "فتح خطة التدريب ←" : "Open Training Plan →") : (ar ? "استخدم الخطة دي" : "Use This Plan")}
             </div>
           </Card>
         </div>
@@ -8969,6 +8990,7 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const use = () => {
     const next = clone(data);
     next.activePlanId = planId;
+    next.customTrainingPlanActive = false;
     // Switching to a Pro plan starts that plan from Day 1 today.
     if (plan.pro && data.entitlements.trainingPro && !isActive) {
       next.workoutStartDate = dateKey(0);

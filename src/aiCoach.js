@@ -3,6 +3,7 @@
 // ============================================================
 import { AI_COACH_ENDPOINT, FREE_AI_MESSAGES_PER_DAY, PRO_AI_MESSAGES_PER_DAY, SUPABASE_ANON_KEY } from "./config";
 import { auth } from "./firebase";
+import { queryProducts as billingQueryProducts } from "./billing";
 
 let __keyboardPatchPromise = null;
 async function ensureNativeKeyboardResize() {
@@ -35,6 +36,18 @@ async function ensureNativeKeyboardResize() {
   return __keyboardPatchPromise;
 }
 ensureNativeKeyboardResize();
+
+// Load the Play catalog early so the AI Coach limit dialog never falls back to
+// a hard-coded USD/EGP price. Google Play is the only price authority on Android.
+let __playCatalogPromise = null;
+export function ensurePlayCatalogLoaded() {
+  if (__playCatalogPromise) return __playCatalogPromise;
+  __playCatalogPromise = Promise.resolve()
+    .then(() => billingQueryProducts())
+    .catch(() => null);
+  return __playCatalogPromise;
+}
+ensurePlayCatalogLoaded();
 
 export function aiDailyLimit(hasAiPro) {
   return hasAiPro ? PRO_AI_MESSAGES_PER_DAY : FREE_AI_MESSAGES_PER_DAY;
@@ -106,7 +119,6 @@ async function postAiRequest(endpoint, headers, body) {
 }
 
 let __aiCoachInFlight = false;
-
 function localISODateNow() {
   const d = new Date();
   const y = d.getFullYear();
@@ -129,9 +141,6 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
     const user = auth.currentUser;
     if (!user) { const e = new Error("Sign in required"); e.code = "auth_missing"; throw e; }
 
-    // The server quota is keyed by this device's local calendar date. Never
-    // trust a stale React render's date after midnight; calculate it at the
-    // exact moment the request is sent.
     const requestDate = localISODateNow();
     const idToken = await user.getIdToken(true);
     const recent = (messages || []).slice(-6);
@@ -139,13 +148,7 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` };
     const anon = resolveAnonKey();
     if (anon) headers.apikey = anon;
-    const body = {
-      messages: recent,
-      message: lastUser ? String(lastUser.content) : "",
-      lang: lang || "en",
-      localDate: requestDate,
-      context: userContext || {},
-    };
+    const body = { messages: recent, message: lastUser ? String(lastUser.content) : "", lang: lang || "en", localDate: requestDate, context: userContext || {} };
 
     let response = null;
     try {

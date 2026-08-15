@@ -16,8 +16,6 @@ import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const PROJECT_ID = Deno.env.get("FIREBASE_PROJECT_ID") || "fittrack-698fa";
-// Canonical Android package for the current Fifty Fit Play listing.
-// Do not fall back to the retired com.fittrack.app package.
 const ANDROID_PACKAGE_NAME =
   Deno.env.get("ANDROID_PACKAGE_NAME") || "com.bodyahmed77.fiftyfit";
 
@@ -32,10 +30,22 @@ const PRODUCT_KEY_MAP: Record<
   string,
   ReadonlyArray<"ai_coach_pro" | "training_pro" | "nutrition_pro">
 > = {
-  ai_coach_pro: ["ai_coach_pro"],
-  training_pro: ["training_pro"],
-  nutrition_pro: ["nutrition_pro"],
-  both_pro: ["training_pro", "nutrition_pro"],
+  ai_coach_pro_monthly: ["ai_coach_pro"],
+  ai_coach_pro_quarterly: ["ai_coach_pro"],
+  ai_coach_pro_6months: ["ai_coach_pro"],
+  ai_coach_pro_yearly: ["ai_coach_pro"],
+  training_pro_monthly: ["training_pro"],
+  training_pro_quarterly: ["training_pro"],
+  training_pro_6months: ["training_pro"],
+  training_pro_yearly: ["training_pro"],
+  nutrition_pro_monthly: ["nutrition_pro"],
+  nutrition_pro_quarterly: ["nutrition_pro"],
+  nutrition_pro_6months: ["nutrition_pro"],
+  nutrition_pro_yearly: ["nutrition_pro"],
+  both_pro_monthly: ["training_pro", "nutrition_pro"],
+  both_pro_quarterly: ["training_pro", "nutrition_pro"],
+  both_pro_6months: ["training_pro", "nutrition_pro"],
+  both_pro_yearly: ["training_pro", "nutrition_pro"],
 };
 
 const ENTITLING_STATES = new Set([

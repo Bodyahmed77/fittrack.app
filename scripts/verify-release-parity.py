@@ -28,22 +28,29 @@ def source_assets():
         raise SystemExit("release-parity: no web assets found")
     return result
 
+
+def packaged_assets(z, prefix):
+    result = {}
+    for name in z.namelist():
+        if not name.startswith(prefix) or name.endswith("/"):
+            continue
+        key = name[len(prefix):]
+        # Capacitor packages the public directory as a nested assets root in
+        # some Android packaging layouts. Normalize that container-only prefix
+        # without changing real Vite `assets/...` paths.
+        if key.startswith("public/"):
+            key = key[len("public/"):]
+        result[key] = digest_bytes(z.read(name))
+    return result
+
+
 src = source_assets()
 
 with zipfile.ZipFile(APK) as z:
-    apk_assets = {
-        name[len("assets/") :]: digest_bytes(z.read(name))
-        for name in z.namelist()
-        if name.startswith("assets/") and not name.endswith("/")
-    }
+    apk_assets = packaged_assets(z, "assets/")
 
 with zipfile.ZipFile(AAB) as z:
-    base_prefix = "base/assets/"
-    aab_assets = {
-        name[len(base_prefix) :]: digest_bytes(z.read(name))
-        for name in z.namelist()
-        if name.startswith(base_prefix) and not name.endswith("/")
-    }
+    aab_assets = packaged_assets(z, "base/assets/")
 
 missing_apk = sorted(set(src) - set(apk_assets))
 missing_aab = sorted(set(src) - set(aab_assets))

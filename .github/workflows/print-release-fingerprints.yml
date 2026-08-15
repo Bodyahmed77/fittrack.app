@@ -29,6 +29,8 @@ jobs:
           test -n "${KS_B64:-}"
           echo "$KS_B64" | base64 -d > release.keystore
           test -s release.keystore
+          # This workflow reports the CI upload-key fingerprint.
+          # Google Play App Signing uses a separate certificate for distributed APKs.
           keytool -list -v \
             -keystore release.keystore \
             -alias "$KEY_ALIAS" \

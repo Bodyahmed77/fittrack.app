@@ -10,12 +10,8 @@
       * { -webkit-tap-highlight-color: transparent; }
     </style>
     <script>
-      /* Fifty Fit Android runtime guards.
-       * Launch blockers only: AI keyboard placement + exact TikTok URL fallback.
-       */
+      /* Lightweight runtime guard for the AI composer only. */
       (function () {
-        try { window.planIds = ["training", "nutrition", "both", "ai"]; } catch (_) {}
-
         function keyboardInset() {
           try {
             var vv = window.visualViewport;
@@ -41,19 +37,6 @@
           try {
             var inset = keyboardInset();
             var drawer = findAiDrawer();
-            if (!drawer) {
-              var candidates = document.querySelectorAll("div");
-              for (var i = 0; i < candidates.length; i++) {
-                var el = candidates[i];
-                var cs = window.getComputedStyle(el);
-                if (cs.position !== "fixed") continue;
-                if (Number.parseInt(cs.zIndex || "0", 10) < 1000) continue;
-                if (el.querySelector && el.querySelector('textarea[placeholder*="اكتب سؤالك"], textarea[placeholder*="Ask anything"], input[placeholder*="اكتب سؤالك"], input[placeholder*="Ask anything"]')) {
-                  drawer = el;
-                  break;
-                }
-              }
-            }
             if (!drawer) return;
             drawer.style.setProperty("bottom", inset + "px", "important");
             drawer.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
@@ -75,10 +58,6 @@
             setTimeout(syncAiDrawer, 140);
             setTimeout(syncAiDrawer, 350);
           }, true);
-          var observer = new MutationObserver(function () {
-            syncAiDrawer();
-          });
-          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
           setTimeout(syncAiDrawer, 0);
         } catch (_) {}
       })();
@@ -90,9 +69,7 @@
     <script type="module" src="/src/main.jsx"></script>
     <script type="module">
       import { startPlanNotificationBridge } from "/src/planNotifications.js";
-      import { startPublishedPlansUx } from "/src/publishedPlansUx.js";
       startPlanNotificationBridge();
-      startPublishedPlansUx();
     </script>
   </body>
 </html>

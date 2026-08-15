@@ -44,6 +44,37 @@ jobs:
       - name: Apply final release UI fixes
         run: python3 scripts/final-release-ui-fixes.py
 
+      - name: Normalize release source declarations
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/App.jsx')
+          text = p.read_text(encoding='utf-8')
+          block = '''  const dayCompleted=foods.length>0 && foods.every(f=>!!checked[f.id]);
+          const getDayStatus=(i)=>{
+            const date=addDays(cycle.cycleStartIso,i);
+            const d=plan.days?.[i] || {meals:[]};
+            const dayFoods=(d.meals||[]).flatMap(m=>parseItems(m.items,m.id));
+            const dayChecked=log[`${cycle.cycleStartIso}:day-${i}`] || (cycle.cycleNumber===0 ? (log[`${plan.startDate || today}:day-${i}`] || {}) : {});
+            const complete=dayFoods.length>0 && dayFoods.every(f=>!!dayChecked[f.id]);
+            return {date,complete,missed:date<today&&!complete};
+          };'''
+
+          count = text.count(block)
+          if count == 0:
+              raise SystemExit('nutrition declaration block not found')
+          if count > 1:
+              first = text.find(block)
+              tail = text[first + len(block):].replace(block, '')
+              text = text[:first + len(block)] + tail
+              p.write_text(text, encoding='utf-8')
+              print(f'normalized duplicate nutrition declaration blocks: {count} -> 1')
+          else:
+              print('nutrition declaration block already unique')
+          PY
+
       - name: Persist current-source release fixes
         run: |
           set -euo pipefail

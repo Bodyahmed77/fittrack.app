@@ -128,11 +128,25 @@ function billingError(e, fallbackCode = "billing_error") {
 function normalizeSkuDetails(result) {
   if (!result || typeof result !== "object") return null;
   if (result.value === "web") return result;
-  if (result.productId || result.sku || result.id || result.price) return result;
+  if (result.productId || result.sku || result.id || result.price || result.formattedPrice) return result;
   if (result.productDetails && typeof result.productDetails === "object") {
     return result.productDetails;
   }
   return result;
+}
+
+function localizedDisplayPrice(details) {
+  if (!details || typeof details !== "object") return null;
+  const candidates = [
+    details.formattedPrice,
+    details.localizedPrice,
+    details.priceString,
+    details.displayPrice,
+  ];
+  for (const candidate of candidates) {
+    if (candidate != null && String(candidate).trim()) return String(candidate).trim();
+  }
+  return details.price != null ? String(details.price).trim() : null;
 }
 
 async function querySkuDetailsForProduct(billing, productId) {
@@ -148,7 +162,14 @@ async function querySkuDetailsForProduct(billing, productId) {
     type: "SUBS",
   });
 
-  return normalizeSkuDetails(result);
+  const details = normalizeSkuDetails(result);
+  if (!details) return null;
+
+  return {
+    ...details,
+    productId: details.productId || details.sku || details.id || productId,
+    formattedPrice: localizedDisplayPrice(details),
+  };
 }
 
 export async function queryProducts() {
@@ -176,10 +197,7 @@ export async function queryProducts() {
       try {
         const details = await querySkuDetailsForProduct(billing, id);
         if (details) {
-          products.push({
-            ...details,
-            productId: details.productId || details.sku || details.id || id,
-          });
+          products.push(details);
         } else {
           unfetched.push({
             productId: id,
@@ -196,6 +214,8 @@ export async function queryProducts() {
       }
     }
 
+    // Google Play's localized/formatted value is the only source used for
+    // displayed subscription prices. Never infer currency from app language.
     setPlayStorePricing(products);
 
     return {

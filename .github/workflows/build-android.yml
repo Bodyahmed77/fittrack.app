@@ -78,13 +78,36 @@ jobs:
           mkdir -p android/app
           echo "$GS_B64" | base64 -d > android/app/google-services.json
           python3 - <<'PY'
+          import hashlib
           import json
           p='android/app/google-services.json'
           d=json.load(open(p, encoding='utf-8'))
           assert d.get('project_info', {}).get('project_id') == 'fittrack-698fa'
-          packages=[(c.get('client_info') or {}).get('android_client_info', {}).get('package_name') for c in d.get('client') or []]
-          assert 'com.bodyahmed77.fiftyfit' in packages
-          print('google-services.json OK for com.bodyahmed77.fiftyfit')
+          package='com.bodyahmed77.fiftyfit'
+          matching=[]
+          for client in d.get('client') or []:
+              ci=client.get('client_info') or {}
+              pkg=(ci.get('android_client_info') or {}).get('package_name')
+              if pkg == package:
+                  matching.append(client)
+          assert matching, f'No google-services client for {package}'
+          print(f'google-services.json OK for {package}')
+
+          print('Firebase OAuth configuration for Android package:')
+          for client in matching:
+              for oauth in client.get('oauth_client') or []:
+                  ctype=oauth.get('client_type')
+                  cid=oauth.get('client_id') or ''
+                  info=oauth.get('android_info') or {}
+                  cert=info.get('certificate_hash')
+                  if ctype == 1:
+                      print(f'  Android OAuth client: {cid[-28:] if cid else "<missing>"}…')
+                      print(f'  certificate_hash: {cert or "<missing>"}')
+                  elif ctype == 3:
+                      print(f'  Web OAuth client: …{cid[-28:] if cid else "<missing>"}')
+
+          raw=open(p,'rb').read()
+          print(f'google-services.json sha256: {hashlib.sha256(raw).hexdigest()}')
           PY
 
       - name: Configure Google Services, Firebase Authentication and Google Sign-In

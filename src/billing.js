@@ -2,7 +2,7 @@
 // Google Play Billing Wrapper (capacitor-billing)
 // ============================================================
 // Native Google Play Billing is the source of purchase state.
-// Product IDs and prices come from Google Play at runtime.
+// Product IDs and localized prices come from Google Play at runtime.
 
 import { BILLING_PRODUCTS } from "./config";
 
@@ -135,16 +135,9 @@ function normalizeSkuDetails(result) {
   return result;
 }
 
-function skuMatches(details, productId) {
-  if (!details || typeof details !== "object") return false;
-  return [details.productId, details.product, details.sku, details.id]
-    .filter(Boolean)
-    .includes(productId);
-}
-
 /**
- * capacitor-billing 8.x exposes the Android catalog through querySkuDetails
- * with ONE product id per call. Keep this wrapper aligned with that public API.
+ * capacitor-billing 8.x exposes Android SKU details through
+ * querySkuDetails({ product: '<ONE_ID>', type: 'SUBS' }).
  */
 async function querySkuDetailsForProduct(billing, productId) {
   if (!billing || typeof billing.querySkuDetails !== "function") {
@@ -187,7 +180,10 @@ export async function queryProducts() {
       try {
         const details = await querySkuDetailsForProduct(billing, id);
         if (details) {
-          products.push(details);
+          products.push({
+            ...details,
+            productId: details.productId || details.sku || details.id || id,
+          });
         } else {
           unfetched.push({
             productId: id,
@@ -255,21 +251,10 @@ export async function purchase(planId, durationId) {
   try {
     await ensureBillingConnection(billing);
 
-    const details = await querySkuDetailsForProduct(billing, productId);
-    if (!skuMatches(details, productId) && details?.value !== "web") {
-      return {
-        success: false,
-        preview: false,
-        error: Object.assign(
-          new Error(`Google Play product unavailable: ${productId}`),
-          { code: "product_unavailable", productId },
-        ),
-      };
-    }
-
-    // capacitor-billing 8.1.0 documents launchBillingFlow with the product
-    // id and product type. The plugin handles the Android subscription offer
-    // internally for this SKU/base-plan setup.
+    // Do not gate launchBillingFlow on a separate catalog query.
+    // capacitor-billing documents launchBillingFlow({ product, type })
+    // as the purchase entry point; Google Play returns the authoritative
+    // response code when the SKU/base plan/test environment is unavailable.
     const result = await billing.launchBillingFlow({
       product: productId,
       type: "SUBS",

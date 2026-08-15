@@ -224,7 +224,7 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
           "[GoogleSignIn] Credential Manager returned no credentials; retrying with legacy Google Sign-In chooser",
         );
         usedCredentialManager = false;
-        result = await runNativeGoogleSignIn(false);
+        result = await runNativeGoogleSignIn(Boolean(0));
       } catch (fallbackError) {
         const fallbackMapped = mapAuthError(fallbackError);
         try {
@@ -330,7 +330,7 @@ export async function reauthenticateWithGoogleFlow(user) {
         result = await runNativeGoogleSignIn(true);
       } catch (firstError) {
         if (!isNoCredentialError(firstError)) throw firstError;
-        result = await runNativeGoogleSignIn(false);
+        result = await runNativeGoogleSignIn(Boolean(0));
       }
       const idToken = result?.credential?.idToken || result?.credential?.id_token || result?.idToken;
       const accessToken = result?.credential?.accessToken || result?.credential?.access_token || result?.accessToken || null;

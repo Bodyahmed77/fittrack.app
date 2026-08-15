@@ -8567,6 +8567,15 @@ function NutritionPlanScreen({ data, back }) {
     const dayChecked=log[`${cycle.cycleStartIso}:day-${i}`] || (cycle.cycleNumber===0 ? (log[`${plan.startDate || today}:day-${i}`] || {}) : {});
     const complete=dayFoods.length>0 && dayFoods.every(f=>!!dayChecked[f.id]);
     return {date,complete,missed:date<today&&!complete};
+  };
+  const dayCompleted=foods.length>0 && foods.every(f=>!!checked[f.id]);
+  const getDayStatus=(i)=>{
+    const date=addDays(cycle.cycleStartIso,i);
+    const d=plan.days?.[i] || {meals:[]};
+    const dayFoods=(d.meals||[]).flatMap(m=>parseItems(m.items,m.id));
+    const dayChecked=log[`${cycle.cycleStartIso}:day-${i}`] || (cycle.cycleNumber===0 ? (log[`${plan.startDate || today}:day-${i}`] || {}) : {});
+    const complete=dayFoods.length>0 && dayFoods.every(f=>!!dayChecked[f.id]);
+    return {date,complete,missed:date<today&&!complete};
   }; const consumed=foods.filter(f=>checked[f.id]).reduce((a,f)=>({kcal:a.kcal+f.kcal,protein:a.protein+f.protein,carbs:a.carbs+f.carbs,fat:a.fat+f.fat}),{kcal:0,protein:0,carbs:0,fat:0}); const targets={kcal:Number(day.targetKcal||0),protein:Number(day.targetProtein||0),carbs:Number(day.targetCarbs||0),fat:Number(day.targetFat||0)}; const pct=(v,t)=>t>0?Math.min(100,Math.round(v/t*100)):0;
   const toggle=async id=>{
     if(!auth.currentUser || saving) return;
@@ -8845,6 +8854,7 @@ function PlansScreen({ data, setData, go, showToast }) {
               }
               const next = clone(data);
               next.customTrainingPlanActive = true;
+              next.activePlanId = null;
               next.activePlanId = null;
               next.activePlanId = null;
               next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);
@@ -9325,6 +9335,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         const personalizedPlan = buildPersonalizedProPlan(next);
         next.proPlan = personalizedPlan;
         next.activePlanId = personalizedPlan.workoutPlanId;
+      next.customTrainingPlanActive = false;
       next.customTrainingPlanActive = false;
       }
       if (next.entitlements.nutritionPro) {
@@ -10954,6 +10965,7 @@ function GoalsScreen({ data, setData, back, showToast }) {
     const next = clone(data);
     next.account.goal = goal;
     if (pro && chosen) next.activePlanId = chosen.planId;
+      next.customTrainingPlanActive = false;
       next.customTrainingPlanActive = false;
     setData(next);
     showToast(

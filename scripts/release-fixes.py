@@ -19,14 +19,7 @@ main_text = MAIN.read_text(encoding="utf-8")
 billing_text = BILLING.read_text(encoding="utf-8")
 google_auth_text = GOOGLE_AUTH.read_text(encoding="utf-8")
 
-# ---------------------------------------------------------------------------
-# Google Sign-In runtime diagnostics / production path
-# ---------------------------------------------------------------------------
-# Production builds distributed by Google Play use the Play App Signing
-# certificate. The current Firebase plugin supports Credential Manager on
-# Android and its documented default is enabled. Keep the release path on the
-# modern provider and expose the native numeric error (not just a generic
-# fallback) when Play Services rejects the application configuration.
+# Google Sign-In diagnostics and modern Credential Manager path.
 old_google_call = '''    FirebaseAuthentication.signInWithGoogle({
       useCredentialManager: false,
       skipNativeAuth: true,
@@ -102,9 +95,7 @@ if old_native_log in google_auth_text:
 elif "window.__fiftyFitGoogleAuthDiagnostics" not in google_auth_text:
     raise SystemExit("release-fixes: Google auth native failure log anchor not found")
 
-# ---------------------------------------------------------------------------
-# Billing runtime diagnostics
-# ---------------------------------------------------------------------------
+# Billing failure diagnostics.
 old_app = '''      if (!shouldUnlock) {
         showToast(
           ar
@@ -156,9 +147,6 @@ if old_app in text:
 elif "window.__fiftyFitLastBillingError" not in text:
     raise SystemExit("release-fixes: expected billing failure UI block was not found")
 
-# ---------------------------------------------------------------------------
-# Do not acknowledge pending purchases + preserve Play response on no token
-# ---------------------------------------------------------------------------
 old_token = '''    const token = extractPurchaseToken(result);
     if (!token) {
       return {
@@ -217,21 +205,35 @@ new_token = '''    const token = extractPurchaseToken(result);
       };
     }
 
+    const purchaseState =
+      result?.purchaseState ?? result?.purchase?.purchaseState;
+    const purchaseIsCompleted =
+      result?.pending !== true &&
+      (purchaseState == null || purchaseState === 1 || purchaseState === "1");
+    if (!purchaseIsCompleted) {
+      return {
+        success: false,
+        preview: false,
+        pending: true,
+        cancelled: !!result?.cancelled || !!result?.canceled,
+        productId: productId,
+        error: Object.assign(
+          new Error("Google Play purchase is pending and has not been acknowledged"),
+          { code: "purchase_pending" },
+        ),
+      };
+    }
+
     if (typeof billing.sendAck === "function") {'''
 if old_token in billing_text:
     billing_text = billing_text.replace(old_token, new_token, 1)
-elif "const nativeResponseCode =" not in billing_text:
-    raise SystemExit("release-fixes: expected billing acknowledgement block was not found")
+elif "const nativeResponseCode =" not in billing_text or "const purchaseIsCompleted =" not in billing_text:
+    raise SystemExit("release-fixes: expected billing token block was not found")
 
-# Persist the source transformations in the working tree. The CI workflow
-# commits these files so release-only fixes do not remain CI-only.
 APP.write_text(text, encoding="utf-8")
 BILLING.write_text(billing_text, encoding="utf-8")
 GOOGLE_AUTH.write_text(google_auth_text, encoding="utf-8")
 
-# ---------------------------------------------------------------------------
-# Existing release sanity checks
-# ---------------------------------------------------------------------------
 checks = [
     ("App.jsx exists", APP.exists()),
     ("main.jsx exists", MAIN.exists()),

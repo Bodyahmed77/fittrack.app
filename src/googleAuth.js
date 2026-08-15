@@ -4,15 +4,9 @@
  * Web / desktop: Firebase JS signInWithPopup.
  * Android / iOS: @capacitor-firebase/authentication.
  *
- * Android deliberately uses the native Google account chooser without
- * Credential Manager for the current Android release line. The
- * @capacitor-firebase/authentication 7.x line documents Credential Manager
- * as the default modern path, but its maintainers added an explicit
- * disable switch after production issues with Credential Manager; Android
- * 36 / "no credentials" failures are also documented in the project's
- * issue tracker. Using one native path avoids the previous double-attempt
- * flow where Credential Manager failed first and the legacy chooser then
- * failed as a second operation, producing only "fallback attempted".
+ * Android uses the current Credential Manager path. The authentication
+ * plugin supports disabling Credential Manager for older compatibility
+ * problems, but the current release is targeting the supported modern path.
  */
 import {
   GoogleAuthProvider,
@@ -33,9 +27,7 @@ function emitAuthSettled(detail = {}) {
     window.dispatchEvent(
       new CustomEvent(SETTLED_EVENT, { detail: { ...detail } }),
     );
-  } catch (_) {
-    /* ignore */
-  }
+  } catch (_) {}
 }
 
 export function subscribeGoogleAuthSettled(handler) {
@@ -45,17 +37,11 @@ export function subscribeGoogleAuthSettled(handler) {
   const listener = (event) => {
     try {
       handler(event?.detail || {});
-    } catch (_) {
-      /* ignore */
-    }
+    } catch (_) {}
   };
   window.addEventListener(SETTLED_EVENT, listener);
   return () => {
-    try {
-      window.removeEventListener(SETTLED_EVENT, listener);
-    } catch (_) {
-      /* ignore */
-    }
+    try { window.removeEventListener(SETTLED_EVENT, listener); } catch (_) {}
   };
 }
 
@@ -67,14 +53,8 @@ function withTimeout(promise, ms, label) {
       reject(err);
     }, ms);
     promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
     );
   });
 }
@@ -85,9 +65,7 @@ function copyDiagnostic(err, raw) {
     if (raw.code != null) err.nativeCode = String(raw.code);
     if (raw.message) err.nativeMessage = String(raw.message);
     if (raw.errorCode != null) err.nativeErrorCode = String(raw.errorCode);
-  } catch (_) {
-    /* ignore */
-  }
+  } catch (_) {}
   return err;
 }
 
@@ -95,6 +73,23 @@ function mapAuthError(error) {
   if (!error) return error;
   const code = String(error.code || error.errorCode || "");
   const message = String(error.message || error).toLowerCase();
+  const numericCode = String(error.code ?? error.errorCode ?? "");
+
+  if (
+    numericCode === "10" ||
+    code === "10" ||
+    /developer.?error|DEVELOPER_ERROR/.test(`${code} ${numericCode} ${message}`)
+  ) {
+    return copyDiagnostic(
+      Object.assign(
+        new Error(
+          "Google Sign-In developer error (10): Android package/SHA configuration does not match the certificate used by the installed build",
+        ),
+        { code: "developer_error", googleStatusCode: "10" },
+      ),
+      error,
+    );
+  }
 
   if (
     code === "auth/popup-closed-by-user" ||
@@ -105,39 +100,21 @@ function mapAuthError(error) {
     /cancel|cancell?ed|user.?denied|access.?denied/i.test(message)
   ) {
     return copyDiagnostic(
-      Object.assign(new Error("Google Sign-In was cancelled"), {
-        code: "cancelled",
-      }),
+      Object.assign(new Error("Google Sign-In was cancelled"), { code: "cancelled" }),
       error,
     );
   }
 
   if (code === "timeout" || /timed?\s*out/i.test(message)) {
     return copyDiagnostic(
-      Object.assign(new Error(error.message || "Google Sign-In timed out"), {
-        code: "timeout",
-      }),
+      Object.assign(new Error(error.message || "Google Sign-In timed out"), { code: "timeout" }),
       error,
     );
   }
 
   if (/no.?id.?token|missing.?id.?token|null.?credential/i.test(message)) {
     return copyDiagnostic(
-      Object.assign(new Error("Could not get a Google ID token"), {
-        code: "no_id_token",
-      }),
-      error,
-    );
-  }
-
-  if (/developer.?error|DEVELOPER_ERROR|configuration/i.test(`${code} ${message}`)) {
-    return copyDiagnostic(
-      Object.assign(
-        new Error(
-          "Google Sign-In configuration error (Android OAuth/SHA or Google provider configuration)",
-        ),
-        { code: "developer_error" },
-      ),
+      Object.assign(new Error("Could not get a Google ID token"), { code: "no_id_token" }),
       error,
     );
   }
@@ -167,46 +144,30 @@ function minimalInitialState(user, localLang) {
 async function ensureUserDoc(userCred, localLang, createInitialState) {
   const user = userCred?.user;
   if (!user?.uid) return;
-
   const ref = doc(db, "users", user.uid);
   const snap = await getDoc(ref);
   if (snap.exists()) {
     const existing = snap.data() || {};
     const patch = {};
-    if (!existing.account?.email && user.email) {
-      patch["account.email"] = user.email;
-    }
-    if (!existing.account?.name && user.displayName) {
-      patch["account.name"] = user.displayName;
-    }
+    if (!existing.account?.email && user.email) patch["account.email"] = user.email;
+    if (!existing.account?.name && user.displayName) patch["account.name"] = user.displayName;
     if (Object.keys(patch).length) {
-      try {
-        await setDoc(ref, patch, { merge: true });
-      } catch (error) {
+      try { await setDoc(ref, patch, { merge: true }); } catch (error) {
         console.warn("[GoogleSignIn] ensureUserDoc patch failed", error);
       }
     }
     return;
   }
-
-  const initial =
-    typeof createInitialState === "function"
-      ? createInitialState(user, localLang)
-      : minimalInitialState(user, localLang);
-
-  try {
-    await setDoc(ref, initial, { merge: true });
-  } catch (error) {
+  const initial = typeof createInitialState === "function"
+    ? createInitialState(user, localLang)
+    : minimalInitialState(user, localLang);
+  try { await setDoc(ref, initial, { merge: true }); } catch (error) {
     console.warn("[GoogleSignIn] ensureUserDoc create failed", error);
   }
 }
 
 async function isNativePlatform() {
-  try {
-    return Capacitor.isNativePlatform();
-  } catch (_) {
-    return false;
-  }
+  try { return Capacitor.isNativePlatform(); } catch (_) { return false; }
 }
 
 async function webGoogleSignIn() {
@@ -214,17 +175,13 @@ async function webGoogleSignIn() {
   provider.setCustomParameters({ prompt: "select_account" });
   provider.addScope("profile");
   provider.addScope("email");
-  return withTimeout(
-    signInWithPopup(auth, provider),
-    GOOGLE_SIGNIN_TIMEOUT_MS,
-    "Google Sign-In (popup)",
-  );
+  return withTimeout(signInWithPopup(auth, provider), GOOGLE_SIGNIN_TIMEOUT_MS, "Google Sign-In (popup)");
 }
 
 async function runNativeGoogleSignIn() {
   return withTimeout(
     FirebaseAuthentication.signInWithGoogle({
-      useCredentialManager: false,
+      useCredentialManager: true,
       skipNativeAuth: true,
     }),
     GOOGLE_SIGNIN_TIMEOUT_MS,
@@ -235,94 +192,73 @@ async function runNativeGoogleSignIn() {
 async function nativeGoogleSignIn(localLang, createInitialState) {
   let result;
   try {
-    console.info(
-      "[GoogleSignIn] native start: Credential Manager disabled for Android release compatibility",
-    );
+    console.info("[GoogleSignIn] native start: Credential Manager enabled");
     result = await runNativeGoogleSignIn();
   } catch (nativeError) {
     const mapped = mapAuthError(nativeError);
+    try {
+      window.__fiftyFitGoogleAuthDiagnostics = {
+        stage: "native_sign_in",
+        code: mapped?.code || "unknown",
+        googleStatusCode: mapped?.googleStatusCode || mapped?.nativeCode || mapped?.nativeErrorCode || null,
+        nativeCode: mapped?.nativeCode || null,
+        nativeErrorCode: mapped?.nativeErrorCode || null,
+        nativeMessage: mapped?.nativeMessage || null,
+        message: mapped?.message || String(mapped || ""),
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (_) {}
     console.error(
       "[GoogleSignIn] native chooser failed",
-      mapped?.nativeCode || mapped?.code || "",
+      mapped?.nativeCode || mapped?.nativeErrorCode || mapped?.code || "",
       mapped?.nativeMessage || mapped?.message || "",
     );
     throw mapped;
   }
 
-  const idToken =
-    result?.credential?.idToken ||
-    result?.credential?.id_token ||
-    result?.idToken;
-  const accessToken =
-    result?.credential?.accessToken ||
-    result?.credential?.access_token ||
-    result?.accessToken ||
-    null;
-
+  const idToken = result?.credential?.idToken || result?.credential?.id_token || result?.idToken;
+  const accessToken = result?.credential?.accessToken || result?.credential?.access_token || result?.accessToken || null;
   if (!idToken) {
     const err = new Error("Could not get a Google ID token from native sign-in");
     err.code = "no_id_token";
     throw err;
   }
 
-  const credential = GoogleAuthProvider.credential(
-    idToken,
-    accessToken || undefined,
-  );
-
+  const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
   let userCred;
   try {
     userCred = await signInWithCredential(auth, credential);
   } catch (firebaseError) {
     const mapped = mapAuthError(firebaseError);
-    mapped.firebaseAuthCode = String(
-      firebaseError?.code || firebaseError?.errorCode || "",
-    );
-    mapped.firebaseAuthMessage = String(
-      firebaseError?.message || firebaseError || "",
-    );
+    mapped.firebaseAuthCode = String(firebaseError?.code || firebaseError?.errorCode || "");
+    mapped.firebaseAuthMessage = String(firebaseError?.message || firebaseError || "");
     mapped.message = `Google Sign-In failed after account selection [${mapped.firebaseAuthCode || "unknown"}]: ${mapped.firebaseAuthMessage}`;
     throw mapped;
   }
 
-  try {
-    await ensureUserDoc(userCred, localLang, createInitialState);
-  } catch (error) {
+  try { await ensureUserDoc(userCred, localLang, createInitialState); } catch (error) {
     console.warn("[GoogleSignIn] ensureUserDoc after native sign-in", error);
   }
-
-  console.info(
-    "[GoogleSignIn] native success uid length",
-    userCred.user?.uid?.length || 0,
-  );
+  console.info("[GoogleSignIn] native success uid length", userCred.user?.uid?.length || 0);
   return userCred;
 }
 
 export async function signInWithGoogleFlow(localLang = "en", createInitialState) {
   const native = await isNativePlatform();
   console.info("[GoogleSignIn] platform native?", native);
-
   try {
     if (native) {
       const userCred = await nativeGoogleSignIn(localLang, createInitialState);
       emitAuthSettled({ ok: true, reason: "native_google_success" });
       return userCred;
     }
-
     const userCred = await webGoogleSignIn();
     await ensureUserDoc(userCred, localLang, createInitialState);
-    console.info(
-      "[GoogleSignIn] web success uid length",
-      userCred.user?.uid?.length || 0,
-    );
     emitAuthSettled({ ok: true, reason: "popup_success" });
     return userCred;
   } catch (error) {
     const mapped = mapAuthError(error);
-    emitAuthSettled({
-      ok: false,
-      reason: mapped?.code || error?.code || "error",
-    });
+    emitAuthSettled({ ok: false, reason: mapped?.code || error?.code || "error" });
     throw mapped;
   }
 }
@@ -332,34 +268,19 @@ export async function reauthenticateWithGoogleFlow(user) {
   try {
     if (native) {
       const result = await runNativeGoogleSignIn();
-      const idToken =
-        result?.credential?.idToken ||
-        result?.credential?.id_token ||
-        result?.idToken;
-      const accessToken =
-        result?.credential?.accessToken ||
-        result?.credential?.access_token ||
-        result?.accessToken ||
-        null;
+      const idToken = result?.credential?.idToken || result?.credential?.id_token || result?.idToken;
+      const accessToken = result?.credential?.accessToken || result?.credential?.access_token || result?.accessToken || null;
       if (!idToken) {
         const err = new Error("Could not get Google credential for reauth");
         err.code = "no_id_token";
         throw err;
       }
-      const credential = GoogleAuthProvider.credential(
-        idToken,
-        accessToken || undefined,
-      );
+      const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
       return reauthenticateWithCredential(user, credential);
     }
-
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
-    const result = await withTimeout(
-      signInWithPopup(auth, provider),
-      GOOGLE_SIGNIN_TIMEOUT_MS,
-      "Google reauth",
-    );
+    const result = await withTimeout(signInWithPopup(auth, provider), GOOGLE_SIGNIN_TIMEOUT_MS, "Google reauth");
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential) {
       const err = new Error("Could not get Google credential for reauth");
@@ -372,14 +293,6 @@ export async function reauthenticateWithGoogleFlow(user) {
   }
 }
 
-export async function consumeGoogleRedirectResult() {
-  return null;
-}
-
-export async function installGoogleAuthAppStateHook() {
-  return;
-}
-
-export async function installGoogleAuthDeepLinkHook() {
-  return;
-}
+export async function consumeGoogleRedirectResult() { return null; }
+export async function installGoogleAuthAppStateHook() { return; }
+export async function installGoogleAuthDeepLinkHook() { return; }

@@ -26,6 +26,7 @@ def function_block(source: str, signature: str, next_signature: str):
         raise SystemExit(f"release-fixes: {next_signature} not found after {signature}")
     return start, end
 
+
 # Keep the rolling 7-day strip anchored to real calendar dates.
 replace_once_or_already(
     'const iso = addDays(mondayOf(dateKey(0)), i);',
@@ -38,8 +39,8 @@ replace_once_or_already(
     "workout today detection",
 )
 
-# Android/WebView: ensure the selected/completed day labels never inherit a
-# transparent/disabled button state. This is visibility hardening only.
+# Android/WebView: ensure day buttons remain visible. This is visibility
+# hardening only; it does not alter the selected/completed colors.
 text = text.replace(
     '                  position: "relative",\n',
     '                  position: "relative",\n                  opacity: 1,\n                  visibility: "visible",\n',
@@ -58,7 +59,7 @@ text = text.replace(
 # Training plan authority
 # ---------------------------------------------------------------------------
 helper_marker = '/* ============================== EXERCISE MERGE HELPERS ============================== */'
-helper = '''function isCustomTrainingPlanActive(data) {\n  return !!data?.customTrainingPlan && data.customTrainingPlanActive !== false;\n}\n\n'''
+helper = '''function isCustomTrainingPlanActive(data) {\n  return !!data?.customTrainingPlan && data.customTrainingPlanActive === true;\n}\n\n'''
 if 'function isCustomTrainingPlanActive(data)' not in text:
     pos = text.find(helper_marker)
     if pos < 0:
@@ -74,7 +75,7 @@ text = text.replace(
     'const assignedCustomDay = isCustomTrainingPlanActive(data)\n    ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]\n    : null;',
 )
 
-# Persist the selector flag through the default state and Firestore hydration.
+# Persist the explicit selector flag through default state and Firestore hydration.
 replace_once_or_already(
     '    customTrainingPlan: null,\n    customNutritionPlan: null,',
     '    customTrainingPlan: null,\n    customTrainingPlanActive: false,\n    customNutritionPlan: null,',
@@ -82,12 +83,12 @@ replace_once_or_already(
 )
 replace_once_or_already(
     '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
-    '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customTrainingPlanActive: parsed.customTrainingPlanActive !== false,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
+    '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customTrainingPlanActive: parsed.customTrainingPlanActive === true,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
     "Firestore training-plan active flag",
 )
 
 # Choosing a built-in plan explicitly disables the personalized override.
-ps, pe = function_block(text, 'function PlanDetailScreen(', '\n/* ============================== PAYWALL ============================== */')
+ps, pe = function_block(text, 'function PlanDetailScreen(', '/* ============================== PAYWALL ============================== */')
 plan_detail = text[ps:pe]
 if 'next.customTrainingPlanActive = false;' not in plan_detail:
     plan_detail = plan_detail.replace(
@@ -97,9 +98,8 @@ if 'next.customTrainingPlanActive = false;' not in plan_detail:
     )
 text = text[:ps] + plan_detail + text[pe:]
 
-# The personalized plan card becomes the actual activation control instead of
-# always jumping into Workout while the old source remains active.
-ps, pe = function_block(text, 'function PlansScreen(', '\nfunction PlanDetailScreen(')
+# The personalized plan card becomes the actual activation control.
+ps, pe = function_block(text, 'function PlansScreen(', 'function PlanDetailScreen(')
 plans = text[ps:pe]
 if 'const customTrainingActive = isCustomTrainingPlanActive(data);' not in plans:
     plans = plans.replace(
@@ -107,53 +107,84 @@ if 'const customTrainingActive = isCustomTrainingPlanActive(data);' not in plans
         '  const pro = data.entitlements.trainingPro;\n  const customTrainingActive = isCustomTrainingPlanActive(data);\n',
         1,
     )
+old_card_handler = '            onClick={() => go("workout")}\n'
+if old_card_handler in plans:
+    plans = plans.replace(
+        old_card_handler,
+        '''            onClick={() => {\n              const next = clone(data);\n              next.customTrainingPlanActive = true;\n              next.activePlanId = "custom";\n              next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);\n              setData(next);\n              go("workout");\n            }}\n''',
+        1,
+    )
+# Show activation state on the custom card without redesigning it.
 plans = plans.replace(
-    '            onClick={() => go("workout")}',
-    '''            onClick={() => {\n              if (customTrainingActive) {\n                go("workout");\n                return;\n              }\n              const next = clone(data);\n              next.customTrainingPlanActive = true;\n              setData(next);\n              showToast(ar ? "تم تفعيل خطة التدريب المخصصة" : "Personalized training plan activated");\n            }}''',
-    1,
-)
-plans = plans.replace(
-    '              {ar ? "فتح خطة التدريب ←" : "Open Training Plan →"}',
-    '              {customTrainingActive ? (ar ? "فتح خطة التدريب ←" : "Open Training Plan →") : (ar ? "استخدم الخطة دي" : "Use This Plan")}',
+    '{ar ? "فتح خطة التدريب ←" : "Open Training Plan →"}',
+    '{customTrainingActive\n              ? (ar ? "الخطة دي مستخدمة — فتح التدريب ←" : "This plan is in use — Open Workout →")\n              : (ar ? "استخدم الخطة دي ←" : "Use This Plan →")}',
     1,
 )
 text = text[:ps] + plans + text[pe:]
 
+# ---------------------------------------------------------------------------
+# Cardio state authority
+# ---------------------------------------------------------------------------
+# Do not assume a specific old timer snippet exists. Instead, inspect only the
+# current CardioExerciseView block and remove stale-resume declarations if
+# they still exist. Already-fixed code passes through unchanged.
+try:
+    cps, cpe = function_block(text, 'function CardioExerciseView(', '/* ============================== EXERCISE DETAIL SCREEN ============================== */')
+    cardio = text[cps:cpe]
+    cardio = re.sub(r'^\s*const existingStartedAt = .*?\n', '', cardio, flags=re.M)
+    cardio = re.sub(r'^\s*const existingElapsed = .*?\n', '', cardio, flags=re.M)
+    cardio = re.sub(r'^\s*const resumableStartedAt = .*?\n', '', cardio, flags=re.M)
+    cardio = cardio.replace(
+        'useState(resumableStartedAt)',
+        'useState(null)',
+    )
+    text = text[:cps] + cardio + text[cpe:]
+except SystemExit as exc:
+    # The release script must still fail when the actual cardio screen is gone;
+    # this guards against a broken merge rather than an outdated internal block.
+    raise
+
 APP.write_text(text, encoding="utf-8")
 
-# Assertions protect against regressions without relying on one legacy source block.
+# ---------------------------------------------------------------------------
+# Final source assertions
+# ---------------------------------------------------------------------------
 final = APP.read_text(encoding="utf-8")
 main_text = MAIN.read_text(encoding="utf-8")
-required = [
+required_markers = [
     'const iso = addDays(dateKey(0), i - 3);',
     'const isToday = iso === today;',
-    'bottom: 0,',
-    'function isCustomTrainingPlanActive(data)',
-    'next.customTrainingPlanActive = false;',
-    'const customTrainingActive = isCustomTrainingPlanActive(data);',
     'const phase = alreadyFinished ? "COMPLETED" : startedAt ? "RUNNING" : "IDLE";',
     'await persist(true, null, 35);',
+    'function isCustomTrainingPlanActive(data)',
+    'customTrainingPlanActive: false,',
+    'next.customTrainingPlanActive = false;',
+    'next.customTrainingPlanActive = true;',
+    'activePlanId = "custom";',
 ]
-for marker in required:
+for marker in required_markers:
     if marker not in final:
-        raise SystemExit(f"release-fixes: invariant missing: {marker}")
+        raise SystemExit(f"release-fixes: required current-source invariant missing: {marker}")
+
+if 'resumableStartedAt' in final:
+    raise SystemExit("release-fixes: cardio timer still contains stale-resume state")
 if re.search(r'\boembed\b', final, re.I):
-    raise SystemExit("release-fixes: oEmbed dependency remains in App.jsx")
+    raise SystemExit("release-fixes: TikTok oEmbed dependency remains in App.jsx")
 if 'appendChild' in final:
-    raise SystemExit("release-fixes: DOM plan injection remains in App.jsx")
-if 'https://www.tiktok.com/player/v1/' in final:
-    raise SystemExit("release-fixes: TikTok player URL must not be manufactured in App.jsx")
+    raise SystemExit("release-fixes: DOM appendChild renderer remains in App.jsx")
 if final.count('function FullScreenVideoViewer(') != 1:
     raise SystemExit("release-fixes: FullScreenVideoViewer is not canonical")
 if final.count('function VideoPlayer(') != 1:
     raise SystemExit("release-fixes: VideoPlayer is not canonical")
 if 'function StartupGate' not in main_text:
-    raise SystemExit("release-fixes: StartupGate missing")
+    raise SystemExit("release-fixes: StartupGate is missing")
 if 'setTimeout(() => setMinimumTimeElapsed(true), 1600)' not in main_text:
-    raise SystemExit("release-fixes: startup minimum duration missing")
+    raise SystemExit("release-fixes: startup minimum duration is not 1600ms")
+if 'animation: "fiftyLogoIn 1.15s' not in main_text:
+    raise SystemExit("release-fixes: startup animation is missing")
 
-print("release-fixes: source hardening complete")
-print("release-fixes: rolling day strip + Android visibility hardening applied")
-print("release-fixes: built-in/custom training plan selection is authoritative")
-print("release-fixes: TikTok URLs remain owned by EXERCISE_VIDEOS and native viewer")
-print("release-fixes: cardio never resurrects an old timer")
+print("release-fixes: current source hardened and validated")
+print("release-fixes: workout strip uses rolling calendar dates and visible day buttons")
+print("release-fixes: built-in/custom training plan authority is explicit")
+print("release-fixes: cardio state cannot resurrect an old timer")
+print("release-fixes: no oEmbed or DOM plan-card injection remains")

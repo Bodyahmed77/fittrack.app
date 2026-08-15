@@ -47,22 +47,10 @@ replace_once_or_already(
     label="workout today detection",
 )
 
-# Completed / missed labels are white on their completed/missed backgrounds.
 legacy_day_label = '''color:\n                      isSelected && (isDone || isMissed)\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isDone\n                        ? C.positive\n                        : isMissed\n                        ? C.danger\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
 fixed_day_label = '''color:\n                      isDone || isMissed\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
-if fixed_day_label not in text:
-    if legacy_day_label in text:
-        text = text.replace(legacy_day_label, fixed_day_label, 1)
-    else:
-        # Do not fail the release merely because the current renderer already
-        # uses an equivalent branch ordering.
-        compact = re.compile(
-            r'color:\\n\s*isSelected\s*&&\s*\(isDone\s*\|\|\s*isMissed\).*?C\.sub,',
-            re.S,
-        )
-        match = compact.search(text)
-        if match:
-            text = text[:match.start()] + fixed_day_label + text[match.end():]
+if fixed_day_label not in text and legacy_day_label in text:
+    text = text.replace(legacy_day_label, fixed_day_label, 1)
 
 # ---------------------------------------------------------------------------
 # 2) AI Coach keyboard: the native keyboard already resizes the Capacitor
@@ -81,8 +69,8 @@ text = text.replace(
 
 # ---------------------------------------------------------------------------
 # 3) TikTok: only the native Android WebView handles the original configured
-#    URL. The React viewer must never iframe TikTok or manufacture player/v1
-#    URLs. YouTube retains its existing iframe implementation.
+#    URL. The React viewer must never iframe TikTok or manufacture player URLs.
+#    YouTube retains its existing iframe implementation.
 # ---------------------------------------------------------------------------
 if 'import { registerPlugin } from "@capacitor/core";' not in text:
     text = text.replace(
@@ -96,7 +84,6 @@ if 'const TikTokWebView = registerPlugin("TikTokWebView");' not in text:
         'import { deleteAccountServerData } from "./deleteAccount";\n\nconst TikTokWebView = registerPlugin("TikTokWebView");',
         1,
     )
-
 viewer_start, viewer_end = function_block(
     text,
     'function FullScreenVideoViewer({ videoId, ar, onClose }) {',
@@ -145,25 +132,39 @@ viewer = '''function FullScreenVideoViewer({ videoId, ar, onClose }) {
 
 '''
 text = text[:viewer_start] + viewer + text[viewer_end:]
+text = re.sub(r'\nfunction getTikTokPostId\(value\) \{.*?\n\}\n', '\n', text, flags=re.S)
 
-# Remove the no-longer-needed TikTok ID helper when present. The native layer
-# receives the exact original EXERCISE_VIDEOS URL and performs no URL rewrite.
+# ---------------------------------------------------------------------------
+# 4) Cardio: every visit starts in IDLE. An unfinished cardioStartedAt from a
+#    previous visit must never resurrect an old running timer after unmount.
+#    Starting creates a fresh timestamp; completed logs remain completed.
+# ---------------------------------------------------------------------------
+resumable_block = re.compile(
+    r'''\n  const existingStartedAt = Number\(existingLog\?\.cardioStartedAt \|\| 0\);\n  const existingElapsed = existingStartedAt > 0 \? Math\.floor\(\(Date\.now\(\) - existingStartedAt\) / 1000\) : 0;\n  const resumableStartedAt = !alreadyFinished && existingStartedAt > 0 && existingElapsed < DURATION_SECONDS\n    \? existingStartedAt\n    : null;\n''',
+)
+text, removed = resumable_block.subn("\n", text, count=1)
+if removed != 1:
+    raise SystemExit("release-fixes: cardio resumable timer block not found")
 text = re.sub(
-    r'\nfunction getTikTokPostId\(value\) \{.*?\n\}\n',
+    r'  const \[startedAt, setStartedAt\] = useState\(resumableStartedAt\);',
+    '  const [startedAt, setStartedAt] = useState(null);',
+    text,
+    count=1,
+)
+text = re.sub(
+    r'''\n  useEffect\(\(\) => \{\n    if \(alreadyFinished \|\| !existingStartedAt \|\| resumableStartedAt\) return;\n    // A stale unfinished timer should reset to IDLE instead of auto-completing\.\n    if \(existingElapsed >= DURATION_SECONDS\) \{\n      setStartedAt\(null\);\n    \}\n  \}, \[alreadyFinished, existingStartedAt, resumableStartedAt, existingElapsed\]\);\n''',
     '\n',
     text,
-    flags=re.S,
+    count=1,
 )
 
 APP.write_text(text, encoding="utf-8")
 
 # ---------------------------------------------------------------------------
-# 4) Final source assertions. These are the only hard failures: they protect
-#    the release from regressing back to the known bad architectures.
+# 5) Final source assertions.
 # ---------------------------------------------------------------------------
 final = APP.read_text(encoding="utf-8")
 main_text = MAIN.read_text(encoding="utf-8")
-
 required_markers = [
     'const iso = addDays(dateKey(0), i - 3);',
     'const isToday = iso === today;',
@@ -172,19 +173,21 @@ required_markers = [
     'TikTokWebView.open({ url: videoId })',
     'function FullScreenVideoViewer({ videoId, ar, onClose }) {',
     'function VideoPlayer',
+    'const [startedAt, setStartedAt] = useState(null);',
     'const phase = alreadyFinished ? "COMPLETED" : startedAt ? "RUNNING" : "IDLE";',
     'await persist(true, null, 35);',
 ]
 for marker in required_markers:
     if marker not in final:
         raise SystemExit(f"release-fixes: required current-source invariant missing: {marker}")
-
-if re.search(r'https://www\.tiktok\.com/player/v1/', final, re.I):
-    raise SystemExit("release-fixes: TikTok player/v1 URL must not exist in App.jsx")
+if re.search(r'https://www\.tiktok\.com/player/', final, re.I):
+    raise SystemExit("release-fixes: TikTok generated player URL remains in App.jsx")
 if re.search(r'\boembed\b', final, re.I):
     raise SystemExit("release-fixes: TikTok oEmbed dependency remains in App.jsx")
 if 'appendChild' in final:
     raise SystemExit("release-fixes: DOM appendChild renderer remains in App.jsx")
+if 'resumableStartedAt' in final:
+    raise SystemExit("release-fixes: cardio timer still resumes from a previous visit")
 if final.count('function FullScreenVideoViewer(') != 1:
     raise SystemExit("release-fixes: FullScreenVideoViewer is not canonical")
 if final.count('function VideoPlayer(') != 1:
@@ -195,10 +198,9 @@ if 'setTimeout(() => setMinimumTimeElapsed(true), 1600)' not in main_text:
     raise SystemExit("release-fixes: startup minimum duration is not 1600ms")
 if 'animation: "fiftyLogoIn 1.15s' not in main_text:
     raise SystemExit("release-fixes: startup animation is missing")
-
 print("release-fixes: current main source hardened and validated")
 print("release-fixes: workout strip uses a rolling calendar window")
 print("release-fixes: AI Coach does not double-offset the keyboard")
 print("release-fixes: TikTok uses the original configured URL via native WebView")
-print("release-fixes: no oEmbed, player/v1 iframe, or DOM injector remains in App.jsx")
-print("release-fixes: cardio state/persistence invariants are present")
+print("release-fixes: no oEmbed, generated TikTok player URL, or DOM injector remains in App.jsx")
+print("release-fixes: each cardio viewer opens in IDLE and never resurrects an old timer")

@@ -65,13 +65,50 @@ function StartupShell() {
         <img
           src={logoSrc}
           alt="Fifty Fit"
-          width={72}
-          height={72}
-          style={{ display: "block", objectFit: "contain", margin: "0 auto 14px", animation: "fiftyLogoIn .62s cubic-bezier(.22,.8,.3,1) both" }}
+          width={92}
+          height={92}
+          style={{
+            display: "block",
+            objectFit: "contain",
+            margin: "0 auto 18px",
+            animation: "fiftyLogoIn 1.15s cubic-bezier(.22,.8,.3,1) both",
+            filter: "drop-shadow(0 0 18px rgba(255,255,255,.18))",
+          }}
         />
-        <div style={{ fontWeight: 800, fontSize: 18 }}>Fifty</div>
+        <div
+          style={{
+            fontWeight: 900,
+            fontSize: 22,
+            letterSpacing: 1.2,
+            animation: "fiftyTextIn .85s ease-out .18s both",
+          }}
+        >
+          Fifty Fit
+        </div>
+        <div
+          style={{
+            marginTop: 7,
+            fontSize: 11,
+            color: "#8e8e8e",
+            letterSpacing: 0.6,
+            animation: "fiftyTextIn .75s ease-out .32s both",
+          }}
+        >
+          TRAIN • EAT • PROGRESS
+        </div>
       </div>
-      <style>{`@keyframes fiftyLogoIn { 0% { opacity: 0; transform: scale(.9); } 55% { opacity: 1; transform: scale(1.03); } 100% { opacity: 1; transform: scale(1); } }`}</style>
+      <style>{`
+        @keyframes fiftyLogoIn {
+          0% { opacity: 0; transform: scale(.72) rotate(-7deg); }
+          45% { opacity: 1; transform: scale(1.08) rotate(2deg); }
+          72% { transform: scale(.98) rotate(0deg); }
+          100% { opacity: 1; transform: scale(1) rotate(0deg); }
+        }
+        @keyframes fiftyTextIn {
+          0% { opacity: 0; transform: translateY(10px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -79,7 +116,7 @@ function StartupShell() {
 function StartupGate({ children }) {
   const [minimumTimeElapsed, setMinimumTimeElapsed] = useState(false);
   useEffect(() => {
-    const timer = window.setTimeout(() => setMinimumTimeElapsed(true), 900);
+    const timer = window.setTimeout(() => setMinimumTimeElapsed(true), 1600);
     return () => window.clearTimeout(timer);
   }, []);
   return minimumTimeElapsed ? children : <StartupShell />;

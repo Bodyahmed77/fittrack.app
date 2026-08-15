@@ -4,10 +4,6 @@
 import { AI_COACH_ENDPOINT, FREE_AI_MESSAGES_PER_DAY, PRO_AI_MESSAGES_PER_DAY, SUPABASE_ANON_KEY } from "./config";
 import { auth } from "./firebase";
 
-// Android keyboard positioning: the drawer itself still receives the native
-// resize behavior, so it must not receive a second artificial keyboard-height
-// offset. App.jsx still listens to keyboard show events, therefore the native
-// bridge below deliberately reports keyboardHeight=0 to those listeners.
 let __keyboardPatchPromise = null;
 async function ensureNativeKeyboardResize() {
   if (__keyboardPatchPromise) return __keyboardPatchPromise;
@@ -17,47 +13,27 @@ async function ensureNativeKeyboardResize() {
       if (!Capacitor.isNativePlatform()) return;
       const { Keyboard } = await import("@capacitor/keyboard");
       if (!Keyboard) return;
-
       if (typeof Keyboard.setResizeMode === "function" && !Keyboard.__fiftyFitResizePatched) {
         const nativeSetResizeMode = Keyboard.setResizeMode.bind(Keyboard);
         Keyboard.setResizeMode = async () => nativeSetResizeMode({ mode: "native" });
         Keyboard.__fiftyFitResizePatched = true;
       }
-
-      // Never let App.jsx add a positive `bottom: keyboardInset` on Android.
-      // Native adjustResize already shrinks the WebView to the usable area.
-      // Returning a no-op listener also prevents a later native event from
-      // reintroducing a stale inset after the drawer is opened/closed.
       if (typeof Keyboard.addListener === "function" && !Keyboard.__fiftyFitListenerPatched) {
         const nativeAddListener = Keyboard.addListener.bind(Keyboard);
         Keyboard.addListener = (eventName, callback) => {
-          if (
-            eventName === "keyboardWillShow" ||
-            eventName === "keyboardDidShow" ||
-            eventName === "keyboardWillHide" ||
-            eventName === "keyboardDidHide"
-          ) {
-            queueMicrotask(() => {
-              try { callback({ keyboardHeight: 0 }); } catch (_) {}
-            });
+          if (["keyboardWillShow", "keyboardDidShow", "keyboardWillHide", "keyboardDidHide"].includes(eventName)) {
+            queueMicrotask(() => { try { callback({ keyboardHeight: 0 }); } catch (_) {} });
             return { remove() {} };
           }
           return nativeAddListener(eventName, callback);
         };
         Keyboard.__fiftyFitListenerPatched = true;
       }
-
-      if (typeof Keyboard.setResizeMode === "function") {
-        await Keyboard.setResizeMode({ mode: "native" });
-      }
-    } catch {
-      // Browser builds and devices without the Capacitor keyboard plugin keep
-      // their normal browser behavior.
-    }
+      if (typeof Keyboard.setResizeMode === "function") await Keyboard.setResizeMode({ mode: "native" });
+    } catch {}
   })();
   return __keyboardPatchPromise;
 }
-
 ensureNativeKeyboardResize();
 
 export function aiDailyLimit(hasAiPro) {
@@ -68,57 +44,26 @@ export function aiUsageToday(data, todayISO) {
   const hasPro = !!data?.entitlements?.aiCoachPro;
   const limit = aiDailyLimit(hasPro);
   const usage = data?.aiUsage || {};
-  const used =
-    usage.date === todayISO && Number.isFinite(Number(usage.count))
-      ? Number(usage.count)
-      : 0;
-  return {
-    used,
-    limit,
-    remaining: Math.max(0, limit - used),
-    date: todayISO,
-    hasPro,
-  };
+  const used = usage.date === todayISO && Number.isFinite(Number(usage.count)) ? Number(usage.count) : 0;
+  return { used, limit, remaining: Math.max(0, limit - used), date: todayISO, hasPro };
 }
 
 function resolveEndpoint() {
-  if (typeof window !== "undefined" && window.__FIFTYFIT_AI_ENDPOINT__) {
-    return String(window.__FIFTYFIT_AI_ENDPOINT__);
-  }
-  try {
-    if (import.meta?.env?.VITE_AI_ENDPOINT) return String(import.meta.env.VITE_AI_ENDPOINT);
-  } catch {}
+  if (typeof window !== "undefined" && window.__FIFTYFIT_AI_ENDPOINT__) return String(window.__FIFTYFIT_AI_ENDPOINT__);
+  try { if (import.meta?.env?.VITE_AI_ENDPOINT) return String(import.meta.env.VITE_AI_ENDPOINT); } catch {}
   return AI_COACH_ENDPOINT || "";
 }
-
 function resolveAnonKey() {
-  if (typeof window !== "undefined" && window.__FIFTYFIT_SUPABASE_ANON_KEY__) {
-    return String(window.__FIFTYFIT_SUPABASE_ANON_KEY__);
-  }
-  try {
-    if (import.meta?.env?.VITE_SUPABASE_ANON_KEY) {
-      return String(import.meta.env.VITE_SUPABASE_ANON_KEY);
-    }
-  } catch {}
+  if (typeof window !== "undefined" && window.__FIFTYFIT_SUPABASE_ANON_KEY__) return String(window.__FIFTYFIT_SUPABASE_ANON_KEY__);
+  try { if (import.meta?.env?.VITE_SUPABASE_ANON_KEY) return String(import.meta.env.VITE_SUPABASE_ANON_KEY); } catch {}
   return SUPABASE_ANON_KEY || "";
 }
-
 function normalizeUsage(data, fallbackDate) {
   if (!data || typeof data !== "object") return null;
   const u = data.usage && typeof data.usage === "object" ? data.usage : data;
-  if (u.remaining == null && u.limit == null && u.used == null && u.count == null) {
-    return null;
-  }
-  return {
-    date: u.date || fallbackDate,
-    count: u.count ?? u.used ?? null,
-    used: u.used ?? u.count ?? null,
-    limit: u.limit ?? null,
-    remaining: u.remaining ?? null,
-    hasPro: u.hasPro,
-  };
+  if (u.remaining == null && u.limit == null && u.used == null && u.count == null) return null;
+  return { date: u.date || fallbackDate, count: u.count ?? u.used ?? null, used: u.used ?? u.count ?? null, limit: u.limit ?? null, remaining: u.remaining ?? null, hasPro: u.hasPro };
 }
-
 function extractReply(data) {
   if (!data || typeof data !== "object") return "";
   if (typeof data.reply === "string") return data.reply;
@@ -128,7 +73,6 @@ function extractReply(data) {
   if (typeof data.content === "string") return data.content;
   return "";
 }
-
 function classifyHttpError(status, data) {
   const code = String(data?.error || data?.code || "");
   if (code) return code === "unauthenticated" ? "backend_unauthorized" : code;
@@ -142,100 +86,64 @@ function classifyHttpError(status, data) {
   return "backend_error";
 }
 
-// Use Capacitor's native HTTP stack on Android/iOS. This bypasses WebView CORS
-// behavior, which was the reason the device was showing the generic "check your
-// internet" error even though the Supabase endpoint itself was reachable.
 async function postAiRequest(endpoint, headers, body) {
   try {
     const core = await import("@capacitor/core");
     if (core?.Capacitor?.isNativePlatform?.() && core?.CapacitorHttp?.request) {
-      const nativeResponse = await core.CapacitorHttp.request({
-        url: endpoint,
-        method: "POST",
-        headers,
-        data: body,
-      });
+      const nativeResponse = await core.CapacitorHttp.request({ url: endpoint, method: "POST", headers, data: body });
       let data = nativeResponse?.data ?? null;
-      if (typeof data === "string") {
-        try { data = JSON.parse(data); } catch {}
-      }
+      if (typeof data === "string") { try { data = JSON.parse(data); } catch {} }
       const status = Number(nativeResponse?.status || 0);
-      return {
-        status,
-        ok: status >= 200 && status < 300,
-        data,
-      };
+      return { status, ok: status >= 200 && status < 300, data };
     }
   } catch (e) {
-    // Fall through to browser fetch when native HTTP is unavailable.
     if (e?.code === "ERR_NAME_NOT_RESOLVED") throw e;
   }
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
   let data = null;
   try { data = await response.json(); } catch {}
-  return {
-    status: response.status,
-    ok: response.ok,
-    data,
-  };
+  return { status: response.status, ok: response.ok, data };
 }
 
 let __aiCoachInFlight = false;
 
-export async function generateCoachReply({
-  messages,
-  lang,
-  userContext,
-  localDate,
-  hasAiPro,
-}) {
+function localISODateNow() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export async function generateCoachReply({ messages, lang, userContext, localDate, hasAiPro }) {
   if (__aiCoachInFlight) {
     const e = new Error("Request already in progress");
     e.code = "busy";
     throw e;
   }
   __aiCoachInFlight = true;
-
   try {
     await ensureNativeKeyboardResize();
-
     const endpoint = resolveEndpoint();
-    if (!endpoint) {
-      const e = new Error("AI endpoint is not configured");
-      e.code = "no_endpoint";
-      throw e;
-    }
-
+    if (!endpoint) { const e = new Error("AI endpoint is not configured"); e.code = "no_endpoint"; throw e; }
     const user = auth.currentUser;
-    if (!user) {
-      const e = new Error("Sign in required");
-      e.code = "auth_missing";
-      throw e;
-    }
+    if (!user) { const e = new Error("Sign in required"); e.code = "auth_missing"; throw e; }
 
+    // The server quota is keyed by this device's local calendar date. Never
+    // trust a stale React render's date after midnight; calculate it at the
+    // exact moment the request is sent.
+    const requestDate = localISODateNow();
     const idToken = await user.getIdToken(true);
     const recent = (messages || []).slice(-6);
-    const lastUser = [...recent]
-      .reverse()
-      .find((m) => m?.role === "user" && m.content);
-
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    };
+    const lastUser = [...recent].reverse().find((m) => m?.role === "user" && m.content);
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` };
     const anon = resolveAnonKey();
     if (anon) headers.apikey = anon;
-
     const body = {
       messages: recent,
       message: lastUser ? String(lastUser.content) : "",
       lang: lang || "en",
-      localDate: localDate || "",
+      localDate: requestDate,
       context: userContext || {},
     };
 
@@ -253,25 +161,16 @@ export async function generateCoachReply({
     }
 
     const data = response?.data || null;
-    const usage = normalizeUsage(data, localDate);
-
+    const usage = normalizeUsage(data, requestDate);
     if (!response?.ok) {
-      const err = new Error(
-        data?.message || data?.error || `HTTP ${response?.status || 0}`,
-      );
+      const err = new Error(data?.message || data?.error || `HTTP ${response?.status || 0}`);
       err.code = classifyHttpError(response?.status || 0, data);
       err.status = response?.status || 0;
       if (err.code === "daily_limit") err.usage = usage;
       throw err;
     }
-
     const reply = extractReply(data);
-    if (!reply) {
-      const e = new Error("Empty AI response");
-      e.code = "empty_response";
-      throw e;
-    }
-
+    if (!reply) { const e = new Error("Empty AI response"); e.code = "empty_response"; throw e; }
     return { reply, usage };
   } finally {
     __aiCoachInFlight = false;

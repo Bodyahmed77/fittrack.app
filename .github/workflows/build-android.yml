@@ -41,6 +41,9 @@ jobs:
       - name: Apply and validate current-source release fixes
         run: python3 scripts/release-fixes.py
 
+      - name: Apply final release UI fixes
+        run: python3 scripts/final-release-ui-fixes.py
+
       - name: Persist current-source release fixes
         run: |
           set -euo pipefail
@@ -202,6 +205,9 @@ jobs:
           test -s android/app/build/outputs/bundle/release/app-release.aab
           test -s android/app/build/outputs/apk/release/app-release.apk
           ls -lh android/app/build/outputs/bundle/release/app-release.aab android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Verify APK/AAB web asset parity
+        run: python3 scripts/verify-release-parity.py
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4

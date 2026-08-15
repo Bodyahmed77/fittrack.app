@@ -4,10 +4,9 @@
  * Web / desktop: Firebase JS signInWithPopup.
  * Android / iOS: @capacitor-firebase/authentication.
  *
- * Android first tries Credential Manager (plugin 7.2+ default). If the
- * device/provider rejects that path, we retry with the plugin's legacy
- * Google Sign-In path. This avoids making a healthy Firebase/SHA setup fail
- * solely because the device's Credential Manager provider is unavailable.
+ * Android prefers the legacy native Google account chooser when Credential
+ * Manager cannot provide a credential. Credential Manager remains available
+ * as a fallback for devices where the legacy provider is unavailable.
  */
 import {
   GoogleAuthProvider,
@@ -132,6 +131,15 @@ function mapAuthError(e) {
     );
   }
 
+  if (/no credentials available|no credential available|NoCredentialException/i.test(msg)) {
+    return copyDiagnostic(
+      Object.assign(new Error("No Google credential was available from Credential Manager"), {
+        code: "no_credentials",
+      }),
+      e,
+    );
+  }
+
   if (
     /credential.?manager|provider dependencies|device doesn't support/i.test(msg) ||
     code === "ERROR_UNSUPPORTED"
@@ -162,11 +170,14 @@ function mapAuthError(e) {
 
 function shouldRetryLegacyGoogle(error) {
   const code = String(error?.code || "").toLowerCase();
-  const msg = String(error?.message || error || "").toLowerCase();
+  const msg = String(
+    error?.nativeMessage || error?.message || error || "",
+  ).toLowerCase();
   return (
     code === "developer_error" ||
     code === "credential_manager_unsupported" ||
-    /provider dependencies|credential.?manager|getcredentialproviderconfiguration/i.test(
+    code === "no_credentials" ||
+    /no credentials available|no credential available|provider dependencies|credential.?manager|getcredentialproviderconfiguration/i.test(
       msg,
     ) ||
     /developer.?error|10\b|12500\b|configuration/i.test(`${code} ${msg}`)
@@ -259,33 +270,35 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     "@capacitor-firebase/authentication"
   );
 
-  console.info("[GoogleSignIn] native start: Credential Manager");
-
+  // The legacy native picker was previously working on this exact release
+  // path. Use it as the primary Android chooser so a Credential Manager
+  // "No credentials available" result cannot suppress the account list.
   let result;
+  let firstFailure = null;
+
   try {
-    result = await runNativeGoogleSignIn(FirebaseAuthentication, true);
-  } catch (firstError) {
-    const mappedFirst = mapAuthError(firstError);
+    console.info("[GoogleSignIn] native start: legacy account chooser");
+    result = await runNativeGoogleSignIn(FirebaseAuthentication, false);
+  } catch (legacyError) {
+    const mappedLegacy = mapAuthError(legacyError);
+    firstFailure = mappedLegacy;
     console.warn(
-      "[GoogleSignIn] Credential Manager failed; nativeCode=",
-      mappedFirst?.nativeCode || "",
+      "[GoogleSignIn] legacy chooser failed; nativeCode=",
+      mappedLegacy?.nativeCode || "",
       "message=",
-      mappedFirst?.nativeMessage || mappedFirst?.message || "",
+      mappedLegacy?.nativeMessage || mappedLegacy?.message || "",
     );
 
-    if (!shouldRetryLegacyGoogle(mappedFirst)) {
-      throw mappedFirst;
-    }
-
-    console.info("[GoogleSignIn] retrying legacy native Google Sign-In");
+    // Credential Manager is the fallback, not the gatekeeper.
     try {
-      result = await runNativeGoogleSignIn(FirebaseAuthentication, false);
-    } catch (legacyError) {
-      const mappedLegacy = mapAuthError(legacyError);
-      mappedLegacy.fallbackAttempted = true;
-      mappedLegacy.firstNativeCode = mappedFirst?.nativeCode || "";
-      mappedLegacy.firstNativeMessage = mappedFirst?.nativeMessage || "";
-      throw mappedLegacy;
+      console.info("[GoogleSignIn] retrying with Credential Manager");
+      result = await runNativeGoogleSignIn(FirebaseAuthentication, true);
+    } catch (credentialError) {
+      const mappedCredential = mapAuthError(credentialError);
+      mappedCredential.fallbackAttempted = true;
+      mappedCredential.firstNativeCode = firstFailure?.nativeCode || "";
+      mappedCredential.firstNativeMessage = firstFailure?.nativeMessage || "";
+      throw mappedCredential;
     }
   }
 
@@ -315,7 +328,9 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     mapped.firebaseAuthCode = String(
       firebaseError?.code || firebaseError?.errorCode || "",
     );
-    mapped.firebaseAuthMessage = String(firebaseError?.message || firebaseError || "");
+    mapped.firebaseAuthMessage = String(
+      firebaseError?.message || firebaseError || "",
+    );
     mapped.message = `Google Sign-In failed after account selection [${mapped.firebaseAuthCode || "unknown"}]: ${mapped.firebaseAuthMessage}`;
     throw mapped;
   }
@@ -371,11 +386,10 @@ export async function reauthenticateWithGoogleFlow(user) {
       );
       let result;
       try {
-        result = await runNativeGoogleSignIn(FirebaseAuthentication, true);
-      } catch (firstError) {
-        const mappedFirst = mapAuthError(firstError);
-        if (!shouldRetryLegacyGoogle(mappedFirst)) throw mappedFirst;
         result = await runNativeGoogleSignIn(FirebaseAuthentication, false);
+      } catch (legacyError) {
+        const mappedLegacy = mapAuthError(legacyError);
+        result = await runNativeGoogleSignIn(FirebaseAuthentication, true);
       }
 
       const idToken =

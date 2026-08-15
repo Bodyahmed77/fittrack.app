@@ -7,7 +7,6 @@
     "dev": "vite",
     "build": "vite build",
     "postinstall": "python3 scripts/apply-billing-native-diagnostics.py",
-    "patch:biling": "patch-package capacitor-billing",
     "preview": "vite preview",
     "cap:sync": "npx cap sync android"
   },

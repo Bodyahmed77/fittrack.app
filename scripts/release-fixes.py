@@ -1,10 +1,8 @@
 """Android release guardrails for Google Sign-In and Play Billing.
 
-This script intentionally keeps the native Android Google account chooser
-as the single release path. Credential Manager remains version-pinned in the
-Gradle workflow, but is not forced into the runtime sign-in flow: the current
-release line has already shown the Credential Manager "no credentials"
-symptom on the target device.
+The Android release uses the current Credential Manager path for Google Sign-In.
+The script preserves the real native error code so a configuration failure is
+never hidden behind a generic message.
 """
 from pathlib import Path
 import re
@@ -20,12 +18,10 @@ billing_text = BILLING.read_text(encoding="utf-8")
 google_auth_text = GOOGLE_AUTH.read_text(encoding="utf-8")
 
 # ---------------------------------------------------------------------------
-# Google Sign-In: do NOT let CI silently switch the runtime back to
-# Credential Manager. The installed Play build was returning "no credentials"
-# before an account chooser could appear. Keep one deterministic native path.
+# Google Sign-In: keep the modern Credential Manager runtime path enabled.
 # ---------------------------------------------------------------------------
 google_auth_text = google_auth_text.replace(
-    "useCredentialManager: true,", "useCredentialManager: false,"
+    "useCredentialManager: false,", "useCredentialManager: true,"
 )
 
 # Preserve the real Google status 10 instead of reducing it to a generic error.
@@ -85,9 +81,8 @@ native_log_new = '''    try {
     throw mapped;
 '''
 if "window.__fiftyFitGoogleAuthDiagnostics" not in google_auth_text:
-    if native_log_old not in google_auth_text:
-        raise SystemExit("Google auth native diagnostics anchor not found")
-    google_auth_text = google_auth_text.replace(native_log_old, native_log_new, 1)
+    if native_log_old in google_auth_text:
+        google_auth_text = google_auth_text.replace(native_log_old, native_log_new, 1)
 
 # ---------------------------------------------------------------------------
 # Billing: surface the actual Google Play response instead of always showing
@@ -139,9 +134,7 @@ app_new = '''      if (!shouldUnlock) {
         );
         return;
       }'''
-if "window.__fiftyFitLastBillingError" not in text:
-    if app_old not in text:
-        raise SystemExit("Billing UI diagnostics anchor not found")
+if "window.__fiftyFitLastBillingError" not in text and app_old in text:
     text = text.replace(app_old, app_new, 1)
 
 billing_old = '''    const token = extractPurchaseToken(result);
@@ -222,16 +215,13 @@ billing_new = '''    const token = extractPurchaseToken(result);
     }
 
     if (typeof billing.sendAck === "function") {'''
-if "const nativeResponseCode =" not in billing_text:
-    if billing_old not in billing_text:
-        raise SystemExit("Billing token diagnostics anchor not found")
+if "const nativeResponseCode =" not in billing_text and billing_old in billing_text:
     billing_text = billing_text.replace(billing_old, billing_new, 1)
 
 APP.write_text(text, encoding="utf-8")
 BILLING.write_text(billing_text, encoding="utf-8")
 GOOGLE_AUTH.write_text(google_auth_text, encoding="utf-8")
 
-# Keep the existing release-safety checks that matter to this build.
 checks = [
     ("App.jsx exists", APP.exists()),
     ("main.jsx exists", MAIN.exists()),
@@ -247,7 +237,7 @@ checks = [
     ("billing diagnostics UI present", "window.__fiftyFitLastBillingError" in text),
     ("billing pending guard present", "const purchaseIsCompleted =" in billing_text),
     ("billing response-code diagnostics present", "const nativeResponseCode =" in billing_text),
-    ("Google Credential Manager disabled", "useCredentialManager: false" in google_auth_text and "useCredentialManager: true" not in google_auth_text),
+    ("Google Credential Manager enabled", "useCredentialManager: true" in google_auth_text and "useCredentialManager: false" not in google_auth_text),
     ("Google Error 10 diagnostics present", "googleStatusCode: \"10\"" in google_auth_text),
     ("Google native diagnostics present", "window.__fiftyFitGoogleAuthDiagnostics" in google_auth_text),
 ]
@@ -255,4 +245,4 @@ failed = [label for label, ok in checks if not ok]
 if failed:
     raise SystemExit("release-fixes: required sanity checks failed: " + ", ".join(failed))
 
-print("release-fixes: Google legacy chooser + Billing diagnostics applied")
+print("release-fixes: Google Credential Manager + Billing diagnostics applied")

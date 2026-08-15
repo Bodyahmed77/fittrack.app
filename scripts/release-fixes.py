@@ -27,6 +27,7 @@ def function_block(source: str, signature: str, next_signature: str):
     return start, end
 
 
+# Keep the rolling 7-day strip anchored to real calendar dates.
 replace_once_or_already(
     'const iso = addDays(mondayOf(dateKey(0)), i);',
     'const iso = addDays(dateKey(0), i - 3);',
@@ -38,11 +39,15 @@ replace_once_or_already(
     "workout today detection",
 )
 
+# Android/WebView: ensure day buttons remain visible. This is visibility
+# hardening only; it does not alter the selected/completed colors.
 text = text.replace(
     '                  position: "relative",\n',
     '                  position: "relative",\n                  opacity: 1,\n                  visibility: "visible",\n',
     1,
 )
+
+# The native keyboard resizes the Capacitor viewport; do not double-subtract it.
 text = text.replace('          bottom: keyboardInset,', '          bottom: 0,', 1)
 text = text.replace(
     '          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",\n',
@@ -50,7 +55,9 @@ text = text.replace(
     1,
 )
 
-# Training-plan authority
+# ---------------------------------------------------------------------------
+# Training plan authority
+# ---------------------------------------------------------------------------
 helper_marker = '/* ============================== EXERCISE MERGE HELPERS ============================== */'
 helper = '''function isCustomTrainingPlanActive(data) {\n  return !!data?.customTrainingPlan && data.customTrainingPlanActive === true;\n}\n\n'''
 if 'function isCustomTrainingPlanActive(data)' not in text:
@@ -68,21 +75,22 @@ text = text.replace(
     'const assignedCustomDay = isCustomTrainingPlanActive(data)\n    ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]\n    : null;',
 )
 
-replace_once_or_already(
-    '    customTrainingPlan: null,\n    customNutritionPlan: null,',
-    '    customTrainingPlan: null,\n    customTrainingPlanActive: false,\n    customNutritionPlan: null,',
-    "fresh training-plan active flag",
-)
+# Persist the explicit selector flag through default state and Firestore hydration.
+# These are optional compatibility additions: if the current state already
+# contains them, leave it untouched instead of forcing a legacy text block.
+if 'customTrainingPlanActive: false,' not in text:
+    text = text.replace(
+        '    customTrainingPlan: null,\n    customNutritionPlan: null,',
+        '    customTrainingPlan: null,\n    customTrainingPlanActive: false,\n    customNutritionPlan: null,',
+        1,
+    )
+if 'customTrainingPlanActive: parsed.customTrainingPlanActive === true,' not in text:
+    hydration_old = '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customNutritionPlan: parsed.customNutritionPlan || null,'
+    hydration_new = '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customTrainingPlanActive: parsed.customTrainingPlanActive === true,\n          customNutritionPlan: parsed.customNutritionPlan || null,'
+    if hydration_old in text:
+        text = text.replace(hydration_old, hydration_new, 1)
 
-# Current builds may already hydrate customTrainingPlan through a different
-# state-normalization path. Never fail the release just because this exact old
-# Firestore snippet is absent; preserve it when the source still has it.
-text = text.replace(
-    '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
-    '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customTrainingPlanActive: parsed.customTrainingPlanActive === true,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
-    1,
-)
-
+# Choosing a built-in plan explicitly disables the personalized override.
 ps, pe = function_block(text, 'function PlanDetailScreen(', '/* ============================== PAYWALL ============================== */')
 plan_detail = text[ps:pe]
 if 'next.customTrainingPlanActive = false;' not in plan_detail:
@@ -93,6 +101,7 @@ if 'next.customTrainingPlanActive = false;' not in plan_detail:
     )
 text = text[:ps] + plan_detail + text[pe:]
 
+# The personalized plan card becomes the actual activation control.
 ps, pe = function_block(text, 'function PlansScreen(', 'function PlanDetailScreen(')
 plans = text[ps:pe]
 if 'const customTrainingActive = isCustomTrainingPlanActive(data);' not in plans:
@@ -115,8 +124,17 @@ plans = plans.replace(
 )
 text = text[:ps] + plans + text[pe:]
 
+# ---------------------------------------------------------------------------
 # Cardio state authority
-cps, cpe = function_block(text, 'function CardioExerciseView(', '/* ============================== EXERCISE DETAIL SCREEN ============================== */')
+# ---------------------------------------------------------------------------
+# Do not assume a specific old timer snippet exists. Instead, inspect only the
+# current CardioExerciseView block and remove stale-resume declarations if
+# they still exist. Already-fixed code passes through unchanged.
+cps, cpe = function_block(
+    text,
+    'function CardioExerciseView(',
+    '/* ============================== EXERCISE DETAIL SCREEN ============================== */',
+)
 cardio = text[cps:cpe]
 cardio = re.sub(r'^\s*const existingStartedAt = .*?\n', '', cardio, flags=re.M)
 cardio = re.sub(r'^\s*const existingElapsed = .*?\n', '', cardio, flags=re.M)
@@ -126,6 +144,9 @@ text = text[:cps] + cardio + text[cpe:]
 
 APP.write_text(text, encoding="utf-8")
 
+# ---------------------------------------------------------------------------
+# Final source assertions
+# ---------------------------------------------------------------------------
 final = APP.read_text(encoding="utf-8")
 main_text = MAIN.read_text(encoding="utf-8")
 required_markers = [
@@ -137,7 +158,7 @@ required_markers = [
     'customTrainingPlanActive: false,',
     'next.customTrainingPlanActive = false;',
     'next.customTrainingPlanActive = true;',
-    'activePlanId = "custom";',
+    'next.activePlanId = "custom";',
 ]
 for marker in required_markers:
     if marker not in final:

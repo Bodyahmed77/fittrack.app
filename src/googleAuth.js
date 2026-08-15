@@ -22,6 +22,7 @@ import {
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { Capacitor } from "@capacitor/core";
+import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import { auth, db } from "./firebase";
 
 const GOOGLE_SIGNIN_TIMEOUT_MS = 90000;
@@ -220,7 +221,7 @@ async function webGoogleSignIn() {
   );
 }
 
-async function runNativeGoogleSignIn(FirebaseAuthentication) {
+async function runNativeGoogleSignIn() {
   return withTimeout(
     FirebaseAuthentication.signInWithGoogle({
       useCredentialManager: false,
@@ -232,16 +233,12 @@ async function runNativeGoogleSignIn(FirebaseAuthentication) {
 }
 
 async function nativeGoogleSignIn(localLang, createInitialState) {
-  const { FirebaseAuthentication } = await import(
-    "@capacitor-firebase/authentication"
-  );
-
   let result;
   try {
     console.info(
       "[GoogleSignIn] native start: Credential Manager disabled for Android release compatibility",
     );
-    result = await runNativeGoogleSignIn(FirebaseAuthentication);
+    result = await runNativeGoogleSignIn();
   } catch (nativeError) {
     const mapped = mapAuthError(nativeError);
     console.error(
@@ -334,10 +331,7 @@ export async function reauthenticateWithGoogleFlow(user) {
   const native = await isNativePlatform();
   try {
     if (native) {
-      const { FirebaseAuthentication } = await import(
-        "@capacitor-firebase/authentication"
-      );
-      const result = await runNativeGoogleSignIn(FirebaseAuthentication);
+      const result = await runNativeGoogleSignIn();
       const idToken =
         result?.credential?.idToken ||
         result?.credential?.id_token ||

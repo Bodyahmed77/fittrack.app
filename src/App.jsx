@@ -2627,7 +2627,7 @@ function useAppData(uid) {
           },
           customPlan: parsed.customPlan || {},
           customTrainingPlan: parsed.customTrainingPlan || null,
-          customTrainingPlanActive: parsed.customTrainingPlanActive !== false,
+          customTrainingPlanActive: parsed.customTrainingPlanActive === true,
           customNutritionPlan: parsed.customNutritionPlan || null,
         };
         setDataRaw(merged);
@@ -5315,9 +5315,16 @@ function HomeScreen({ data, go }) {
   const dayName = planDayForDate(data, dateKey(0));
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
+  const customActive = isCustomTrainingPlanActive(data);
+  const customDay = customActive
+    ? data.customTrainingPlan?.days?.[DAYS.indexOf(dayName)]
+    : null;
   const dayTitle = ar
-    ? activePlan.schedule[dayName].titleAr
-    : activePlan.schedule[dayName].title;
+    ? (customDay?.titleAr || customDay?.title || activePlan.schedule[dayName].titleAr)
+    : (customDay?.title || activePlan.schedule[dayName].title);
+  const planDisplayName = ar
+    ? (data.customTrainingPlan?.nameAr || data.customTrainingPlan?.name || activePlan.nameAr)
+    : (data.customTrainingPlan?.name || activePlan.name);
   const { list: exercises } = getUsableExercises(data, dayName);
   const isRest = exercises.length === 0;
 
@@ -5958,7 +5965,8 @@ function WorkoutScreen({
   const ar = lang === "ar";
   const activePlan =
     PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const assignedCustomDay = isCustomTrainingPlanActive(data)
+  const customActive = isCustomTrainingPlanActive(data);
+  const assignedCustomDay = customActive
     ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]
     : null;
   const daySchedule = assignedCustomDay || activePlan.schedule[selectedDay];
@@ -6045,7 +6053,7 @@ function WorkoutScreen({
           {/* Dynamic 7-day window anchored on today so the strip advances
               as calendar days pass (not a fixed dead-end range). */}
           {Array.from({ length: 7 }, (_, i) => {
-            const iso = addDays(dateKey(0), i - 3);
+            const iso = addDays(dateKey(0), i - 2);
             const calendarDay = weekdayOf(iso);
             const d = planDayForDate(data, iso);
             const isSelected = iso === selectedDate;
@@ -6151,8 +6159,8 @@ function WorkoutScreen({
         </div>
         <div style={{ color: C.sub, fontSize: 12.5, marginTop: 2 }}>
           {ar
-            ? `${exercises.length} تمارين · ${activePlan.nameAr}`
-            : `${exercises.length} Exercises · ${activePlan.name}`}
+            ? `${exercises.length} تمارين · ${customActive ? (data.customTrainingPlan?.nameAr || data.customTrainingPlan?.name || activePlan.nameAr) : activePlan.nameAr}`
+            : `${exercises.length} Exercises · ${customActive ? (data.customTrainingPlan?.name || activePlan.name) : activePlan.name}`}
         </div>
       </div>
 
@@ -8831,6 +8839,7 @@ function PlansScreen({ data, setData, go, showToast }) {
               }
               const next = clone(data);
               next.customTrainingPlanActive = true;
+              next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);
               setData(next);
               showToast(ar ? "تم تفعيل خطة التدريب المخصصة" : "Personalized training plan activated");
             }}
@@ -8978,7 +8987,7 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
   const ar = lang === "ar";
   const [day, setDay] = useState(() => planDayForDate(data, dateKey(0)));
   const plan = PLAN_TEMPLATES[planId] || PLAN_TEMPLATES.beginner;
-  const isActive = data.activePlanId === planId;
+  const isActive = !isCustomTrainingPlanActive(data) && data.activePlanId === planId;
   const daySchedule = plan.schedule[day];
   // Free accounts preview the same four exercises they can actually train.
   const trainingPro = data.entitlements.trainingPro;
@@ -8991,7 +9000,8 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
     const next = clone(data);
     next.activePlanId = planId;
     next.customTrainingPlanActive = false;
-    // Switching to a Pro plan starts that plan from Day 1 today.
+    next.workoutStartDate = dateKey(0);
+    // Switching to any built-in plan starts that plan from Day 1 today.
     if (plan.pro && data.entitlements.trainingPro && !isActive) {
       next.workoutStartDate = dateKey(0);
     }

@@ -4,9 +4,15 @@
  * Web / desktop: Firebase JS signInWithPopup.
  * Android / iOS: @capacitor-firebase/authentication.
  *
- * Android uses Credential Manager as the primary, modern sign-in path.
- * The legacy native Google account chooser is a fallback only, used when
- * Credential Manager genuinely cannot provide a credential.
+ * Android deliberately uses the native Google account chooser without
+ * Credential Manager for the current Android release line. The
+ * @capacitor-firebase/authentication 7.x line documents Credential Manager
+ * as the default modern path, but its maintainers added an explicit
+ * disable switch after production issues with Credential Manager; Android
+ * 36 / "no credentials" failures are also documented in the project's
+ * issue tracker. Using one native path avoids the previous double-attempt
+ * flow where Credential Manager failed first and the legacy chooser then
+ * failed as a second operation, producing only "fallback attempted".
  */
 import {
   GoogleAuthProvider,
@@ -15,8 +21,8 @@ import {
   signInWithPopup,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { auth, db } from "./firebase";
 import { Capacitor } from "@capacitor/core";
+import { auth, db } from "./firebase";
 
 const GOOGLE_SIGNIN_TIMEOUT_MS = 90000;
 const SETTLED_EVENT = "ft-google-auth-settled";
@@ -52,14 +58,6 @@ export function subscribeGoogleAuthSettled(handler) {
   };
 }
 
-async function isNativePlatform() {
-  try {
-    return Capacitor.isNativePlatform();
-  } catch (_) {
-    return false;
-  }
-}
-
 function withTimeout(promise, ms, label) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -68,13 +66,13 @@ function withTimeout(promise, ms, label) {
       reject(err);
     }, ms);
     promise.then(
-      (v) => {
+      (value) => {
         clearTimeout(timer);
-        resolve(v);
+        resolve(value);
       },
-      (e) => {
+      (error) => {
         clearTimeout(timer);
-        reject(e);
+        reject(error);
       },
     );
   });
@@ -92,10 +90,10 @@ function copyDiagnostic(err, raw) {
   return err;
 }
 
-function mapAuthError(e) {
-  if (!e) return e;
-  const code = e.code || e.errorCode || "";
-  const msg = String(e.message || e).toLowerCase();
+function mapAuthError(error) {
+  if (!error) return error;
+  const code = String(error.code || error.errorCode || "");
+  const message = String(error.message || error).toLowerCase();
 
   if (
     code === "auth/popup-closed-by-user" ||
@@ -103,57 +101,35 @@ function mapAuthError(e) {
     code === "ERROR_CANCELLED" ||
     code === "canceled" ||
     code === "cancelled" ||
-    /cancel|cancell?ed|user.?denied|access.?denied/i.test(msg)
+    /cancel|cancell?ed|user.?denied|access.?denied/i.test(message)
   ) {
     return copyDiagnostic(
       Object.assign(new Error("Google Sign-In was cancelled"), {
         code: "cancelled",
       }),
-      e,
+      error,
     );
   }
 
-  if (code === "timeout" || /timed?\s*out/i.test(msg)) {
+  if (code === "timeout" || /timed?\s*out/i.test(message)) {
     return copyDiagnostic(
-      Object.assign(new Error(e.message || "Google Sign-In timed out"), {
+      Object.assign(new Error(error.message || "Google Sign-In timed out"), {
         code: "timeout",
       }),
-      e,
+      error,
     );
   }
 
-  if (/no.?id.?token|missing.?id.?token|null.?credential/i.test(msg)) {
+  if (/no.?id.?token|missing.?id.?token|null.?credential/i.test(message)) {
     return copyDiagnostic(
       Object.assign(new Error("Could not get a Google ID token"), {
         code: "no_id_token",
       }),
-      e,
+      error,
     );
   }
 
-  if (/no credentials available|no credential available|NoCredentialException/i.test(msg)) {
-    return copyDiagnostic(
-      Object.assign(new Error("No Google credential was available from Credential Manager"), {
-        code: "no_credentials",
-      }),
-      e,
-    );
-  }
-
-  if (
-    /credential.?manager|provider dependencies|device doesn't support/i.test(msg) ||
-    code === "ERROR_UNSUPPORTED"
-  ) {
-    return copyDiagnostic(
-      Object.assign(
-        new Error("Google Credential Manager is unavailable on this device"),
-        { code: "credential_manager_unsupported" },
-      ),
-      e,
-    );
-  }
-
-  if (/developer.?error|DEVELOPER_ERROR|configuration/i.test(code + " " + msg)) {
+  if (/developer.?error|DEVELOPER_ERROR|configuration/i.test(`${code} ${message}`)) {
     return copyDiagnostic(
       Object.assign(
         new Error(
@@ -161,27 +137,11 @@ function mapAuthError(e) {
         ),
         { code: "developer_error" },
       ),
-      e,
+      error,
     );
   }
 
-  return e;
-}
-
-function shouldRetryLegacyGoogle(error) {
-  const code = String(error?.code || "").toLowerCase();
-  const msg = String(
-    error?.nativeMessage || error?.message || error || "",
-  ).toLowerCase();
-  return (
-    code === "developer_error" ||
-    code === "credential_manager_unsupported" ||
-    code === "no_credentials" ||
-    /no credentials available|no credential available|provider dependencies|credential.?manager|getcredentialproviderconfiguration/i.test(
-      msg,
-    ) ||
-    /developer.?error|10\b|12500\b|configuration/i.test(`${code} ${msg}`)
-  );
+  return error;
 }
 
 function minimalInitialState(user, localLang) {
@@ -221,8 +181,8 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
     if (Object.keys(patch).length) {
       try {
         await setDoc(ref, patch, { merge: true });
-      } catch (e) {
-        console.warn("[GoogleSignIn] ensureUserDoc patch failed", e);
+      } catch (error) {
+        console.warn("[GoogleSignIn] ensureUserDoc patch failed", error);
       }
     }
     return;
@@ -235,8 +195,16 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
 
   try {
     await setDoc(ref, initial, { merge: true });
-  } catch (e) {
-    console.warn("[GoogleSignIn] ensureUserDoc create failed", e);
+  } catch (error) {
+    console.warn("[GoogleSignIn] ensureUserDoc create failed", error);
+  }
+}
+
+async function isNativePlatform() {
+  try {
+    return Capacitor.isNativePlatform();
+  } catch (_) {
+    return false;
   }
 }
 
@@ -252,16 +220,14 @@ async function webGoogleSignIn() {
   );
 }
 
-async function runNativeGoogleSignIn(FirebaseAuthentication, useCredentialManager) {
+async function runNativeGoogleSignIn(FirebaseAuthentication) {
   return withTimeout(
     FirebaseAuthentication.signInWithGoogle({
-      useCredentialManager,
+      useCredentialManager: false,
       skipNativeAuth: true,
     }),
     GOOGLE_SIGNIN_TIMEOUT_MS,
-    useCredentialManager
-      ? "Google Sign-In (Credential Manager)"
-      : "Google Sign-In (legacy native)",
+    "Google Sign-In (native)",
   );
 }
 
@@ -270,45 +236,20 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     "@capacitor-firebase/authentication"
   );
 
-  // Credential Manager is the primary, modern Android sign-in path (the
-  // @capacitor-firebase/authentication plugin itself defaults
-  // useCredentialManager to true since v7.2.0). The legacy native account
-  // chooser is a fallback only, for devices/situations where Credential
-  // Manager genuinely cannot provide a credential. A version skew between
-  // androidx.credentials:credentials and its documented-required matched
-  // companion androidx.credentials:credentials-play-services-auth (they
-  // must always share the same version — see android/variables.gradle in
-  // the CI workflow) is the most likely explanation for the earlier
-  // "no_credentials" failures, though not yet confirmed on a real
-  // release build. Routing around Credential Manager was not a fix for
-  // that regardless — it only masked whatever the underlying cause was.
   let result;
-  let firstFailure = null;
-
   try {
-    console.info("[GoogleSignIn] native start: Credential Manager");
-    result = await runNativeGoogleSignIn(FirebaseAuthentication, true);
-  } catch (credentialManagerError) {
-    const mappedCredentialManager = mapAuthError(credentialManagerError);
-    firstFailure = mappedCredentialManager;
-    console.warn(
-      "[GoogleSignIn] Credential Manager failed; nativeCode=",
-      mappedCredentialManager?.nativeCode || "",
-      "message=",
-      mappedCredentialManager?.nativeMessage || mappedCredentialManager?.message || "",
+    console.info(
+      "[GoogleSignIn] native start: Credential Manager disabled for Android release compatibility",
     );
-
-    // Legacy native picker is the fallback, not the primary path.
-    try {
-      console.info("[GoogleSignIn] retrying with legacy account chooser");
-      result = await runNativeGoogleSignIn(FirebaseAuthentication, false);
-    } catch (legacyError) {
-      const mappedLegacy = mapAuthError(legacyError);
-      mappedLegacy.fallbackAttempted = true;
-      mappedLegacy.firstNativeCode = firstFailure?.nativeCode || "";
-      mappedLegacy.firstNativeMessage = firstFailure?.nativeMessage || "";
-      throw mappedLegacy;
-    }
+    result = await runNativeGoogleSignIn(FirebaseAuthentication);
+  } catch (nativeError) {
+    const mapped = mapAuthError(nativeError);
+    console.error(
+      "[GoogleSignIn] native chooser failed",
+      mapped?.nativeCode || mapped?.code || "",
+      mapped?.nativeMessage || mapped?.message || "",
+    );
+    throw mapped;
   }
 
   const idToken =
@@ -327,7 +268,10 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     throw err;
   }
 
-  const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+  const credential = GoogleAuthProvider.credential(
+    idToken,
+    accessToken || undefined,
+  );
 
   let userCred;
   try {
@@ -346,8 +290,8 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
 
   try {
     await ensureUserDoc(userCred, localLang, createInitialState);
-  } catch (e) {
-    console.warn("[GoogleSignIn] ensureUserDoc after native sign-in", e);
+  } catch (error) {
+    console.warn("[GoogleSignIn] ensureUserDoc after native sign-in", error);
   }
 
   console.info(
@@ -372,15 +316,15 @@ export async function signInWithGoogleFlow(localLang = "en", createInitialState)
     await ensureUserDoc(userCred, localLang, createInitialState);
     console.info(
       "[GoogleSignIn] web success uid length",
-      userCred.user.uid.length,
+      userCred.user?.uid?.length || 0,
     );
     emitAuthSettled({ ok: true, reason: "popup_success" });
     return userCred;
-  } catch (e) {
-    const mapped = mapAuthError(e);
+  } catch (error) {
+    const mapped = mapAuthError(error);
     emitAuthSettled({
       ok: false,
-      reason: mapped?.code || e?.code || "error",
+      reason: mapped?.code || error?.code || "error",
     });
     throw mapped;
   }
@@ -393,18 +337,7 @@ export async function reauthenticateWithGoogleFlow(user) {
       const { FirebaseAuthentication } = await import(
         "@capacitor-firebase/authentication"
       );
-      let result;
-      try {
-        result = await runNativeGoogleSignIn(FirebaseAuthentication, true);
-      } catch (credentialManagerError) {
-        const mappedCredentialManager = mapAuthError(credentialManagerError);
-        console.warn(
-          "[GoogleSignIn] reauth Credential Manager failed; nativeCode=",
-          mappedCredentialManager?.nativeCode || "",
-        );
-        result = await runNativeGoogleSignIn(FirebaseAuthentication, false);
-      }
-
+      const result = await runNativeGoogleSignIn(FirebaseAuthentication);
       const idToken =
         result?.credential?.idToken ||
         result?.credential?.id_token ||
@@ -419,7 +352,10 @@ export async function reauthenticateWithGoogleFlow(user) {
         err.code = "no_id_token";
         throw err;
       }
-      const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+      const credential = GoogleAuthProvider.credential(
+        idToken,
+        accessToken || undefined,
+      );
       return reauthenticateWithCredential(user, credential);
     }
 
@@ -437,8 +373,8 @@ export async function reauthenticateWithGoogleFlow(user) {
       throw err;
     }
     return reauthenticateWithCredential(user, credential);
-  } catch (e) {
-    throw mapAuthError(e);
+  } catch (error) {
+    throw mapAuthError(error);
   }
 }
 

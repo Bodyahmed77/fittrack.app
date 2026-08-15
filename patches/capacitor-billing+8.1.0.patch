@@ -1,0 +1,109 @@
+diff --git a/node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java b/node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+--- a/node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
++++ b/node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+@@ -45,7 +45,7 @@ public class BillingPlugin extends Plugin {
+         if (code == BillingClient.BillingResponseCode.OK
+                 && (productDetailsList == null || productDetailsList.isEmpty())) {
+             call.reject(
+                     "Error retrieving product details: Play returned no product for productId=\""
+@@ -55,7 +55,7 @@ public class BillingPlugin extends Plugin {
+                             + productType
+                             + "\". Add this managed product or subscription in Play Console for the same applicationId as this app, publish it (e.g. internal testing), and install a build signed with a key Play knows for that listing.");
+         } else {
+             String suffix = dbg.isEmpty() ? ("billingResponseCode=" + code) : ("billingResponseCode=" + code + ": " + dbg);
+-            call.reject("Error retrieving product details: " + suffix);
++            call.reject("Error retrieving product details: " + suffix, String.valueOf(code));
+         }
+     }
+@@ -82,9 +82,9 @@ public class BillingPlugin extends Plugin {
+             } else if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.USER_CANCELED) {
+-                call.reject("Purchase canceled");
++                call.reject("Purchase canceled", String.valueOf(billingResult.getResponseCode()));
+             } else {
+-                call.reject("Error during purchase: " + billingResult.getDebugMessage());
++                call.reject("Error during purchase: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));
+             }
+         };
+     }
+@@ -134,6 +134,10 @@ public class BillingPlugin extends Plugin {
+                                 ret.put("price_currency_code", offerDetails.getPriceCurrencyCode());
+                             }
+ 
+                             if (productDetails.getSubscriptionOfferDetails() != null && !productDetails.getSubscriptionOfferDetails().isEmpty()) {
+                                 ProductDetails.SubscriptionOfferDetails subscriptionOfferDetails = productDetails.getSubscriptionOfferDetails().get(0);
++                                ret.put("subscription_offer_count", productDetails.getSubscriptionOfferDetails().size());
++                                ret.put("base_plan_id", subscriptionOfferDetails.getBasePlanId());
++                                ret.put("offer_id", subscriptionOfferDetails.getOfferId());
++                                ret.put("offer_token", subscriptionOfferDetails.getOfferToken());
+                                 ProductDetails.PricingPhases pricingPhases = subscriptionOfferDetails.getPricingPhases();
+                                 ProductDetails.PricingPhase pricingPhase = pricingPhases.getPricingPhaseList().get(0);
+@@ -148,7 +152,7 @@ public class BillingPlugin extends Plugin {
+                     }
+                 } else {
+-                    call.reject("Billing service not connected");
++                    call.reject("Billing service not connected: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));
+                 }
+             }
+ 
+             @Override
+             public void onBillingServiceDisconnected() {
+-                call.reject("Billing service disconnected");
++                call.reject("Billing service disconnected", String.valueOf(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED));
+             }
+         });
+     }
+@@ -190,7 +194,7 @@ public class BillingPlugin extends Plugin {
+ 
+                                 BillingResult billingResult2 = billingClient.launchBillingFlow(bridge.getActivity(), billingFlowParams);
+                                 if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+-                                    call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());
++                                    call.reject("Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));
+                                 }
+                             } else {
+@@ -203,15 +207,15 @@ public class BillingPlugin extends Plugin {
+ 
+                                 BillingResult billingResult2 = billingClient.launchBillingFlow(bridge.getActivity(), billingFlowParams);
+                                 if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+-                                    call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());
++                                    call.reject("Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));
+                                 }
+                             }
+                         } else {
+@@ -220,9 +224,9 @@ public class BillingPlugin extends Plugin {
+                     }
+                 } else {
+-                    call.reject("Billing service not connected");
++                    call.reject("Billing service not connected: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));
+                 }
+             }
+ 
+             @Override
+             public void onBillingServiceDisconnected() {
+-                call.reject("Billing service disconnected");
++                call.reject("Billing service disconnected", String.valueOf(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED));
+             }
+         });
+     }
+@@ -237,7 +241,7 @@ public class BillingPlugin extends Plugin {
+                     billingClient.acknowledgePurchase(acknowledgePurchaseParams, billingResult1 -> {
+                         if (billingResult1.getResponseCode() == BillingClient.BillingResponseCode.OK) {
+                             call.resolve();
+                         } else {
+-                            call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage());
++                            call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage(), String.valueOf(billingResult1.getResponseCode()));
+                         }
+                     });
+                 } else {
+-                    call.reject("Billing service not connected");
++                    call.reject("Billing service not connected: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));
+                 }
+             }
+ 
+             @Override
+             public void onBillingServiceDisconnected() {
+-                call.reject("Billing service disconnected");
++                call.reject("Billing service disconnected", String.valueOf(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED));
+             }
+         });
+     }
+ }

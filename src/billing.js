@@ -9,6 +9,7 @@ import { BILLING_PRODUCTS } from "./config";
 
 let plugin = null;
 let purchaseInFlight = false;
+let billingConnected = false;
 
 async function getPlugin() {
   if (plugin) return plugin;
@@ -19,6 +20,31 @@ async function getPlugin() {
   } catch (e) {
     console.warn("Billing plugin unavailable", e);
     return null;
+  }
+}
+
+async function ensureBillingConnection(billing) {
+  if (!billing || typeof billing.startConnection !== "function") return;
+  if (billingConnected) return;
+  try {
+    const result = await billing.startConnection();
+    const responseCode =
+      result?.responseCode ??
+      result?.billingResponseCode ??
+      result?.response?.responseCode;
+    if (responseCode != null && String(responseCode) !== "0") {
+      throw billingError(
+        {
+          responseCode,
+          message: result?.debugMessage || result?.response?.message,
+        },
+        "billing_connection_failed",
+      );
+    }
+    billingConnected = true;
+  } catch (e) {
+    billingConnected = false;
+    throw billingError(e, "billing_connection_failed");
   }
 }
 
@@ -112,6 +138,35 @@ function productMatches(product, productId) {
   return ids.includes(productId);
 }
 
+function extractOfferToken(product) {
+  const candidates = [
+    ...(Array.isArray(product?.subscriptionOfferDetails)
+      ? product.subscriptionOfferDetails
+      : []),
+    ...(Array.isArray(product?.subscriptionOffers) ? product.subscriptionOffers : []),
+    ...(Array.isArray(product?.offers) ? product.offers : []),
+    ...(Array.isArray(product?.basePlanOffers) ? product.basePlanOffers : []),
+  ];
+
+  for (const offer of candidates) {
+    const token =
+      offer?.offerToken ||
+      offer?.offer_token ||
+      offer?.token ||
+      offer?.offer?.offerToken ||
+      offer?.offer?.offer_token;
+    if (typeof token === "string" && token) return token;
+  }
+
+  return (
+    product?.offerToken ||
+    product?.offer_token ||
+    product?.basePlanOfferToken ||
+    product?.base_plan_offer_token ||
+    null
+  );
+}
+
 export async function queryProducts() {
   const billing = await getPlugin();
   if (!billing) return { preview: true, products: null };
@@ -128,6 +183,8 @@ export async function queryProducts() {
   }
 
   try {
+    await ensureBillingConnection(billing);
+
     let result = null;
     if (typeof billing.queryProductDetails === "function") {
       result = await billing.queryProductDetails({ products: ids, type: "SUBS" });
@@ -186,38 +243,48 @@ export async function purchase(planId, durationId) {
   purchaseInFlight = true;
 
   try {
+    await ensureBillingConnection(billing);
+
+    let offerToken = null;
     if (typeof billing.queryProductDetails === "function" || typeof billing.querySkuDetails === "function") {
       const catalog = await queryProducts();
       if (catalog?.error) {
         return { success: false, preview: false, error: catalog.error };
       }
       const list = Array.isArray(catalog?.products) ? catalog.products : [];
-      if (list.length && !list.some((p) => productMatches(p, productId))) {
+      const product = list.find((p) => productMatches(p, productId));
+
+      if (!product) {
+        const unfetched = Array.isArray(catalog?.unfetched) ? catalog.unfetched : [];
+        const detail = unfetched.find(
+          (p) =>
+            p?.productId === productId ||
+            p?.product === productId ||
+            p?.id === productId,
+        );
+        const reason =
+          detail?.statusCode ??
+          detail?.billingResponseCode ??
+          detail?.responseCode ??
+          detail?.message ??
+          "product_not_returned_by_google_play";
         return {
           success: false,
           preview: false,
           error: Object.assign(
-            new Error(`Google Play product is unavailable: ${productId}`),
-            { code: "product_unavailable" },
+            new Error(`Google Play product unavailable: ${productId} (${reason})`),
+            { code: "product_unavailable", productId, reason },
           ),
         };
       }
-      if (!list.length) {
-        return {
-          success: false,
-          preview: false,
-          error: Object.assign(
-            new Error(`Google Play product is unavailable: ${productId}`),
-            { code: "product_unavailable" },
-          ),
-        };
-      }
+
+      offerToken = extractOfferToken(product);
     }
 
-    const result = await billing.launchBillingFlow({
-      product: productId,
-      type: "SUBS",
-    });
+    const launchArgs = { product: productId, type: "SUBS" };
+    if (offerToken) launchArgs.offerToken = offerToken;
+
+    const result = await billing.launchBillingFlow(launchArgs);
 
     const responseCode =
       result?.responseCode ??
@@ -268,6 +335,12 @@ export async function purchase(planId, durationId) {
       } catch (ackErr) {
         return { success: false, preview: false, error: billingError(ackErr, "ack_failed") };
       }
+    } else if (typeof billing.acknowledgePurchase === "function") {
+      try {
+        await billing.acknowledgePurchase({ purchaseToken: token });
+      } catch (ackErr) {
+        return { success: false, preview: false, error: billingError(ackErr, "ack_failed") };
+      }
     } else {
       return {
         success: false,
@@ -288,7 +361,6 @@ export async function purchase(planId, durationId) {
       result,
     };
   } catch (e) {
-    // Do not disconnect the shared native BillingClient after an error.
     return {
       success: false,
       preview: false,
@@ -307,6 +379,8 @@ export async function restorePurchases() {
   const purchasesOut = [];
 
   try {
+    await ensureBillingConnection(billing);
+
     let purchases = [];
     if (typeof billing.queryPurchases === "function") {
       const result = await billing.queryPurchases({ type: "SUBS" });

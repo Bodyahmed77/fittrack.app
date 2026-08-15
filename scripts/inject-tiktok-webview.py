@@ -48,10 +48,29 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TikTokWebViewActivity extends Activity {
     public static final String EXTRA_URL = "url";
     private WebView webView;
+
+    private static String officialPlayerUrl(String raw) {
+        if (raw == null) return null;
+        String id = null;
+        if (raw.matches("https://www\\.tiktok\\.com/player/v1/\\d{15,}.*")) return raw;
+        if (raw.matches("\\d{15,}")) {
+            id = raw;
+        } else {
+            Matcher m = Pattern.compile("/video/(\\d{15,})", Pattern.CASE_INSENSITIVE).matcher(raw);
+            if (m.find()) id = m.group(1);
+        }
+        if (id == null) return raw;
+        return "https://www.tiktok.com/player/v1/" + id
+            + "?autoplay=1&controls=1&progress_bar=1&play_button=1"
+            + "&volume_control=1&fullscreen_button=1&timestamp=1"
+            + "&music_info=1&description=1&rel=0&native_context_menu=0";
+    }
 
     @Override
     protected void onCreate(Bundle state) {
@@ -89,17 +108,15 @@ public class TikTokWebViewActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String u = request.getUrl().toString();
-                // Keep all web navigation inside the app. Never hand off to
-                // tiktok://, intent://, or any other external app scheme.
                 if (!(u.startsWith("http://") || u.startsWith("https://"))) return true;
-                view.loadUrl(u);
+                view.loadUrl(officialPlayerUrl(u));
                 return true;
             }
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 if (!(url.startsWith("http://") || url.startsWith("https://"))) return true;
-                view.loadUrl(url);
+                view.loadUrl(officialPlayerUrl(url));
                 return true;
             }
 
@@ -109,7 +126,7 @@ public class TikTokWebViewActivity extends Activity {
                     view.loadDataWithBaseURL(
                         "https://www.tiktok.com/",
                         "<html><body style='background:#000;color:#fff;font-family:sans-serif;padding:24px'>" +
-                        "<h3>Video page could not be loaded</h3><p>Check your internet connection and try again.</p>" +
+                        "<h3>Video could not be loaded</h3><p>Please check your internet connection and try again.</p>" +
                         "</body></html>",
                         "text/html", "UTF-8", null
                     );
@@ -134,7 +151,7 @@ public class TikTokWebViewActivity extends Activity {
         setContentView(root);
         String url = getIntent().getStringExtra(EXTRA_URL);
         if (url != null && (url.startsWith("https://") || url.startsWith("http://"))) {
-            webView.loadUrl(url);
+            webView.loadUrl(officialPlayerUrl(url));
         }
     }
 
@@ -186,4 +203,4 @@ if 'TikTokWebViewActivity' not in text:
     text = text[:marker] + activity + text[marker:]
     manifest.write_text(text, encoding='utf-8')
 
-print('Injected native in-app TikTok WebView plugin')
+print('Injected deterministic in-app TikTok Player WebView')

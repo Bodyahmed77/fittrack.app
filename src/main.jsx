@@ -24,12 +24,67 @@ function setKeyboardHeight(height) {
   document.documentElement.style.setProperty("--ff-keyboard-height", `${px}px`);
 }
 
+function syncKeyboardFromViewport() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const vv = window.visualViewport;
+  if (!vv) {
+    setKeyboardHeight(0);
+    return;
+  }
+  // When Android uses adjustResize, innerHeight shrinks with the keyboard and
+  // this delta becomes ~0. When the WebView is not resized, visualViewport
+  // shrinks while innerHeight stays large, giving us the actual overlay inset.
+  const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  setKeyboardHeight(inset);
+}
+
+function keepFocusedFieldVisible() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const el = document.activeElement;
+  if (!el || !["INPUT", "TEXTAREA"].includes(el.tagName) && !el.isContentEditable) return;
+  const vv = window.visualViewport;
+  const visibleBottom = (vv?.height || window.innerHeight) - 14;
+  const rect = el.getBoundingClientRect();
+  if (rect.bottom > visibleBottom) {
+    window.scrollBy({ top: rect.bottom - visibleBottom + 24, behavior: "smooth" });
+  }
+}
+
 if (typeof window !== "undefined") {
   setKeyboardHeight(0);
-  Keyboard.addListener("keyboardWillShow", (event) => setKeyboardHeight(event?.keyboardHeight));
-  Keyboard.addListener("keyboardDidShow", (event) => setKeyboardHeight(event?.keyboardHeight));
-  Keyboard.addListener("keyboardWillHide", () => setKeyboardHeight(0));
-  Keyboard.addListener("keyboardDidHide", () => setKeyboardHeight(0));
+  let syncFrame = 0;
+  const scheduleKeyboardSync = () => {
+    cancelAnimationFrame(syncFrame);
+    syncFrame = requestAnimationFrame(() => {
+      syncKeyboardFromViewport();
+      keepFocusedFieldVisible();
+    });
+  };
+
+  window.addEventListener("resize", scheduleKeyboardSync, { passive: true });
+  window.visualViewport?.addEventListener("resize", scheduleKeyboardSync, { passive: true });
+  window.visualViewport?.addEventListener("scroll", scheduleKeyboardSync, { passive: true });
+  document.addEventListener(
+    "focusin",
+    () => {
+      window.setTimeout(scheduleKeyboardSync, 120);
+      window.setTimeout(scheduleKeyboardSync, 320);
+    },
+    true,
+  );
+
+  const onNativeShow = () => {
+    window.setTimeout(scheduleKeyboardSync, 80);
+    window.setTimeout(scheduleKeyboardSync, 250);
+  };
+  const onNativeHide = () => window.setTimeout(scheduleKeyboardSync, 80);
+
+  Keyboard.addListener("keyboardWillShow", onNativeShow);
+  Keyboard.addListener("keyboardDidShow", onNativeShow);
+  Keyboard.addListener("keyboardWillHide", onNativeHide);
+  Keyboard.addListener("keyboardDidHide", onNativeHide);
+
+  window.setTimeout(scheduleKeyboardSync, 0);
 }
 
 const App = React.lazy(() => import("./App.jsx"));

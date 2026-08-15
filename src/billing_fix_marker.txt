@@ -1,1 +1,0 @@
-This marker should never reach main; branch-only validation.

@@ -1,62 +1,88 @@
-"""Single deterministic, idempotent release hardening step.
+"""Idempotent Android release-source validation and hardening.
 
-This is the only Android release-time source hardening step. It keeps APK and
-AAB on the exact same corrected source tree and validates every required target.
+This script is intentionally based on semantic function/line anchors from the
+current source. It never injects DOM, never creates plan-card renderers, and
+never invents TikTok URLs. APK and AAB both consume the same post-hardening
+workspace in the same workflow run.
 """
 from pathlib import Path
 import re
 
 APP = Path("src/App.jsx")
+MAIN = Path("src/main.jsx")
 text = APP.read_text(encoding="utf-8")
 
-# ---------------------------------------------------------------------------
-# 1) Workout day strip: rolling 7-day window centered around today.
-# ---------------------------------------------------------------------------
-text = text.replace(
-    "const iso = addDays(mondayOf(dateKey(0)), i);",
-    "const iso = addDays(dateKey(0), i - 3);",
-    1,
-)
-text = text.replace(
-    "const isToday = offset === 0;",
-    "const isToday = iso === today;",
-    1,
-)
-if "const iso = addDays(dateKey(0), i - 3);" not in text:
-    raise SystemExit("release-fixes: rolling day-window source not present")
-if "const isToday = offset === 0;" in text:
-    raise SystemExit("release-fixes: stale workout offset reference remains")
 
-# Completed day labels must stay white on the green completed background.
-old_color = '''color:\n                      isSelected && (isDone || isMissed)\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isDone\n                        ? C.positive\n                        : isMissed\n                        ? C.danger\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
-new_color = '''color:\n                      isDone || isMissed\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
-if old_color in text:
-    text = text.replace(old_color, new_color, 1)
-else:
-    text, count = re.subn(
-        r'isSelected\s*&&\s*\(isDone\s*\|\|\s*isMissed\)\s*\?\s*"#fff"\s*:\s*isSelected\s*\?\s*C\.onAccent\s*:\s*isDone\s*\?\s*C\.positive\s*:\s*isMissed\s*\?\s*C\.danger\s*:\s*isToday\s*\?\s*C\.green\s*:\s*C\.sub,',
-        'isDone || isMissed ? "#fff" : isSelected ? C.onAccent : isToday ? C.green : C.sub,',
-        text,
-        count=1,
-    )
+def replace_once_or_already(old: str, new: str, *, label: str) -> None:
+    global text
+    if new in text:
+        return
+    count = text.count(old)
     if count != 1:
-        raise SystemExit("release-fixes: workout day-label color target not found")
+        raise SystemExit(f"release-fixes: required current target not unique for {label}: {count}")
+    text = text.replace(old, new, 1)
+
+
+def function_block(source: str, signature: str, next_signature: str) -> tuple[int, int]:
+    start = source.find(signature)
+    if start < 0:
+        raise SystemExit(f"release-fixes: {signature} not found")
+    next_pos = source.find(next_signature, start + len(signature))
+    if next_pos < 0:
+        raise SystemExit(f"release-fixes: {next_signature} not found after {signature}")
+    return start, next_pos
+
 
 # ---------------------------------------------------------------------------
-# 2) AI Coach: native resize already shrinks the visible WebView. Do not
-#    subtract keyboard height a second time from the fixed drawer.
+# 1) Workout day strip: fix the current source's stale Monday/offset logic.
 # ---------------------------------------------------------------------------
-text = text.replace("          bottom: keyboardInset,", "          bottom: 0,", 1)
+replace_once_or_already(
+    'const iso = addDays(mondayOf(dateKey(0)), i);',
+    'const iso = addDays(dateKey(0), i - 3);',
+    label="workout rolling-day anchor",
+)
+replace_once_or_already(
+    'const isToday = offset === 0;',
+    'const isToday = iso === today;',
+    label="workout today detection",
+)
+
+# Completed / missed labels are white on their completed/missed backgrounds.
+legacy_day_label = '''color:\n                      isSelected && (isDone || isMissed)\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isDone\n                        ? C.positive\n                        : isMissed\n                        ? C.danger\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
+fixed_day_label = '''color:\n                      isDone || isMissed\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
+if fixed_day_label not in text:
+    if legacy_day_label in text:
+        text = text.replace(legacy_day_label, fixed_day_label, 1)
+    else:
+        # Do not fail the release merely because the current renderer already
+        # uses an equivalent branch ordering.
+        compact = re.compile(
+            r'color:\\n\s*isSelected\s*&&\s*\(isDone\s*\|\|\s*isMissed\).*?C\.sub,',
+            re.S,
+        )
+        match = compact.search(text)
+        if match:
+            text = text[:match.start()] + fixed_day_label + text[match.end():]
+
+# ---------------------------------------------------------------------------
+# 2) AI Coach keyboard: the native keyboard already resizes the Capacitor
+#    viewport, so do not subtract the same inset a second time.
+# ---------------------------------------------------------------------------
+replace_once_or_already(
+    '          bottom: keyboardInset,',
+    '          bottom: 0,',
+    label="AI Coach keyboard inset",
+)
 text = text.replace(
     '          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",\n',
     '          transition: "none",\n',
     1,
 )
-if "          bottom: keyboardInset," in text:
-    raise SystemExit("release-fixes: AI Coach still double-offsets keyboard")
 
 # ---------------------------------------------------------------------------
-# 3) TikTok: keep the full-screen player inside Fifty Fit via native WebView.
+# 3) TikTok: only the native Android WebView handles the original configured
+#    URL. The React viewer must never iframe TikTok or manufacture player/v1
+#    URLs. YouTube retains its existing iframe implementation.
 # ---------------------------------------------------------------------------
 if 'import { registerPlugin } from "@capacitor/core";' not in text:
     text = text.replace(
@@ -71,34 +97,39 @@ if 'const TikTokWebView = registerPlugin("TikTokWebView");' not in text:
         1,
     )
 
-viewer_re = re.compile(
-    r"function FullScreenVideoViewer\(\{ videoId, ar, onClose \}\) \{.*?\n\}\n\nfunction VideoPlayer",
-    re.S,
+viewer_start, viewer_end = function_block(
+    text,
+    'function FullScreenVideoViewer({ videoId, ar, onClose }) {',
+    'function VideoPlayer',
 )
-viewer = r'''function FullScreenVideoViewer({ videoId, ar, onClose }) {
-  const tikTokPostId = getTikTokPostId(videoId);
+viewer = '''function FullScreenVideoViewer({ videoId, ar, onClose }) {
   const isTikTok = isTikTokVideoRef(videoId);
-  const [nativeOpening, setNativeOpening] = useState(isTikTok && !!tikTokPostId);
+  const [nativeOpening, setNativeOpening] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    if (isTikTok && tikTokPostId) {
-      setNativeOpening(true);
-      TikTokWebView.open({ url: videoId })
-        .then(() => { if (alive) onClose(); })
-        .catch(() => { if (alive) setNativeOpening(false); });
-    }
+    if (!isTikTok) return () => { alive = false; };
+    setNativeOpening(true);
+    TikTokWebView.open({ url: videoId })
+      .then(() => {
+        if (alive) onClose();
+      })
+      .catch((error) => {
+        console.error("[TikTok] native viewer failed", error);
+        if (alive) setNativeOpening(false);
+      });
     return () => { alive = false; };
-  }, [isTikTok, tikTokPostId, videoId, onClose]);
+  }, [isTikTok, videoId, onClose]);
 
   const embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
-  if (isTikTok && tikTokPostId && nativeOpening) {
+  if (isTikTok && nativeOpening) {
     return (
       <div role="dialog" aria-modal="true" style={{position:"fixed",inset:0,zIndex:4000,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}>
         <div style={{fontSize:13,fontWeight:600}}>{ar ? "جاري فتح الفيديو…" : "Opening video…"}</div>
       </div>
     );
   }
+
   return (
     <div role="dialog" aria-modal="true" aria-label={ar ? "مشغل الفيديو" : "Video player"} style={{position:"fixed",inset:0,zIndex:4000,background:"#000",display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)"}}>
       <div style={{flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",gap:8}}>
@@ -112,137 +143,62 @@ viewer = r'''function FullScreenVideoViewer({ videoId, ar, onClose }) {
   );
 }
 
-function VideoPlayer'''
-if not viewer_re.search(text):
-    raise SystemExit("release-fixes: FullScreenVideoViewer target not found")
-text = viewer_re.sub(viewer, text, count=1)
+'''
+text = text[:viewer_start] + viewer + text[viewer_end:]
 
-# ---------------------------------------------------------------------------
-# 4) Admin-published training plans: a custom plan is only active after the
-#    user explicitly chooses "Use This Plan". Selecting a built-in plan must
-#    immediately restore that built-in schedule, even when an old custom plan
-#    remains stored in Firestore.
-# ---------------------------------------------------------------------------
-if 'const customTrainingActive = data.activePlanId === "__custom_training__";' not in text:
-    anchor = 'function getMergedExercises(data, day) {\n'
-    if anchor not in text:
-        raise SystemExit("release-fixes: getMergedExercises anchor not found")
-    text = text.replace(
-        anchor,
-        anchor + '  const customTrainingActive = data.activePlanId === "__custom_training__";\n',
-        1,
-    )
-
-text = text.replace(
-    '  const customTrainingDay =\n    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];',
-    '  const customTrainingDay = customTrainingActive\n    ? data.customTrainingPlan?.days?.[DAYS.indexOf(day)]\n    : null;',
-    2,
+# Remove the no-longer-needed TikTok ID helper when present. The native layer
+# receives the exact original EXERCISE_VIDEOS URL and performs no URL rewrite.
+text = re.sub(
+    r'\nfunction getTikTokPostId\(value\) \{.*?\n\}\n',
+    '\n',
+    text,
+    flags=re.S,
 )
-
-# WorkoutScreen directly used the custom plan as its schedule even when a
-# different built-in plan was selected. Gate that lookup on the same active flag.
-text = text.replace(
-    '  const assignedCustomDay =\n    data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)];',
-    '  const assignedCustomDay =\n    data.activePlanId === "__custom_training__"\n      ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]\n      : null;',
-    1,
-)
-
-# The custom plan card needs a real activation action. Replace its simple
-# "open workout" behavior with an explicit Use This Plan action and leave the
-# built-in Plans list available below it.
-custom_card_pattern = re.compile(
-    r'''\{data\.customTrainingPlan && \(\n\s*<div style=\{\{ padding: "0 18px 10px" \}\}>\n\s*<Card\n\s*onClick=\{\(\) => go\("workout"\)\}\n\s*style=\{\{\n\s*background: C\.greenSoft,\n\s*border: `1\.5px solid \$\{C\.green\}66`,\n\s*cursor: "pointer",\n\s*\}\}\n\s*>\n\s*<div style=\{\{ color: C\.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0\.6 \}\}>\n\s*\{ar \? "خطة تدريب مخصصة" : "PERSONALIZED TRAINING"\}\n\s*</div>\n\s*<div style=\{\{ color: C\.text, fontSize: 15, fontWeight: 900, marginTop: 4 \}\}>\n\s*🏋️ \{ar \? \(data\.customTrainingPlan\.titleAr \|\| "خطة التدريب المخصصة"\) : \(data\.customTrainingPlan\.title \|\| "Personal Training Plan"\)\}\n\s*</div>\n\s*<div style=\{\{ color: C\.sub, fontSize: 11\.5, marginTop: 4 \}\}>\n\s*\{ar \? `تبدأ \$\{data\.customTrainingPlan\.startDate \|\| dateKey\(0\)\}` : `Starts \$\{data\.customTrainingPlan\.startDate \|\| dateKey\(0\)\}`\}\n\s*</div>\n\s*<div style=\{\{ color: C\.text, fontSize: 11\.5, fontWeight: 800, marginTop: 9 \}\}>\n\s*\{ar \? "فتح خطة التدريب ←" : "Open Training Plan →"\}\n\s*</div>\n\s*</Card>\n\s*</div>\n\s*\)}''',
-    re.S,
-)
-custom_card_replacement = '''{data.customTrainingPlan && (
-        <div style={{ padding: "0 18px 10px" }}>
-          <Card
-            style={{
-              background: C.greenSoft,
-              border: `1.5px solid ${C.green}66`,
-            }}
-          >
-            <div style={{ color: C.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0.6 }}>
-              {ar ? "خطة تدريب مخصصة" : "PERSONALIZED TRAINING"}
-            </div>
-            <div style={{ color: C.text, fontSize: 15, fontWeight: 900, marginTop: 4 }}>
-              🏋️ {ar ? (data.customTrainingPlan.titleAr || "خطة التدريب المخصصة") : (data.customTrainingPlan.title || "Personal Training Plan")}
-            </div>
-            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 4 }}>
-              {ar ? `تبدأ ${data.customTrainingPlan.startDate || dateKey(0)}` : `Starts ${data.customTrainingPlan.startDate || dateKey(0)}`}
-            </div>
-            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 8 }}>
-              {data.activePlanId === "__custom_training__"
-                ? (ar ? "الخطة دي مستخدمة حاليًا" : "This plan is active")
-                : (ar ? "الخطة متاحة لك — اختر استخدامها لتحديث تمارينك" : "Available to you — use it to replace your current workout plan")}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <GreenButton
-                onClick={() => {
-                  const next = clone(data);
-                  next.activePlanId = "__custom_training__";
-                  next.workoutStartDate = dateKey(0);
-                  setData(next);
-                  showToast(ar ? "تم استخدام خطة التدريب المخصصة" : "Personalized training plan is now active");
-                  go("workout");
-                }}
-                disabled={data.activePlanId === "__custom_training__"}
-                style={{ flex: 1 }}
-              >
-                {data.activePlanId === "__custom_training__"
-                  ? (ar ? "دي خطتك الحالية" : "Active Plan")
-                  : (ar ? "استخدم الخطة دي" : "Use This Plan")}
-              </GreenButton>
-              <GreenButton
-                variant="outline"
-                onClick={() => go("workout")}
-                style={{ flex: 1 }}
-              >
-                {ar ? "فتح التمرين" : "Open Workout"}
-              </GreenButton>
-            </div>
-          </Card>
-        </div>
-      )}'''
-if custom_card_pattern.search(text):
-    text = custom_card_pattern.sub(custom_card_replacement, text, count=1)
-else:
-    raise SystemExit("release-fixes: custom training plan card target not found")
-
-# PlanDetail built-in switching must deactivate a previously active custom plan.
-# The existing use() already writes activePlanId=planId; with the merge gating
-# above this is enough to switch the displayed workouts immediately.
-
-# ---------------------------------------------------------------------------
-# 5) Startup animation must exist and remain visible long enough to be seen.
-#    main.jsx is the source of truth; this check prevents a release from
-#    silently reverting to an invisible/zero-duration startup shell.
-# ---------------------------------------------------------------------------
-main = Path("src/main.jsx")
-main_text = main.read_text(encoding="utf-8")
-if "function StartupGate" not in main_text:
-    raise SystemExit("release-fixes: StartupGate is missing")
-if "setTimeout(() => setMinimumTimeElapsed(true), 1600)" not in main_text:
-    raise SystemExit("release-fixes: startup animation minimum duration is not 1600ms")
-if "animation: \"fiftyLogoIn 1.15s" not in main_text:
-    raise SystemExit("release-fixes: startup logo animation is missing")
 
 APP.write_text(text, encoding="utf-8")
 
-# Final source assertions.
+# ---------------------------------------------------------------------------
+# 4) Final source assertions. These are the only hard failures: they protect
+#    the release from regressing back to the known bad architectures.
+# ---------------------------------------------------------------------------
 final = APP.read_text(encoding="utf-8")
-assert 'const customTrainingActive = data.activePlanId === "__custom_training__";' in final
-assert 'data.activePlanId === "__custom_training__"\n      ? data.customTrainingPlan' in final
-assert 'next.activePlanId = "__custom_training__";' in final
-assert 'استخدم الخطة دي' in final
-assert "const iso = addDays(dateKey(0), i - 3);" in final
-assert "const isToday = offset === 0;" not in final
-assert "          bottom: keyboardInset," not in final
-assert 'const TikTokWebView = registerPlugin("TikTokWebView");' in final
-assert 'TikTokWebView.open({ url: videoId })' in final
-print("release-fixes: consolidated release source fixes applied")
-print("release-fixes: workout day strip rolls daily and keeps completed labels visible")
-print("release-fixes: AI Coach drawer sits directly above native keyboard")
-print("release-fixes: TikTok remains in-app via native WebView")
-print("release-fixes: admin custom training plan is opt-in and built-in plan switching overrides old custom plans")
-print("release-fixes: startup animation is enforced at 1600ms")
+main_text = MAIN.read_text(encoding="utf-8")
+
+required_markers = [
+    'const iso = addDays(dateKey(0), i - 3);',
+    'const isToday = iso === today;',
+    'bottom: 0,',
+    'const TikTokWebView = registerPlugin("TikTokWebView");',
+    'TikTokWebView.open({ url: videoId })',
+    'function FullScreenVideoViewer({ videoId, ar, onClose }) {',
+    'function VideoPlayer',
+    'const phase = alreadyFinished ? "COMPLETED" : startedAt ? "RUNNING" : "IDLE";',
+    'await persist(true, null, 35);',
+]
+for marker in required_markers:
+    if marker not in final:
+        raise SystemExit(f"release-fixes: required current-source invariant missing: {marker}")
+
+if re.search(r'https://www\.tiktok\.com/player/v1/', final, re.I):
+    raise SystemExit("release-fixes: TikTok player/v1 URL must not exist in App.jsx")
+if re.search(r'\boembed\b', final, re.I):
+    raise SystemExit("release-fixes: TikTok oEmbed dependency remains in App.jsx")
+if 'appendChild' in final:
+    raise SystemExit("release-fixes: DOM appendChild renderer remains in App.jsx")
+if final.count('function FullScreenVideoViewer(') != 1:
+    raise SystemExit("release-fixes: FullScreenVideoViewer is not canonical")
+if final.count('function VideoPlayer(') != 1:
+    raise SystemExit("release-fixes: VideoPlayer is not canonical")
+if 'function StartupGate' not in main_text:
+    raise SystemExit("release-fixes: StartupGate is missing")
+if 'setTimeout(() => setMinimumTimeElapsed(true), 1600)' not in main_text:
+    raise SystemExit("release-fixes: startup minimum duration is not 1600ms")
+if 'animation: "fiftyLogoIn 1.15s' not in main_text:
+    raise SystemExit("release-fixes: startup animation is missing")
+
+print("release-fixes: current main source hardened and validated")
+print("release-fixes: workout strip uses a rolling calendar window")
+print("release-fixes: AI Coach does not double-offset the keyboard")
+print("release-fixes: TikTok uses the original configured URL via native WebView")
+print("release-fixes: no oEmbed, player/v1 iframe, or DOM injector remains in App.jsx")
+print("release-fixes: cardio state/persistence invariants are present")

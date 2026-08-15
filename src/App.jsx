@@ -6545,14 +6545,9 @@ function CardioExerciseView({
   const DURATION_SECONDS = 15 * 60;
   const existingLog = data.logs[logDate]?.[exerciseId] || null;
   const alreadyFinished = existingLog?.finished === true;
-  const existingStartedAt = Number(existingLog?.cardioStartedAt || 0);
-  const existingElapsed = existingStartedAt > 0 ? Math.floor((Date.now() - existingStartedAt) / 1000) : 0;
-  const resumableStartedAt = !alreadyFinished && existingStartedAt > 0 && existingElapsed < DURATION_SECONDS
-    ? existingStartedAt
-    : null;
 
   const [now, setNow] = useState(() => Date.now());
-  const [startedAt, setStartedAt] = useState(resumableStartedAt);
+  const [startedAt, setStartedAt] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const elapsed = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
@@ -6561,13 +6556,6 @@ function CardioExerciseView({
   const completed = phase === "COMPLETED";
   const running = phase === "RUNNING";
 
-  useEffect(() => {
-    if (alreadyFinished || !existingStartedAt || resumableStartedAt) return;
-    // A stale unfinished timer should reset to IDLE instead of auto-completing.
-    if (existingElapsed >= DURATION_SECONDS) {
-      setStartedAt(null);
-    }
-  }, [alreadyFinished, existingStartedAt, resumableStartedAt, existingElapsed]);
 
   useEffect(() => {
     if (phase !== "RUNNING") return undefined;

@@ -44,9 +44,6 @@ jobs:
       - name: Apply final release UI fixes
         run: python3 scripts/final-release-ui-fixes.py
 
-      - name: Apply weekly plan cycle hardening
-        run: python3 scripts/weekly-plan-cycle-hardening.py
-
       - name: Persist current-source release fixes
         run: |
           set -euo pipefail

@@ -170,6 +170,7 @@ const EXERCISE_IMG_MAP = {
   jump_rope: jump_ropeImg,
   burpees: burpeesImg,
 };
+import { registerPlugin } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { isOnline as checkOnline, watchNetwork } from "./network";
@@ -202,6 +203,8 @@ import {
 } from "./aiCoach";
 import { APP_INFO, PRIVACY_POLICY_SECTIONS, TERMS_SECTIONS } from "./privacy";
 import { deleteAccountServerData } from "./deleteAccount";
+
+const TikTokWebView = registerPlugin("TikTokWebView");
 
 // Fixed notification IDs so we can reliably cancel/replace them later.
 const NOTIF_ID_DAILY_REMINDER = 1001;
@@ -3142,103 +3145,43 @@ function isTikTokVideoRef(value) {
   return /(?:^|https?:\/\/)(?:www\.|m\.|vt\.)?tiktok\.com/i.test(raw) || /^\d{15,}$/.test(raw);
 }
 
-function getTikTokPostId(value) {
-  const raw = String(value || "").trim();
-  if (/^\d{15,}$/.test(raw)) return raw;
-  const match = raw.match(/\/video\/(\d{15,})/i);
-  return match?.[1] || null;
-}
 
 function FullScreenVideoViewer({ videoId, ar, onClose }) {
-  const [videoLoaded, setVideoLoaded] = useState(false);
-  const tikTokPostId = getTikTokPostId(videoId);
-  const embedSrc = tikTokPostId
-    ? `https://www.tiktok.com/player/v1/${tikTokPostId}?autoplay=1&controls=1&progress_bar=1&play_button=1&volume_control=1&fullscreen_button=1&timestamp=1&music_info=0&description=0&rel=0&native_context_menu=0`
-    : `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+  const isTikTok = isTikTokVideoRef(videoId);
+  const [nativeOpening, setNativeOpening] = useState(false);
 
   useEffect(() => {
-    setVideoLoaded(false);
-    registerFullScreenVideoClose(() => {
-      onClose();
-      return true;
-    });
-    return () => registerFullScreenVideoClose(null);
-  }, [onClose, videoId]);
+    let alive = true;
+    if (!isTikTok) return () => { alive = false; };
+    setNativeOpening(true);
+    TikTokWebView.open({ url: videoId })
+      .then(() => {
+        if (alive) onClose();
+      })
+      .catch((error) => {
+        console.error("[TikTok] native viewer failed", error);
+        if (alive) setNativeOpening(false);
+      });
+    return () => { alive = false; };
+  }, [isTikTok, videoId, onClose]);
+
+  const embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+  if (isTikTok && nativeOpening) {
+    return (
+      <div role="dialog" aria-modal="true" style={{position:"fixed",inset:0,zIndex:4000,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}>
+        <div style={{fontSize:13,fontWeight:600}}>{ar ? "جاري فتح الفيديو…" : "Opening video…"}</div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={ar ? "مشغل الفيديو" : "Video player"}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 4000,
-        background: "#000",
-        display: "flex",
-        flexDirection: "column",
-        paddingTop: "env(safe-area-inset-top)",
-        paddingBottom: "env(safe-area-inset-bottom)",
-      }}
-    >
-      <div style={{
-        flexShrink: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "10px 12px",
-        gap: 8,
-      }}>
-        <div style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>
-          {ar ? "فيديو التمرين" : "Exercise video"}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={ar ? "إغلاق" : "Close"}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
-            border: "none",
-            background: "rgba(255,255,255,0.15)",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <X size={18} color="#fff" />
-        </button>
+    <div role="dialog" aria-modal="true" aria-label={ar ? "مشغل الفيديو" : "Video player"} style={{position:"fixed",inset:0,zIndex:4000,background:"#000",display:"flex",flexDirection:"column",paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)"}}>
+      <div style={{flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",gap:8}}>
+        <div style={{color:"#fff",fontWeight:700,fontSize:14}}>{ar ? "فيديو التمرين" : "Exercise video"}</div>
+        <button type="button" onClick={onClose} aria-label={ar ? "إغلاق" : "Close"} style={{width:36,height:36,borderRadius:"50%",border:"none",background:"rgba(255,255,255,.15)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}><X size={18} color="#fff" /></button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, position: "relative", width: "100%", background: "#000" }}>
-        {!videoLoaded && (
-          <div style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#000",
-            color: "#fff",
-            fontSize: 13,
-            fontWeight: 600,
-          }}>
-            {ar ? "جاري تحميل الفيديو…" : "Loading video…"}
-          </div>
-        )}
-        <iframe
-          src={embedSrc}
-          onLoad={() => setVideoLoaded(true)}
-          loading="eager"
-          fetchPriority="high"
-          title={ar ? "فيديو التمرين" : "Exercise video"}
-          referrerPolicy="strict-origin-when-cross-origin"
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: "none" }}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-        />
+      <div style={{flex:1,minHeight:0,position:"relative",width:"100%",background:"#000"}}>
+        <iframe src={embedSrc} loading="eager" title={ar ? "فيديو التمرين" : "Exercise video"} referrerPolicy="strict-origin-when-cross-origin" style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowFullScreen />
       </div>
     </div>
   );
@@ -6093,11 +6036,11 @@ function WorkoutScreen({
           {/* Dynamic 7-day window anchored on today so the strip advances
               as calendar days pass (not a fixed dead-end range). */}
           {Array.from({ length: 7 }, (_, i) => {
-            const iso = addDays(mondayOf(dateKey(0)), i);
+            const iso = addDays(dateKey(0), i - 3);
             const calendarDay = weekdayOf(iso);
             const d = planDayForDate(data, iso);
             const isSelected = iso === selectedDate;
-            const isToday = offset === 0;
+            const isToday = iso === today;
             const isActiveDay = d === activeDay && iso >= (data.workoutStartDate || iso);
             const status = dayStatus(data, d, iso);
             const isDone = status === "done";
@@ -10208,14 +10151,14 @@ function AICoachDrawer({ open, onClose, data, setData, showToast, go }) {
           position: "absolute",
           top: 0,
           // Lift the entire drawer above the live keyboard height.
-          bottom: keyboardInset,
+          bottom: 0,
           width: "min(360px, 92vw)",
           background: C.bg,
           display: "flex",
           flexDirection: "column",
           boxShadow: "0 0 40px rgba(0,0,0,0.35)",
           overscrollBehavior: "contain",
-          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",
+          transition: "none",
           ...panelSide,
         }}
       >

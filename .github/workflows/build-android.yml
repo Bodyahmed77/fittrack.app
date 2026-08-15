@@ -251,6 +251,59 @@ jobs:
           echo "$KS_B64" | base64 -d > android/app/release.keystore
           test -s android/app/release.keystore
 
+      - name: Verify release signing SHA-1 against Firebase Android OAuth
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA1="$(keytool -list -v \
+            -keystore app/release.keystore \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null \
+            | awk -F': ' '/SHA1:/{print $2; exit}' \
+            | tr -d ':' \
+            | tr '[:upper:]' '[:lower:]')"
+          test -n "$ACTUAL_SHA1"
+
+          CONFIGURED_SHA1S="$(python3 - <<'PY'
+          import json
+          p='app/google-services.json'
+          d=json.load(open(p, encoding='utf-8'))
+          package='com.bodyahmed77.fiftyfit'
+          values=[]
+          for client in d.get('client') or []:
+              ci=client.get('client_info') or {}
+              if (ci.get('android_client_info') or {}).get('package_name') != package:
+                  continue
+              for oauth in client.get('oauth_client') or []:
+                  if oauth.get('client_type') != 1:
+                      continue
+                  cert=(oauth.get('android_info') or {}).get('certificate_hash')
+                  if cert:
+                      values.append(cert.replace(':','').lower())
+          print('\n'.join(sorted(set(values))))
+          PY
+          )"
+
+          echo "Release signing SHA-1: $ACTUAL_SHA1"
+          echo "Firebase Android OAuth SHA-1 values:"
+          if [ -n "$CONFIGURED_SHA1S" ]; then
+            printf '%s\n' "$CONFIGURED_SHA1S"
+          else
+            echo "<none>"
+          fi
+
+          if ! printf '%s\n' "$CONFIGURED_SHA1S" | grep -Fxq "$ACTUAL_SHA1"; then
+            echo "ERROR: The CI release signing certificate is NOT registered as an Android OAuth SHA-1 in google-services.json."
+            echo "This mismatch produces Google Sign-In status code 10 (DEVELOPER_ERROR) after the account is selected."
+            exit 1
+          fi
+          echo "OK: release signing SHA-1 matches Firebase Android OAuth configuration."
+
       - name: Build signed release AAB and APK
         working-directory: android
         env:

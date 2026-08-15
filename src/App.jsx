@@ -9267,10 +9267,39 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       // Only unlock after the native bridge returns an acknowledged purchase.
       const shouldUnlock = result?.success === true && result?.verified === true;
       if (!shouldUnlock) {
+        const billingErr = result?.error || {};
+        const billingCode = String(
+          billingErr.code ||
+          (result?.pending ? "purchase_pending" : "billing_flow_failed"),
+        );
+        const billingMessage = String(
+          billingErr.message ||
+          (result?.pending
+            ? "Google Play returned a pending purchase"
+            : "Google Play did not complete the purchase"),
+        );
+        const billingProduct = result?.productId || "unknown_product";
+
+        if (typeof window !== "undefined") {
+          try {
+            window.__fiftyFitLastBillingError = {
+              code: billingCode,
+              message: billingMessage,
+              productId: billingProduct,
+              pending: !!result?.pending,
+              cancelled: !!result?.cancelled,
+              subResponseCode: billingErr.subResponseCode || null,
+              updatedAt: new Date().toISOString(),
+            };
+          } catch (_) {
+            /* ignore */
+          }
+        }
+
         showToast(
           ar
-            ? "لم يتم إتمام عملية الشراء — حاول تاني"
-            : "Purchase was not completed — please try again",
+            ? `فشل الدفع — كود Google Play: ${billingCode} — ${billingMessage}`
+            : `Purchase failed — Google Play code: ${billingCode} — ${billingMessage}`,
         );
         return;
       }

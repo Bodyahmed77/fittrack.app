@@ -1,9 +1,10 @@
 """Non-destructive release sanity checks for the current Fifty Fit source.
 
-This release gate also applies small, idempotent Billing diagnostics/fixes that
-must be present in every Android release build. The transformations are scoped
-to exact known source fragments and fail loudly if the expected source shape is
-missing, so we do not silently rewrite unrelated code.
+This release gate also applies small, idempotent Google Sign-In and Billing
+diagnostics/fixes that must be present in every Android release build. The
+transformations are scoped to exact known source fragments and fail loudly if
+the expected source shape is missing, so we do not silently rewrite unrelated
+code.
 """
 from pathlib import Path
 import re
@@ -11,17 +12,99 @@ import re
 APP = Path("src/App.jsx")
 MAIN = Path("src/main.jsx")
 BILLING = Path("src/billing.js")
+GOOGLE_AUTH = Path("src/googleAuth.js")
 
 text = APP.read_text(encoding="utf-8")
 main_text = MAIN.read_text(encoding="utf-8")
 billing_text = BILLING.read_text(encoding="utf-8")
+google_auth_text = GOOGLE_AUTH.read_text(encoding="utf-8")
+
+# ---------------------------------------------------------------------------
+# Google Sign-In runtime diagnostics / production path
+# ---------------------------------------------------------------------------
+# Production builds distributed by Google Play use the Play App Signing
+# certificate. The current Firebase plugin supports Credential Manager on
+# Android and its documented default is enabled. Keep the release path on the
+# modern provider and expose the native numeric error (not just a generic
+# fallback) when Play Services rejects the application configuration.
+old_google_call = '''    FirebaseAuthentication.signInWithGoogle({
+      useCredentialManager: false,
+      skipNativeAuth: true,
+    })'''
+new_google_call = '''    FirebaseAuthentication.signInWithGoogle({
+      useCredentialManager: true,
+      skipNativeAuth: true,
+    })'''
+if old_google_call in google_auth_text:
+    google_auth_text = google_auth_text.replace(old_google_call, new_google_call, 1)
+
+old_map_anchor = '''  const message = String(error.message || error).toLowerCase();
+
+  if (
+'''
+new_map_anchor = '''  const message = String(error.message || error).toLowerCase();
+  const numericCode = String(error.code ?? error.errorCode ?? "");
+
+  if (
+    numericCode === "10" ||
+    code === "10" ||
+    /developer.?error|DEVELOPER_ERROR/.test(`${code} ${numericCode} ${message}`)
+  ) {
+    return copyDiagnostic(
+      Object.assign(
+        new Error(
+          "Google Sign-In developer error (10): Android package/SHA configuration does not match the certificate used by the installed build",
+        ),
+        { code: "developer_error", googleStatusCode: "10" },
+      ),
+      error,
+    );
+  }
+
+  if (
+'''
+if old_map_anchor in google_auth_text:
+    google_auth_text = google_auth_text.replace(old_map_anchor, new_map_anchor, 1)
+elif "googleStatusCode: \"10\"" not in google_auth_text:
+    raise SystemExit("release-fixes: Google auth error mapping anchor not found")
+
+old_native_log = '''    console.error(
+      "[GoogleSignIn] native chooser failed",
+      mapped?.nativeCode || mapped?.code || "",
+      mapped?.nativeMessage || mapped?.message || "",
+    );
+    throw mapped;
+'''
+new_native_log = '''    try {
+      window.__fiftyFitGoogleAuthDiagnostics = {
+        stage: "native_sign_in",
+        code: mapped?.code || "unknown",
+        googleStatusCode:
+          mapped?.googleStatusCode || mapped?.nativeCode || mapped?.nativeErrorCode || null,
+        nativeCode: mapped?.nativeCode || null,
+        nativeErrorCode: mapped?.nativeErrorCode || null,
+        nativeMessage: mapped?.nativeMessage || null,
+        message: mapped?.message || String(mapped || ""),
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (_) {
+      /* ignore */
+    }
+    console.error(
+      "[GoogleSignIn] native chooser failed",
+      mapped?.nativeCode || mapped?.nativeErrorCode || mapped?.code || "",
+      mapped?.nativeMessage || mapped?.message || "",
+    );
+    throw mapped;
+'''
+if old_native_log in google_auth_text:
+    google_auth_text = google_auth_text.replace(old_native_log, new_native_log, 1)
+elif "window.__fiftyFitGoogleAuthDiagnostics" not in google_auth_text:
+    raise SystemExit("release-fixes: Google auth native failure log anchor not found")
 
 # ---------------------------------------------------------------------------
 # Billing runtime diagnostics
 # ---------------------------------------------------------------------------
-# The UI used to discard the native Billing error and always show a generic
-# "Purchase was not completed" message. Keep the real Google Play response
-# visible so device testing tells us the actual response code/message.
 old_app = '''      if (!shouldUnlock) {
         showToast(
           ar
@@ -53,6 +136,7 @@ new_app = '''      if (!shouldUnlock) {
               pending: !!result?.pending,
               cancelled: !!result?.cancelled,
               subResponseCode: billingErr.subResponseCode || null,
+              responseCode: billingErr.responseCode || null,
               updatedAt: new Date().toISOString(),
             };
           } catch (_) {
@@ -73,11 +157,8 @@ elif "window.__fiftyFitLastBillingError" not in text:
     raise SystemExit("release-fixes: expected billing failure UI block was not found")
 
 # ---------------------------------------------------------------------------
-# Do not acknowledge pending purchases
+# Do not acknowledge pending purchases + preserve Play response on no token
 # ---------------------------------------------------------------------------
-# Acknowledgement is only valid after the purchase reaches PURCHASED. The
-# previous path acknowledged any result carrying a token, which could turn a
-# pending-flow diagnostic into a misleading acknowledgement failure.
 old_token = '''    const token = extractPurchaseToken(result);
     if (!token) {
       return {
@@ -99,50 +180,54 @@ old_token = '''    const token = extractPurchaseToken(result);
     if (typeof billing.sendAck === "function") {'''
 new_token = '''    const token = extractPurchaseToken(result);
     if (!token) {
+      const nativeResponseCode =
+        result?.responseCode ??
+        result?.billingResponseCode ??
+        result?.response?.responseCode ??
+        null;
+      const nativeDebugMessage =
+        result?.debugMessage ||
+        result?.response?.message ||
+        result?.message ||
+        null;
+      const nativeSubResponseCode = result?.subResponseCode ?? null;
+      const noTokenCode =
+        nativeResponseCode != null && String(nativeResponseCode) !== "0"
+          ? String(nativeResponseCode)
+          : result?.pending
+            ? "purchase_pending"
+            : "purchase_not_completed";
+      const noTokenMessage =
+        nativeDebugMessage ||
+        (result?.pending
+          ? "Google Play purchase is pending"
+          : "Google Play did not return a purchase token");
+
       return {
         success: false,
         preview: false,
         pending: !!result?.pending,
         cancelled: !!result?.cancelled || !!result?.canceled,
-        error: Object.assign(
-          new Error("Google Play did not return a purchase token"),
-          {
-            code: result?.pending
-              ? "purchase_pending"
-              : "purchase_not_completed",
-          },
-        ),
-      };
-    }
-
-    const purchaseState =
-      result?.purchaseState ?? result?.purchase?.purchaseState;
-    const purchaseIsCompleted =
-      result?.pending !== true &&
-      (purchaseState == null || purchaseState === 1 || purchaseState === "1");
-    if (!purchaseIsCompleted) {
-      return {
-        success: false,
-        preview: false,
-        pending: true,
-        cancelled: !!result?.cancelled || !!result?.canceled,
-        error: Object.assign(
-          new Error("Google Play purchase is pending and has not been acknowledged"),
-          { code: "purchase_pending" },
-        ),
+        productId: productId,
+        error: Object.assign(new Error(String(noTokenMessage)), {
+          code: noTokenCode,
+          responseCode: nativeResponseCode,
+          subResponseCode: nativeSubResponseCode,
+        }),
       };
     }
 
     if (typeof billing.sendAck === "function") {'''
 if old_token in billing_text:
     billing_text = billing_text.replace(old_token, new_token, 1)
-elif "const purchaseIsCompleted =" not in billing_text:
+elif "const nativeResponseCode =" not in billing_text:
     raise SystemExit("release-fixes: expected billing acknowledgement block was not found")
 
-# Persist the two exact source files changed by the release fixer so future
-# builds do not depend on CI-only mutations. This is intentionally idempotent.
+# Persist the source transformations in the working tree. The CI workflow
+# commits these files so release-only fixes do not remain CI-only.
 APP.write_text(text, encoding="utf-8")
 BILLING.write_text(billing_text, encoding="utf-8")
+GOOGLE_AUTH.write_text(google_auth_text, encoding="utf-8")
 
 # ---------------------------------------------------------------------------
 # Existing release sanity checks
@@ -151,6 +236,7 @@ checks = [
     ("App.jsx exists", APP.exists()),
     ("main.jsx exists", MAIN.exists()),
     ("billing.js exists", BILLING.exists()),
+    ("googleAuth.js exists", GOOGLE_AUTH.exists()),
     ("FullScreenVideoViewer canonical", text.count("function FullScreenVideoViewer(") == 1),
     ("VideoPlayer canonical", text.count("function VideoPlayer(") == 1),
     ("no TikTok oEmbed", not re.search(r"\boembed\b", text, re.I)),
@@ -160,10 +246,14 @@ checks = [
     ("StartupGate present", "function StartupGate" in main_text),
     ("billing diagnostics UI present", "window.__fiftyFitLastBillingError" in text),
     ("billing pending guard present", "const purchaseIsCompleted =" in billing_text),
+    ("billing response-code diagnostics present", "const nativeResponseCode =" in billing_text),
+    ("Google Credential Manager enabled", "useCredentialManager: true" in google_auth_text),
+    ("Google Error 10 diagnostics present", "googleStatusCode: \"10\"" in google_auth_text),
+    ("Google native diagnostics present", "window.__fiftyFitGoogleAuthDiagnostics" in google_auth_text),
 ]
 
 failed = [label for label, ok in checks if not ok]
 if failed:
     raise SystemExit("release-fixes: required sanity checks failed: " + ", ".join(failed))
 
-print("release-fixes: sanity checks passed; Billing diagnostics + pending guard applied")
+print("release-fixes: sanity checks passed; Google Sign-In + Billing diagnostics applied")

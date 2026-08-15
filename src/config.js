@@ -90,8 +90,6 @@ export const EXERCISE_VIDEOS = {
   burpees: "https://vt.tiktok.com/ZS4TjS16a/",
 };
 
-// Google Play product IDs. Each duration is a separate subscription product
-// because the current capacitor-billing bridge does not expose Play offerToken/base-plan selection.
 export const BILLING_PRODUCTS = {
   training: {
     monthly: "training_pro_monthly",
@@ -177,24 +175,30 @@ export const DURATIONS = [
   { id: "yearly", label: "سنوي", labelEn: "Yearly", months: 12 },
 ];
 
+// Android subscription pricing is supplied by Google Play at runtime. These
+// placeholders prevent a stale EGP/USD value from appearing before Play
+// Billing has returned the user's localized catalog price.
+const PLAY_PRICE_PLACEHOLDER = "—";
+const PLAY_CURRENCY_PLACEHOLDER = "";
+
 export const PAYWALL_PRICES = {
   eg: {
-    currency: "EGP",
-    currencyLabelAr: "جنيه",
-    currencyLabelEn: "EGP",
-    training: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
-    nutrition: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
-    both: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
-    ai: { monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
+    currency: PLAY_CURRENCY_PLACEHOLDER,
+    currencyLabelAr: PLAY_CURRENCY_PLACEHOLDER,
+    currencyLabelEn: PLAY_CURRENCY_PLACEHOLDER,
+    training: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
+    nutrition: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
+    both: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
+    ai: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
   },
   intl: {
-    currency: "USD",
-    currencyLabelAr: "دولار",
-    currencyLabelEn: "USD",
-    training: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
-    nutrition: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
-    both: { monthly: 7.99, quarterly: 19.99, halfyearly: 34.99, yearly: 59.99 },
-    ai: { monthly: 4.99, quarterly: 12.99, halfyearly: 24.99, yearly: 39.99 },
+    currency: PLAY_CURRENCY_PLACEHOLDER,
+    currencyLabelAr: PLAY_CURRENCY_PLACEHOLDER,
+    currencyLabelEn: PLAY_CURRENCY_PLACEHOLDER,
+    training: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
+    nutrition: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
+    both: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
+    ai: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
   },
 };
 
@@ -202,7 +206,7 @@ export const PAYWALL_PLANS = {
   training: {
     title: "Training Pro",
     titleAr: "تدريب برو",
-    prices: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
+    prices: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
     featuresAr: [
       "تمارين غير محدودة كل يوم",
       "خطة تمرين مخصصة حسب هدفك ووزنك وطولك",
@@ -219,7 +223,7 @@ export const PAYWALL_PLANS = {
   nutrition: {
     title: "Nutrition Pro",
     titleAr: "تغذية برو",
-    prices: { monthly: 100, quarterly: 270, halfyearly: 750, yearly: 899 },
+    prices: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
     featuresAr: [
       "خطة غذائية كاملة مبنية على جسمك وهدفك",
       "أهداف يومية دقيقة للسعرات والبروتين والكارب والدهون",
@@ -235,14 +239,14 @@ export const PAYWALL_PLANS = {
     title: "Training + Nutrition",
     titleAr: "تدريب + تغذية",
     best: true,
-    prices: { monthly: 150, quarterly: 399, halfyearly: 750, yearly: 1299 },
+    prices: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
     featuresAr: ["كل حاجة في الخطتين فوق", "أفضل قيمة — وفّر أكتر"],
     featuresEn: ["Everything in both plans above", "Best value — save more"],
   },
   ai: {
     title: "AI Coach Pro",
     titleAr: "مدرب ذكي برو",
-    prices: { monthly: 50, quarterly: 129, halfyearly: 249, yearly: 399 },
+    prices: { monthly: PLAY_PRICE_PLACEHOLDER, quarterly: PLAY_PRICE_PLACEHOLDER, halfyearly: PLAY_PRICE_PLACEHOLDER, yearly: PLAY_PRICE_PLACEHOLDER },
     featuresAr: [
       "حتى 50 رسالة يومية للمدرب الذكي (بدلًا من 3)",
       "إجابات مبنية على خطتك ووزنك وتمارين اليوم",
@@ -255,3 +259,45 @@ export const PAYWALL_PLANS = {
     ],
   },
 };
+
+export function setPlayStorePricing(products) {
+  const list = Array.isArray(products) ? products : [];
+  for (const product of list) {
+    const productId = product?.productId || product?.sku || product?.id;
+    if (!productId) continue;
+
+    let matchPlan = null;
+    let matchDuration = null;
+    for (const [planId, entries] of Object.entries(BILLING_PRODUCTS || {})) {
+      const entry = typeof entries === "string" ? { monthly: entries } : entries || {};
+      for (const [durationId, id] of Object.entries(entry)) {
+        if (id === productId) {
+          matchPlan = planId;
+          matchDuration = durationId;
+          break;
+        }
+      }
+      if (matchPlan) break;
+    }
+    if (!matchPlan || !matchDuration) continue;
+
+    const display =
+      product?.formattedPrice ||
+      product?.priceString ||
+      product?.localizedPrice ||
+      product?.price;
+    if (display == null || String(display).trim() === "") continue;
+
+    const value = String(display).trim();
+    PAYWALL_PLANS[matchPlan].prices[matchDuration] = value;
+    PAYWALL_PRICES.eg[matchPlan][matchDuration] = value;
+    PAYWALL_PRICES.intl[matchPlan][matchDuration] = value;
+
+    PAYWALL_PRICES.eg.currency = "";
+    PAYWALL_PRICES.eg.currencyLabelAr = "";
+    PAYWALL_PRICES.eg.currencyLabelEn = "";
+    PAYWALL_PRICES.intl.currency = "";
+    PAYWALL_PRICES.intl.currencyLabelAr = "";
+    PAYWALL_PRICES.intl.currencyLabelEn = "";
+  }
+}

@@ -2707,7 +2707,7 @@ function useAppData(uid) {
 }
 
 function isCustomTrainingPlanActive(data) {
-  return !!data?.customTrainingPlan && data.customTrainingPlanActive !== false;
+  return !!data?.customTrainingPlan && data.customTrainingPlanActive === true;
 }
 
 /* ============================== EXERCISE MERGE HELPERS ============================== */
@@ -2733,34 +2733,19 @@ function getMergedExercises(data, day) {
   return [...base.filter((e) => !removed.has(e.id)), ...(custom.added || [])];
 }
 function getUsableExercises(data, day) {
-  // An admin-published custom Training Pro plan is the active workout source.
-  // Otherwise use the selected built-in plan and preserve the existing free cap.
-  const activePlan =
-    PLAN_TEMPLATES[data.activePlanId] || PLAN_TEMPLATES.beginner;
-  const customTrainingDay = isCustomTrainingPlanActive(data)
-    ? data.customTrainingPlan?.days?.[DAYS.indexOf(day)]
-    : null;
-  const base = customTrainingDay
-    ? (customTrainingDay.exercises || []).map((e) => ({
-        ...EX[e.id],
-        ...e,
-        name: e.name || EX[e.id]?.name || e.id,
-        nameAr: e.nameAr || EX[e.id]?.nameAr || e.name || e.id,
-        startWeight: e.startWeight ?? EX[e.id]?.startWeight ?? 0,
-        vid: e.vid || EX[e.id]?.vid || null,
-        demoImage: e.demoImage || EX[e.id]?.demoImage || null,
-      }))
-    : (activePlan.schedule[day]?.exercises || []);
-  const custom = data.customPlan[day] || { added: [], removedIds: [] };
-  const removed = new Set(custom.removedIds || []);
-  const baseVisible = base.filter((e) => !removed.has(e.id));
-  const customAdded = custom.added || [];
-  const pro = data.entitlements.trainingPro;
-  const freeBase = customTrainingDay || pro ? baseVisible : baseVisible.slice(0, FREE_EXERCISE_CAP);
-  const lockedCount = customTrainingDay || pro
+  const base = getMergedExercises(data, day);
+  const pro = !!data.entitlements.trainingPro;
+  const customActive = isCustomTrainingPlanActive(data);
+  const freeBase = customActive || pro
+    ? base
+    : base.slice(0, FREE_EXERCISE_CAP);
+  const lockedCount = customActive || pro
     ? 0
-    : Math.max(0, baseVisible.length - FREE_EXERCISE_CAP);
-  return { list: [...freeBase, ...customAdded], lockedCount };
+    : Math.max(0, base.length - FREE_EXERCISE_CAP);
+  return {
+    list: freeBase,
+    lockedCount,
+  };
 }
 
 /* ============================== SHARED UI ============================== */
@@ -8064,7 +8049,7 @@ function MealsScreen({ data, setData, back, showToast, go }) {
     <div dir={ar ? "rtl" : "ltr"}>
       <TopBar title={ar ? "التغذية" : "Nutrition"} onBack={back} />
       <div style={{ padding: "0 18px" }}>
-        {!customNutritionPlan && !pro ? (
+        {!pro ? (
           <Card
             style={{
               marginBottom: 12,
@@ -8839,6 +8824,8 @@ function PlansScreen({ data, setData, go, showToast }) {
               }
               const next = clone(data);
               next.customTrainingPlanActive = true;
+              next.activePlanId = null;
+              next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);
               next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);
               setData(next);
               showToast(ar ? "تم تفعيل خطة التدريب المخصصة" : "Personalized training plan activated");
@@ -8903,7 +8890,7 @@ function PlansScreen({ data, setData, go, showToast }) {
         }}
       >
         {Object.values(PLAN_TEMPLATES).map((p) => {
-          const isActive = data.activePlanId === p.id;
+          const isActive = !customTrainingPlanActive && data.activePlanId === p.id;
           const locked = p.pro && !pro;
           return (
             <Card

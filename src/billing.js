@@ -4,7 +4,7 @@
 // Native Google Play Billing is the source of purchase state.
 // Product IDs and localized prices come from Google Play at runtime.
 
-import { BILLING_PRODUCTS } from "./config";
+import { BILLING_PRODUCTS, setPlayStorePricing } from "./config";
 
 let plugin = null;
 let purchaseInFlight = false;
@@ -135,10 +135,6 @@ function normalizeSkuDetails(result) {
   return result;
 }
 
-/**
- * capacitor-billing 8.x exposes Android SKU details through
- * querySkuDetails({ product: '<ONE_ID>', type: 'SUBS' }).
- */
 async function querySkuDetailsForProduct(billing, productId) {
   if (!billing || typeof billing.querySkuDetails !== "function") {
     throw Object.assign(
@@ -200,6 +196,8 @@ export async function queryProducts() {
       }
     }
 
+    setPlayStorePricing(products);
+
     return {
       preview: false,
       products,
@@ -251,10 +249,6 @@ export async function purchase(planId, durationId) {
   try {
     await ensureBillingConnection(billing);
 
-    // Do not gate launchBillingFlow on a separate catalog query.
-    // capacitor-billing documents launchBillingFlow({ product, type })
-    // as the purchase entry point; Google Play returns the authoritative
-    // response code when the SKU/base plan/test environment is unavailable.
     const result = await billing.launchBillingFlow({
       product: productId,
       type: "SUBS",

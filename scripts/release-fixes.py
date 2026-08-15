@@ -1,22 +1,13 @@
 """Single deterministic, idempotent release hardening step.
 
-This replaces the previous v1-v7 patch chain. It applies only source fixes that
-must be present in every Android release build and validates that each target
-was actually reached. It never relies on fragile exact historical blocks.
+This is the only Android release-time source hardening step. It keeps APK and
+AAB on the exact same corrected source tree and validates every required target.
 """
 from pathlib import Path
 import re
 
 APP = Path("src/App.jsx")
-NATIVE = Path("scripts/inject-tiktok-webview.py")
 text = APP.read_text(encoding="utf-8")
-
-
-def replace_once(source: str, pattern: str, replacement: str, label: str, flags=0) -> str:
-    out, count = re.subn(pattern, replacement, source, count=1, flags=flags)
-    if count != 1:
-        raise SystemExit(f"release-fixes: target not found: {label}")
-    return out
 
 # ---------------------------------------------------------------------------
 # 1) Workout day strip: rolling 7-day window centered around today.
@@ -36,34 +27,26 @@ if "const iso = addDays(dateKey(0), i - 3);" not in text:
 if "const isToday = offset === 0;" in text:
     raise SystemExit("release-fixes: stale workout offset reference remains")
 
-# Completed days use a green background; their weekday label must stay visible.
-# The old color rule used C.positive on C.positive for non-selected completed
-# days, making the label effectively disappear.
+# Completed day labels must stay white on the green completed background.
 old_color = '''color:\n                      isSelected && (isDone || isMissed)\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isDone\n                        ? C.positive\n                        : isMissed\n                        ? C.danger\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
 new_color = '''color:\n                      isDone || isMissed\n                        ? "#fff"\n                        : isSelected\n                        ? C.onAccent\n                        : isToday\n                        ? C.green\n                        : C.sub,'''
 if old_color in text:
     text = text.replace(old_color, new_color, 1)
 else:
-    # Fallback: constrain only the exact completed-label branch if formatting
-    # differs, but fail instead of silently shipping a hidden label.
-    if not re.search(r'isDone\s*\?\s*C\.positive', text):
-        raise SystemExit("release-fixes: workout day-label color target not found")
-    text = re.sub(
+    text, count = re.subn(
         r'isSelected\s*&&\s*\(isDone\s*\|\|\s*isMissed\)\s*\?\s*"#fff"\s*:\s*isSelected\s*\?\s*C\.onAccent\s*:\s*isDone\s*\?\s*C\.positive\s*:\s*isMissed\s*\?\s*C\.danger\s*:\s*isToday\s*\?\s*C\.green\s*:\s*C\.sub,',
         'isDone || isMissed ? "#fff" : isSelected ? C.onAccent : isToday ? C.green : C.sub,',
         text,
         count=1,
     )
+    if count != 1:
+        raise SystemExit("release-fixes: workout day-label color target not found")
 
 # ---------------------------------------------------------------------------
-# 2) AI Coach: native WebView resize already shrinks the visible viewport.
-#    Do not subtract keyboard height a second time from the fixed drawer.
+# 2) AI Coach: native resize already shrinks the visible WebView. Do not
+#    subtract keyboard height a second time from the fixed drawer.
 # ---------------------------------------------------------------------------
-text = text.replace(
-    "          bottom: keyboardInset,",
-    "          bottom: 0,",
-    1,
-)
+text = text.replace("          bottom: keyboardInset,", "          bottom: 0,", 1)
 text = text.replace(
     '          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",\n',
     '          transition: "none",\n',
@@ -74,8 +57,6 @@ if "          bottom: keyboardInset," in text:
 
 # ---------------------------------------------------------------------------
 # 3) TikTok: keep the full-screen player inside Fifty Fit via native WebView.
-#    The configured URL remains the source; the native Android bridge owns the
-#    actual Player v1 surface and prevents opening the external TikTok app.
 # ---------------------------------------------------------------------------
 if 'import { registerPlugin } from "@capacitor/core";' not in text:
     text = text.replace(
@@ -137,26 +118,131 @@ if not viewer_re.search(text):
 text = viewer_re.sub(viewer, text, count=1)
 
 # ---------------------------------------------------------------------------
-# 4) Keep the current startup animation deterministic (do not replace the
-#    existing StartupGate if it is already present).
+# 4) Admin-published training plans: a custom plan is only active after the
+#    user explicitly chooses "Use This Plan". Selecting a built-in plan must
+#    immediately restore that built-in schedule, even when an old custom plan
+#    remains stored in Firestore.
+# ---------------------------------------------------------------------------
+if 'const customTrainingActive = data.activePlanId === "__custom_training__";' not in text:
+    anchor = 'function getMergedExercises(data, day) {\n'
+    if anchor not in text:
+        raise SystemExit("release-fixes: getMergedExercises anchor not found")
+    text = text.replace(
+        anchor,
+        anchor + '  const customTrainingActive = data.activePlanId === "__custom_training__";\n',
+        1,
+    )
+
+text = text.replace(
+    '  const customTrainingDay =\n    data.customTrainingPlan?.days?.[DAYS.indexOf(day)];',
+    '  const customTrainingDay = customTrainingActive\n    ? data.customTrainingPlan?.days?.[DAYS.indexOf(day)]\n    : null;',
+    2,
+)
+
+# WorkoutScreen directly used the custom plan as its schedule even when a
+# different built-in plan was selected. Gate that lookup on the same active flag.
+text = text.replace(
+    '  const assignedCustomDay =\n    data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)];',
+    '  const assignedCustomDay =\n    data.activePlanId === "__custom_training__"\n      ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]\n      : null;',
+    1,
+)
+
+# The custom plan card needs a real activation action. Replace its simple
+# "open workout" behavior with an explicit Use This Plan action and leave the
+# built-in Plans list available below it.
+custom_card_pattern = re.compile(
+    r'''\{data\.customTrainingPlan && \(\n\s*<div style=\{\{ padding: "0 18px 10px" \}\}>\n\s*<Card\n\s*onClick=\{\(\) => go\("workout"\)\}\n\s*style=\{\{\n\s*background: C\.greenSoft,\n\s*border: `1\.5px solid \$\{C\.green\}66`,\n\s*cursor: "pointer",\n\s*\}\}\n\s*>\n\s*<div style=\{\{ color: C\.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0\.6 \}\}>\n\s*\{ar \? "خطة تدريب مخصصة" : "PERSONALIZED TRAINING"\}\n\s*</div>\n\s*<div style=\{\{ color: C\.text, fontSize: 15, fontWeight: 900, marginTop: 4 \}\}>\n\s*🏋️ \{ar \? \(data\.customTrainingPlan\.titleAr \|\| "خطة التدريب المخصصة"\) : \(data\.customTrainingPlan\.title \|\| "Personal Training Plan"\)\}\n\s*</div>\n\s*<div style=\{\{ color: C\.sub, fontSize: 11\.5, marginTop: 4 \}\}>\n\s*\{ar \? `تبدأ \$\{data\.customTrainingPlan\.startDate \|\| dateKey\(0\)\}` : `Starts \$\{data\.customTrainingPlan\.startDate \|\| dateKey\(0\)\}`\}\n\s*</div>\n\s*<div style=\{\{ color: C\.text, fontSize: 11\.5, fontWeight: 800, marginTop: 9 \}\}>\n\s*\{ar \? "فتح خطة التدريب ←" : "Open Training Plan →"\}\n\s*</div>\n\s*</Card>\n\s*</div>\n\s*\)}''',
+    re.S,
+)
+custom_card_replacement = '''{data.customTrainingPlan && (
+        <div style={{ padding: "0 18px 10px" }}>
+          <Card
+            style={{
+              background: C.greenSoft,
+              border: `1.5px solid ${C.green}66`,
+            }}
+          >
+            <div style={{ color: C.sub, fontSize: 10, fontWeight: 900, letterSpacing: 0.6 }}>
+              {ar ? "خطة تدريب مخصصة" : "PERSONALIZED TRAINING"}
+            </div>
+            <div style={{ color: C.text, fontSize: 15, fontWeight: 900, marginTop: 4 }}>
+              🏋️ {ar ? (data.customTrainingPlan.titleAr || "خطة التدريب المخصصة") : (data.customTrainingPlan.title || "Personal Training Plan")}
+            </div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 4 }}>
+              {ar ? `تبدأ ${data.customTrainingPlan.startDate || dateKey(0)}` : `Starts ${data.customTrainingPlan.startDate || dateKey(0)}`}
+            </div>
+            <div style={{ color: C.sub, fontSize: 11.5, marginTop: 8 }}>
+              {data.activePlanId === "__custom_training__"
+                ? (ar ? "الخطة دي مستخدمة حاليًا" : "This plan is active")
+                : (ar ? "الخطة متاحة لك — اختر استخدامها لتحديث تمارينك" : "Available to you — use it to replace your current workout plan")}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <GreenButton
+                onClick={() => {
+                  const next = clone(data);
+                  next.activePlanId = "__custom_training__";
+                  next.workoutStartDate = dateKey(0);
+                  setData(next);
+                  showToast(ar ? "تم استخدام خطة التدريب المخصصة" : "Personalized training plan is now active");
+                  go("workout");
+                }}
+                disabled={data.activePlanId === "__custom_training__"}
+                style={{ flex: 1 }}
+              >
+                {data.activePlanId === "__custom_training__"
+                  ? (ar ? "دي خطتك الحالية" : "Active Plan")
+                  : (ar ? "استخدم الخطة دي" : "Use This Plan")}
+              </GreenButton>
+              <GreenButton
+                variant="outline"
+                onClick={() => go("workout")}
+                style={{ flex: 1 }}
+              >
+                {ar ? "فتح التمرين" : "Open Workout"}
+              </GreenButton>
+            </div>
+          </Card>
+        </div>
+      )}'''
+if custom_card_pattern.search(text):
+    text = custom_card_pattern.sub(custom_card_replacement, text, count=1)
+else:
+    raise SystemExit("release-fixes: custom training plan card target not found")
+
+# PlanDetail built-in switching must deactivate a previously active custom plan.
+# The existing use() already writes activePlanId=planId; with the merge gating
+# above this is enough to switch the displayed workouts immediately.
+
+# ---------------------------------------------------------------------------
+# 5) Startup animation must exist and remain visible long enough to be seen.
+#    main.jsx is the source of truth; this check prevents a release from
+#    silently reverting to an invisible/zero-duration startup shell.
 # ---------------------------------------------------------------------------
 main = Path("src/main.jsx")
 main_text = main.read_text(encoding="utf-8")
 if "function StartupGate" not in main_text:
-    raise SystemExit("release-fixes: StartupGate is missing; do not ship without startup animation")
+    raise SystemExit("release-fixes: StartupGate is missing")
+if "setTimeout(() => setMinimumTimeElapsed(true), 1600)" not in main_text:
+    raise SystemExit("release-fixes: startup animation minimum duration is not 1600ms")
+if "animation: \"fiftyLogoIn 1.15s" not in main_text:
+    raise SystemExit("release-fixes: startup logo animation is missing")
 
-# Write the consolidated source modifications.
 APP.write_text(text, encoding="utf-8")
 
 # Final source assertions.
 final = APP.read_text(encoding="utf-8")
+assert 'const customTrainingActive = data.activePlanId === "__custom_training__";' in final
+assert 'data.activePlanId === "__custom_training__"\n      ? data.customTrainingPlan' in final
+assert 'next.activePlanId = "__custom_training__";' in final
+assert 'استخدم الخطة دي' in final
 assert "const iso = addDays(dateKey(0), i - 3);" in final
 assert "const isToday = offset === 0;" not in final
+assert "          bottom: keyboardInset," not in final
 assert 'const TikTokWebView = registerPlugin("TikTokWebView");' in final
 assert 'TikTokWebView.open({ url: videoId })' in final
-assert "          bottom: keyboardInset," not in final
-assert "startPublishedPlansUx" not in main_text or True
 print("release-fixes: consolidated release source fixes applied")
 print("release-fixes: workout day strip rolls daily and keeps completed labels visible")
 print("release-fixes: AI Coach drawer sits directly above native keyboard")
 print("release-fixes: TikTok remains in-app via native WebView")
+print("release-fixes: admin custom training plan is opt-in and built-in plan switching overrides old custom plans")
+print("release-fixes: startup animation is enforced at 1600ms")

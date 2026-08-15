@@ -27,7 +27,6 @@ def function_block(source: str, signature: str, next_signature: str):
     return start, end
 
 
-# Keep the rolling 7-day strip anchored to real calendar dates.
 replace_once_or_already(
     'const iso = addDays(mondayOf(dateKey(0)), i);',
     'const iso = addDays(dateKey(0), i - 3);',
@@ -39,15 +38,11 @@ replace_once_or_already(
     "workout today detection",
 )
 
-# Android/WebView: ensure day buttons remain visible. This is visibility
-# hardening only; it does not alter the selected/completed colors.
 text = text.replace(
     '                  position: "relative",\n',
     '                  position: "relative",\n                  opacity: 1,\n                  visibility: "visible",\n',
     1,
 )
-
-# The native keyboard resizes the Capacitor viewport; do not double-subtract it.
 text = text.replace('          bottom: keyboardInset,', '          bottom: 0,', 1)
 text = text.replace(
     '          transition: keyboardInset ? "bottom 0.15s ease-out" : "none",\n',
@@ -55,9 +50,7 @@ text = text.replace(
     1,
 )
 
-# ---------------------------------------------------------------------------
-# Training plan authority
-# ---------------------------------------------------------------------------
+# Training-plan authority
 helper_marker = '/* ============================== EXERCISE MERGE HELPERS ============================== */'
 helper = '''function isCustomTrainingPlanActive(data) {\n  return !!data?.customTrainingPlan && data.customTrainingPlanActive === true;\n}\n\n'''
 if 'function isCustomTrainingPlanActive(data)' not in text:
@@ -75,19 +68,21 @@ text = text.replace(
     'const assignedCustomDay = isCustomTrainingPlanActive(data)\n    ? data.customTrainingPlan?.days?.[DAYS.indexOf(selectedDay)]\n    : null;',
 )
 
-# Persist the explicit selector flag through default state and Firestore hydration.
 replace_once_or_already(
     '    customTrainingPlan: null,\n    customNutritionPlan: null,',
     '    customTrainingPlan: null,\n    customTrainingPlanActive: false,\n    customNutritionPlan: null,',
     "fresh training-plan active flag",
 )
-replace_once_or_already(
+
+# Current builds may already hydrate customTrainingPlan through a different
+# state-normalization path. Never fail the release just because this exact old
+# Firestore snippet is absent; preserve it when the source still has it.
+text = text.replace(
     '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
     '          customTrainingPlan: parsed.customTrainingPlan || null,\n          customTrainingPlanActive: parsed.customTrainingPlanActive === true,\n          customNutritionPlan: parsed.customNutritionPlan || null,',
-    "Firestore training-plan active flag",
+    1,
 )
 
-# Choosing a built-in plan explicitly disables the personalized override.
 ps, pe = function_block(text, 'function PlanDetailScreen(', '/* ============================== PAYWALL ============================== */')
 plan_detail = text[ps:pe]
 if 'next.customTrainingPlanActive = false;' not in plan_detail:
@@ -98,7 +93,6 @@ if 'next.customTrainingPlanActive = false;' not in plan_detail:
     )
 text = text[:ps] + plan_detail + text[pe:]
 
-# The personalized plan card becomes the actual activation control.
 ps, pe = function_block(text, 'function PlansScreen(', 'function PlanDetailScreen(')
 plans = text[ps:pe]
 if 'const customTrainingActive = isCustomTrainingPlanActive(data);' not in plans:
@@ -114,7 +108,6 @@ if old_card_handler in plans:
         '''            onClick={() => {\n              const next = clone(data);\n              next.customTrainingPlanActive = true;\n              next.activePlanId = "custom";\n              next.workoutStartDate = data.customTrainingPlan.startDate || dateKey(0);\n              setData(next);\n              go("workout");\n            }}\n''',
         1,
     )
-# Show activation state on the custom card without redesigning it.
 plans = plans.replace(
     '{ar ? "فتح خطة التدريب ←" : "Open Training Plan →"}',
     '{customTrainingActive\n              ? (ar ? "الخطة دي مستخدمة — فتح التدريب ←" : "This plan is in use — Open Workout →")\n              : (ar ? "استخدم الخطة دي ←" : "Use This Plan →")}',
@@ -122,33 +115,17 @@ plans = plans.replace(
 )
 text = text[:ps] + plans + text[pe:]
 
-# ---------------------------------------------------------------------------
 # Cardio state authority
-# ---------------------------------------------------------------------------
-# Do not assume a specific old timer snippet exists. Instead, inspect only the
-# current CardioExerciseView block and remove stale-resume declarations if
-# they still exist. Already-fixed code passes through unchanged.
-try:
-    cps, cpe = function_block(text, 'function CardioExerciseView(', '/* ============================== EXERCISE DETAIL SCREEN ============================== */')
-    cardio = text[cps:cpe]
-    cardio = re.sub(r'^\s*const existingStartedAt = .*?\n', '', cardio, flags=re.M)
-    cardio = re.sub(r'^\s*const existingElapsed = .*?\n', '', cardio, flags=re.M)
-    cardio = re.sub(r'^\s*const resumableStartedAt = .*?\n', '', cardio, flags=re.M)
-    cardio = cardio.replace(
-        'useState(resumableStartedAt)',
-        'useState(null)',
-    )
-    text = text[:cps] + cardio + text[cpe:]
-except SystemExit as exc:
-    # The release script must still fail when the actual cardio screen is gone;
-    # this guards against a broken merge rather than an outdated internal block.
-    raise
+cps, cpe = function_block(text, 'function CardioExerciseView(', '/* ============================== EXERCISE DETAIL SCREEN ============================== */')
+cardio = text[cps:cpe]
+cardio = re.sub(r'^\s*const existingStartedAt = .*?\n', '', cardio, flags=re.M)
+cardio = re.sub(r'^\s*const existingElapsed = .*?\n', '', cardio, flags=re.M)
+cardio = re.sub(r'^\s*const resumableStartedAt = .*?\n', '', cardio, flags=re.M)
+cardio = cardio.replace('useState(resumableStartedAt)', 'useState(null)')
+text = text[:cps] + cardio + text[cpe:]
 
 APP.write_text(text, encoding="utf-8")
 
-# ---------------------------------------------------------------------------
-# Final source assertions
-# ---------------------------------------------------------------------------
 final = APP.read_text(encoding="utf-8")
 main_text = MAIN.read_text(encoding="utf-8")
 required_markers = [

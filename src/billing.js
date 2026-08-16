@@ -374,27 +374,65 @@ export async function purchase(planId, durationId) {
       throw billingError(queryError, "product_unavailable");
     }
 
-    const result = await billing.launchBillingFlow({
-      product: productId,
-      type: "SUBS",
-    });
+    let result;
+    try {
+      result = await billing.launchBillingFlow({
+        product: productId,
+        type: "SUBS",
+      });
+    } catch (launchError) {
+      const launchMapped = billingError(launchError, "billing_flow_failed");
+      try {
+        window.__fiftyFitBillingDiagnostics = {
+          stage: "launchBillingFlow_exception",
+          productId,
+          code: launchMapped.code,
+          message: launchMapped.message,
+          nativeCode: launchMapped.nativeCode || null,
+          nativeMessage: launchMapped.nativeMessage || null,
+          raw: String(launchError?.message || launchError || ""),
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {}
+      throw launchMapped;
+    }
 
     const responseCode =
       result?.responseCode ??
       result?.billingResponseCode ??
       result?.response?.responseCode;
+    const debugMessage =
+      result?.debugMessage ||
+      result?.response?.message ||
+      result?.message ||
+      "Google Play did not complete the purchase";
+
+    try {
+      window.__fiftyFitBillingDiagnostics = {
+        stage: "launchBillingFlow_result",
+        productId,
+        responseCode: responseCode ?? null,
+        debugMessage,
+        subResponseCode: result?.subResponseCode ?? null,
+        rawResult: result,
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (_) {}
+
     if (responseCode != null && String(responseCode) !== "0") {
+      const flowError = billingError(
+        {
+          responseCode,
+          message: debugMessage,
+          subResponseCode: result?.subResponseCode,
+        },
+        "billing_flow_failed",
+      );
+      flowError.message = `Google Play Billing code ${responseCode}: ${debugMessage}`;
       return {
         success: false,
         preview: false,
-        error: billingError(
-          {
-            responseCode,
-            message: result?.debugMessage || result?.response?.message,
-            subResponseCode: result?.subResponseCode,
-          },
-          "billing_flow_failed",
-        ),
+        error: flowError,
       };
     }
 

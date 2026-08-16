@@ -4922,11 +4922,16 @@ function OnboardingScreen({ data, setData, go, showToast }) {
     let base;
     try {
       const snap = await getDoc(doc(db, "users", uid));
-      if (!snap.exists()) throw new Error("User profile document does not exist");
-      base = { ...freshState(), ...snap.data() };
+      base = snap.exists() ? { ...freshState(), ...snap.data() } : clone(data);
     } catch (e) {
-      console.error("[onboarding] authoritative Firestore read failed", e);
-      setErr(ar ? "تعذر قراءة بياناتك المحفوظة — حاول تاني" : "Couldn’t read your saved profile — please try again");
+      // getDoc is best-effort here. useAppData already has a live, Firestore-backed
+      // snapshot and setData below is the authoritative persistence boundary.
+      // A transient read failure must not trap a brand-new user in onboarding.
+      console.warn("[onboarding] direct profile read failed; using trusted app state", e);
+      base = clone(data);
+    }
+    if (!base || typeof base !== "object") {
+      setErr(ar ? "تعذر تجهيز بياناتك — حاول تاني" : "Couldn’t prepare your profile — please try again");
       return;
     }
     const next = clone(base);

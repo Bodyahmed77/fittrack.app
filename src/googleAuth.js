@@ -218,63 +218,33 @@ async function runNativeGoogleSignIn(useCredentialManager = true) {
 
 async function nativeGoogleSignIn(localLang, createInitialState) {
   let result;
-  let usedCredentialManager = true;
+  const usedCredentialManager = false;
   try {
-    console.info("[GoogleSignIn] native start: Credential Manager enabled");
-    result = await runNativeGoogleSignIn(true);
+    // The tested build is failing inside Credential Manager / One Tap with
+    // Google status 10 [28444]. The plugin supports disabling Credential Manager,
+    // so use the legacy chooser directly and avoid the failing One Tap path.
+    console.info("[GoogleSignIn] native start: legacy chooser (Credential Manager disabled)");
+    result = await runNativeGoogleSignIn(false);
   } catch (nativeError) {
     const mapped = mapAuthError(nativeError);
-
-    if (isNoCredentialError(mapped) || mapped?.googleStatusCode === "10" || mapped?.code === "developer_error") {
-      try {
-        console.warn(
-          "[GoogleSignIn] modern native flow did not complete; retrying with legacy Google Sign-In chooser",
-          mapped?.googleStatusCode || mapped?.code || "unknown",
-        );
-        usedCredentialManager = false;
-        result = await runNativeGoogleSignIn(false);
-      } catch (fallbackError) {
-        const fallbackMapped = mapAuthError(fallbackError);
-        try {
-          window.__fiftyFitGoogleAuthDiagnostics = {
-            stage: "native_sign_in_fallback",
-            code: fallbackMapped?.code || "unknown",
-            googleStatusCode: fallbackMapped?.googleStatusCode || fallbackMapped?.nativeCode || fallbackMapped?.nativeErrorCode || null,
-            nativeCode: fallbackMapped?.nativeCode || null,
-            nativeErrorCode: fallbackMapped?.nativeErrorCode || null,
-            nativeMessage: fallbackMapped?.nativeMessage || null,
-            firstAttempt: "modern_flow_failed",
-            message: fallbackMapped?.message || String(fallbackMapped || ""),
-            updatedAt: new Date().toISOString(),
-          };
-        } catch (_) {}
-        console.error(
-          "[GoogleSignIn] legacy chooser fallback failed",
-          fallbackMapped?.nativeCode || fallbackMapped?.nativeErrorCode || fallbackMapped?.code || "",
-          fallbackMapped?.nativeMessage || fallbackMapped?.message || "",
-        );
-        throw fallbackMapped;
-      }
-    } else {
-      try {
-        window.__fiftyFitGoogleAuthDiagnostics = {
-          stage: "native_sign_in",
-          code: mapped?.code || "unknown",
-          googleStatusCode: mapped?.googleStatusCode || mapped?.nativeCode || mapped?.nativeErrorCode || null,
-          nativeCode: mapped?.nativeCode || null,
-          nativeErrorCode: mapped?.nativeErrorCode || null,
-          nativeMessage: mapped?.nativeMessage || null,
-          message: mapped?.message || String(mapped || ""),
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (_) {}
-      console.error(
-        "[GoogleSignIn] native chooser failed",
-        mapped?.nativeCode || mapped?.nativeErrorCode || mapped?.code || "",
-        mapped?.nativeMessage || mapped?.message || "",
-      );
-      throw mapped;
-    }
+    try {
+      window.__fiftyFitGoogleAuthDiagnostics = {
+        stage: "native_sign_in_legacy",
+        code: mapped?.code || "unknown",
+        googleStatusCode: mapped?.googleStatusCode || mapped?.nativeCode || mapped?.nativeErrorCode || null,
+        nativeCode: mapped?.nativeCode || null,
+        nativeErrorCode: mapped?.nativeErrorCode || null,
+        nativeMessage: mapped?.nativeMessage || null,
+        message: mapped?.message || String(mapped || ""),
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (_) {}
+    console.error(
+      "[GoogleSignIn] legacy native chooser failed",
+      mapped?.nativeCode || mapped?.nativeErrorCode || mapped?.code || "",
+      mapped?.nativeMessage || mapped?.message || "",
+    );
+    throw mapped;
   }
 
   const idToken = result?.credential?.idToken || result?.credential?.id_token || result?.idToken;

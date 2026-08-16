@@ -2600,6 +2600,7 @@ function useAppData(uid) {
   const [notifications, setNotifications] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const verifiedEntitlementsRef = useRef(null);
+  const latestLocalWriteAtRef = useRef(null);
 
   useEffect(() => {
     if (!uid) {
@@ -2615,6 +2616,15 @@ function useAppData(uid) {
       (snap) => {
         const fresh = freshState();
         const parsed = snap.exists() ? snap.data() : {};
+        const snapUpdatedAt = String(parsed.updatedAt || "");
+        const latestLocalWriteAt = String(latestLocalWriteAtRef.current || "");
+        if (
+          latestLocalWriteAt &&
+          snapUpdatedAt &&
+          snapUpdatedAt < latestLocalWriteAt
+        ) {
+          return;
+        }
         const merged = {
           ...fresh,
           ...parsed,
@@ -2689,9 +2699,11 @@ function useAppData(uid) {
               key !== "customNutritionPlan",
           ),
         );
+        const updatedAt = new Date().toISOString();
+        latestLocalWriteAtRef.current = updatedAt;
         await setDoc(
           doc(db, "users", uid),
-          { ...persisted, updatedAt: new Date().toISOString() },
+          { ...persisted, updatedAt },
           { merge: true },
         );
         return true;
@@ -4899,6 +4911,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
         carbs: tdeeResult.carbs,
         fat: tdeeResult.fat,
       };
+    next.settings = { ...next.settings, language: next.settings.language || ar && "ar" || "en" };
     next.onboarded = true;
     const saved = await setData(next);
     if (!saved) {
@@ -9263,10 +9276,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       //      completes a real purchase.
       //    - In web preview / dev the plugin is missing, so `preview` is true
       //      and we allow a simulated unlock so the flow can be tested.
-      const result = await billingPurchase(planId, durationId).catch(() => ({
-        success: false,
-        preview: true,
-      }));
+      const result = await billingPurchase(planId, durationId);
 
       // Only unlock after the native bridge returns an acknowledged purchase.
       const shouldUnlock = result?.success === true && result?.verified === true;
@@ -9360,7 +9370,6 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
         next.proPlan = personalizedPlan;
         next.activePlanId = personalizedPlan.workoutPlanId;
       next.customTrainingPlanActive = false;
-      next.customTrainingPlanActive = false;
       }
       if (next.entitlements.nutritionPro) {
         const personalizedPlan = buildPersonalizedProPlan(next);
@@ -9430,10 +9439,26 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       // 4) Trigger in-app review after a successful unlock.
       maybeRequestReview("purchase").catch(() => {});
     } catch (e) {
+      const billingCode = String(
+        e?.code || e?.responseCode || e?.nativeCode || "billing_flow_failed",
+      );
+      const billingMessage = String(
+        e?.debugMessage || e?.nativeMessage || e?.message || "Google Play did not complete the purchase",
+      );
+      try {
+        window.__fiftyFitLastBillingError = {
+          ...(window.__fiftyFitLastBillingError || {}),
+          code: billingCode,
+          message: billingMessage,
+          responseCode: e?.responseCode ?? null,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {}
       showToast(
         ar
-          ? "حصل خطأ في عملية الشراء — حاول تاني"
-          : "Purchase failed — please try again",
+          ? `فشل الدفع — كود Google Play: ${billingCode} — ${billingMessage}`
+          : `Purchase failed — Google Play code: ${billingCode} — ${billingMessage}`,
+        8000,
       );
     } finally {
       setBusy(false);

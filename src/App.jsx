@@ -2618,12 +2618,13 @@ function useAppData(uid) {
         const parsed = snap.exists() ? snap.data() : {};
         const snapUpdatedAt = String(parsed.updatedAt || "");
         const latestLocalWriteAt = String(latestLocalWriteAtRef.current || "");
-        if (
-          latestLocalWriteAt &&
-          snapUpdatedAt &&
-          snapUpdatedAt < latestLocalWriteAt
-        ) {
-          return;
+        if (latestLocalWriteAt) {
+          // A snapshot without updatedAt is the cached/initial Firestore
+          // document and must never overwrite a newer local write.
+          if (!snapUpdatedAt || snapUpdatedAt < latestLocalWriteAt) return;
+          // This snapshot contains our write (or something newer), so the
+          // pending-write guard can be cleared safely.
+          latestLocalWriteAtRef.current = null;
         }
         const merged = {
           ...fresh,

@@ -172,7 +172,13 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
     if (!existing.account?.email && user.email) patch["account.email"] = user.email;
     if (!existing.account?.name && user.displayName) patch["account.name"] = user.displayName;
     if (Object.keys(patch).length) {
-      try { await setDoc(ref, patch, { merge: true }); } catch (error) {
+      try {
+        await setDoc(
+          ref,
+          { ...patch, updatedAt: new Date().toISOString() },
+          { merge: true },
+        );
+      } catch (error) {
         console.warn("[GoogleSignIn] ensureUserDoc patch failed", error);
       }
     }
@@ -181,6 +187,7 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
   const initial = typeof createInitialState === "function"
     ? createInitialState(user, localLang)
     : minimalInitialState(user, localLang);
+  initial.updatedAt = new Date().toISOString();
   try { await setDoc(ref, initial, { merge: true }); } catch (error) {
     console.warn("[GoogleSignIn] ensureUserDoc create failed", error);
   }
@@ -218,13 +225,14 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
   } catch (nativeError) {
     const mapped = mapAuthError(nativeError);
 
-    if (isNoCredentialError(mapped)) {
+    if (isNoCredentialError(mapped) || mapped?.googleStatusCode === "10" || mapped?.code === "developer_error") {
       try {
         console.warn(
-          "[GoogleSignIn] Credential Manager returned no credentials; retrying with legacy Google Sign-In chooser",
+          "[GoogleSignIn] modern native flow did not complete; retrying with legacy Google Sign-In chooser",
+          mapped?.googleStatusCode || mapped?.code || "unknown",
         );
         usedCredentialManager = false;
-        result = await runNativeGoogleSignIn(Boolean(0));
+        result = await runNativeGoogleSignIn(false);
       } catch (fallbackError) {
         const fallbackMapped = mapAuthError(fallbackError);
         try {
@@ -235,7 +243,7 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
             nativeCode: fallbackMapped?.nativeCode || null,
             nativeErrorCode: fallbackMapped?.nativeErrorCode || null,
             nativeMessage: fallbackMapped?.nativeMessage || null,
-            firstAttempt: "no_credentials",
+            firstAttempt: "modern_flow_failed",
             message: fallbackMapped?.message || String(fallbackMapped || ""),
             updatedAt: new Date().toISOString(),
           };

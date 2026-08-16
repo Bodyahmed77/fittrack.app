@@ -2595,10 +2595,23 @@ function useFirebaseSession() {
   return firebaseUser;
 }
 
+// FIFTYFIT_RELEASE_REPAIR_V2
+const WRITE_WATERMARK_PREFIX = "fiftyfit:write-watermark:";
+function writeWatermarkKey(uid) { return `${WRITE_WATERMARK_PREFIX}${uid}`; }
+function readWriteWatermark(uid) {
+  try { return localStorage.getItem(writeWatermarkKey(uid)) || ""; } catch (_) { return ""; }
+}
+function persistWriteWatermark(uid, iso) {
+  try { localStorage.setItem(writeWatermarkKey(uid), iso); } catch (_) {}
+}
+function newerIso(a, b) { if (!a) return b || ""; if (!b) return a; return a >= b ? a : b; }
+
 function useAppData(uid) {
   const [data, setDataRaw] = useState(freshState());
   const [notifications, setNotifications] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [writePending, setWritePending] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const verifiedEntitlementsRef = useRef(null);
   const latestLocalWriteAtRef = useRef(null);
 
@@ -2610,6 +2623,8 @@ function useAppData(uid) {
       return;
     }
     setLoaded(false);
+    setSaveError(null);
+    latestLocalWriteAtRef.current = readWriteWatermark(uid) || null;
     const ref = doc(db, "users", uid);
     const unsub = onSnapshot(
       ref,
@@ -2618,13 +2633,18 @@ function useAppData(uid) {
         const parsed = snap.exists() ? snap.data() : {};
         const snapUpdatedAt = String(parsed.updatedAt || "");
         const latestLocalWriteAt = String(latestLocalWriteAtRef.current || "");
-        if (latestLocalWriteAt) {
-          // A snapshot without updatedAt is the cached/initial Firestore
-          // document and must never overwrite a newer local write.
-          if (!snapUpdatedAt || snapUpdatedAt < latestLocalWriteAt) return;
-          // This snapshot contains our write (or something newer), so the
-          // pending-write guard can be cleared safely.
-          latestLocalWriteAtRef.current = null;
+        if (latestLocalWriteAt && (!snapUpdatedAt || snapUpdatedAt < latestLocalWriteAt)) {
+          console.warn("[firestore] rejected stale/undated user snapshot", {
+            uid,
+            snapUpdatedAt: snapUpdatedAt || null,
+            watermark: latestLocalWriteAt,
+          });
+          return;
+        }
+        if (snapUpdatedAt) {
+          const newest = newerIso(latestLocalWriteAt, snapUpdatedAt);
+          latestLocalWriteAtRef.current = newest || null;
+          if (newest) persistWriteWatermark(uid, newest);
         }
         const merged = {
           ...fresh,
@@ -2688,20 +2708,24 @@ function useAppData(uid) {
 
   const setData = useCallback(
     async (next) => {
-      verifiedEntitlementsRef.current = next.entitlements;
-      setDataRaw(next);
       if (!uid) return true;
+      const previous = data;
+      const updatedAt = new Date().toISOString();
+      const persisted = Object.fromEntries(
+        Object.entries(next).filter(
+          ([key]) =>
+            key !== "entitlements" &&
+            key !== "customTrainingPlan" &&
+            key !== "customNutritionPlan",
+        ),
+      );
+      verifiedEntitlementsRef.current = next.entitlements;
+      setSaveError(null);
+      setWritePending(true);
+      setDataRaw({ ...next, updatedAt });
+      latestLocalWriteAtRef.current = newerIso(latestLocalWriteAtRef.current, updatedAt);
+      persistWriteWatermark(uid, latestLocalWriteAtRef.current);
       try {
-        const persisted = Object.fromEntries(
-          Object.entries(next).filter(
-            ([key]) =>
-              key !== "entitlements" &&
-              key !== "customTrainingPlan" &&
-              key !== "customNutritionPlan",
-          ),
-        );
-        const updatedAt = new Date().toISOString();
-        latestLocalWriteAtRef.current = updatedAt;
         await setDoc(
           doc(db, "users", uid),
           { ...persisted, updatedAt },
@@ -2710,13 +2734,17 @@ function useAppData(uid) {
         return true;
       } catch (e) {
         console.error("save failed", e);
+        setDataRaw(previous);
+        setSaveError(e);
         return false;
+      } finally {
+        setWritePending(false);
       }
     },
-    [uid],
+    [uid, data],
   );
 
-  return { data, setData, setVerifiedEntitlements, loaded, notifications };
+  return { data, setData, setVerifiedEntitlements, loaded, notifications, writePending, saveError };
 }
 
 function nutritionCycleState(plan, todayIso = dateKey(0)) {
@@ -4529,7 +4557,10 @@ function SignUpScreen({ go, showToast, localLang }) {
       initial.account.email = email.trim();
       initial.account.phone = phone.trim();
       initial.settings.language = localLang || "en";
-      initial.createdAt = new Date().toISOString();
+      const createdAt = new Date().toISOString();
+      initial.createdAt = createdAt;
+      initial.updatedAt = createdAt;
+      persistWriteWatermark(cred.user.uid, createdAt);
       await setDoc(doc(db, "users", cred.user.uid), initial);
       showToast(ar ? "تم إنشاء الحساب!" : "Account created!");
       // Root component sees the new signed-in user and routes to onboarding automatically.
@@ -4882,7 +4913,23 @@ function OnboardingScreen({ data, setData, go, showToast }) {
   };
 
   const finish = async () => {
-    const next = clone(data);
+    setErr("");
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      setErr(ar ? "الجلسة انتهت — سجل دخولك مرة تانية" : "Your session expired — please sign in again");
+      return;
+    }
+    let base;
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      if (!snap.exists()) throw new Error("User profile document does not exist");
+      base = { ...freshState(), ...snap.data() };
+    } catch (e) {
+      console.error("[onboarding] authoritative Firestore read failed", e);
+      setErr(ar ? "تعذر قراءة بياناتك المحفوظة — حاول تاني" : "Couldn’t read your saved profile — please try again");
+      return;
+    }
+    const next = clone(base);
     next.account = {
       ...next.account,
       phone: phone.trim(),
@@ -4912,8 +4959,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
         carbs: tdeeResult.carbs,
         fat: tdeeResult.fat,
       };
-    next.settings = { ...next.settings, language: next.settings.language || ar && "ar" || "en" };
-    next.settings = { ...next.settings, language: next.settings.language || ar && "ar" || "en" };
+    next.settings = { ...next.settings, language: ar ? "ar" : "en" };
     next.onboarded = true;
     const saved = await setData(next);
     if (!saved) {
@@ -8566,7 +8612,7 @@ function NutritionPlanScreen({ data, back }) {
     if (plan) setSelectedDayIndex(computedTodayDayIndex);
   }, [plan?.startDate, plan?.days?.length, computedTodayDayIndex]);
   if (!plan) {
-    const request = async () => { if (requested || !auth.currentUser) return; setRequested(true); try { await setDoc(doc(db,'users',auth.currentUser.uid), { nutritionPlanRequestedAt:new Date().toISOString(), nutritionPlanRequestStatus:'pending' }, {merge:true}); } catch { setRequested(false); } };
+    const request = async () => { if (requested || !auth.currentUser) return; setRequested(true); try { await setDoc(doc(db,'users',auth.currentUser.uid), { nutritionPlanRequestedAt:new Date().toISOString(), nutritionPlanRequestStatus:'pending', updatedAt:new Date().toISOString() }, {merge:true}); } catch { setRequested(false); } };
     return <div dir={ar?'rtl':'ltr'}><TopBar title={ar?'خطتك الغذائية':'Your Nutrition Plan'} onBack={back}/><div style={{padding:'0 18px 28px'}}><Card style={{background:C.greenSoft,border:`1px solid ${C.green}55`,padding:22,textAlign:'center'}}><div style={{fontSize:42}}>🍽️</div><div style={{color:C.text,fontSize:20,fontWeight:900,marginTop:8}}>{ar?'خطتك الغذائية الخاصة':'Your Personalized Nutrition Plan'}</div><div style={{color:C.sub,fontSize:13,lineHeight:1.6,margin:'8px 0 18px'}}>{ar?'فريق Fifty Fit هيجهز لك خطة مناسبة لهدفك وتظهر هنا داخل التطبيق.':'The Fifty Fit team will prepare your personalized plan and deliver it directly inside the app.'}</div><button onClick={request} disabled={requested} style={{width:'100%',border:'none',borderRadius:14,padding:'13px 16px',background:requested?C.card2:C.green,color:requested?C.sub:C.onAccent,fontWeight:900}}>{requested?(ar?'✓ تم إرسال الطلب':'✓ Request sent'):(ar?'اطلب خطتك الغذائية':'Request my nutrition plan')}</button>{requested&&<div style={{color:C.sub,fontSize:11,marginTop:10}}>{ar?'هنبلغك أول ما خطتك تجهز.':"We'll let you know when your plan is ready."}</div>}</Card></div></div>;
   }
   const dayIndex=((selectedDayIndex % cycle.length) + cycle.length) % cycle.length;
@@ -8594,7 +8640,7 @@ function NutritionPlanScreen({ data, back }) {
     setLog(next);
     setSaving(true);
     try {
-      await setDoc(doc(db,'users',auth.currentUser.uid),{customNutritionLog:next},{merge:true});
+      await setDoc(doc(db,'users',auth.currentUser.uid),{customNutritionLog:next, updatedAt:new Date().toISOString()},{merge:true});
     } catch {
       setLog(log);
     } finally {
@@ -12420,7 +12466,7 @@ function AdminScreen({ back, showToast }) {
         next.entitlements.aiCoachPro = false;
         next.entitlements.proExpiresAt = null;
       }
-      await setDoc(result.ref, next);
+      await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });
       setResult({ ...result, data: next });
       showToast(on ? "Pro granted for 30 days" : "Pro removed");
     } catch (e) {
@@ -12441,7 +12487,7 @@ function AdminScreen({ back, showToast }) {
         name: editName.trim(),
         phone: editPhone.trim(),
       };
-      await setDoc(result.ref, next);
+      await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });
       setResult({ ...result, data: next });
       showToast(ar ? "تم حفظ بيانات المستخدم" : "User details saved");
     } catch (e) {
@@ -12611,7 +12657,7 @@ export default function GymApp() {
   const [online, setOnline] = useNetworkStatus(); // live internet status (true = online)
   const [checking, setChecking] = useState(false);
   const firebaseUser = useFirebaseSession(); // undefined = checking, null = signed out, object = signed in
-  const { data, setData, setVerifiedEntitlements, loaded } = useAppData(
+  const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError } = useAppData(
     firebaseUser?.uid,
   );
   const [isAdmin, setIsAdmin] = useState(false);
@@ -12741,19 +12787,19 @@ export default function GymApp() {
       setPhase("language");
       return;
     }
-    if (firebaseUser === undefined) return; // Firebase hasn't reported yet — stay on splash
+    if (firebaseUser === undefined) return;
     if (firebaseUser === null) {
       setPhase("welcome");
       return;
     }
-    if (!loaded) return; // signed in, waiting on their Firestore document to load
+    if (!loaded || writePending) return;
+    if (saveError) return;
     if (data.onboarded) {
       setPhase("app");
       return;
     }
-    // New Google users must provide a phone before the normal onboarding flow.
     setPhase("onboarding");
-  }, [firebaseUser, loaded, localLang, savedLanguage, data.onboarded]); // eslint-disable-line
+  }, [firebaseUser, loaded, writePending, saveError, localLang, savedLanguage, data.onboarded]); // eslint-disable-line
 
   // Keep the Firestore profile complete: the signed-in identity, the chosen
   // language and the program start date are written once and then survive

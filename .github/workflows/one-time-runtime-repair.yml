@@ -1,0 +1,30 @@
+name: One-time runtime repair
+
+on:
+  push:
+    branches: [audit/runtime-auth-onboarding-billing-20260816]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply deterministic runtime repairs
+        run: python3 scripts/apply-runtime-repairs.py
+
+      - name: Commit repairs and remove this workflow
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/App.jsx src/billing.js scripts/apply-runtime-repairs.py .github/workflows/one-time-runtime-repair.yml
+          git diff --cached --check
+          git commit -m 'fix: repair language persistence onboarding diagnostics and billing launch path'
+          git push

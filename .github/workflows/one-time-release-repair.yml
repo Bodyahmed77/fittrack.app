@@ -1,0 +1,49 @@
+name: One-time release repair
+
+on:
+  push:
+    branches: [fix/onboarding-google-cleanest]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply source repair
+        run: python3 scripts/one-time-release-repair.py
+
+      - name: Verify source and web build
+        run: |
+          set -euo pipefail
+          node --check src/googleAuth.js
+          npm run build
+          git diff --check
+          test -s src/App.jsx
+          test -s src/googleAuth.js
+
+      - name: Commit clean source and remove bootstrap
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx src/googleAuth.js
+          git rm scripts/one-time-release-repair.py .github/workflows/one-time-release-repair.yml
+          git diff --cached --quiet && { echo 'No source changes produced'; exit 1; }
+          git commit -m "fix: repair onboarding persistence and google sign-in fallback"
+          git push origin HEAD:fix/onboarding-google-cleanest

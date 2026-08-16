@@ -4913,6 +4913,7 @@ function OnboardingScreen({ data, setData, go, showToast }) {
         fat: tdeeResult.fat,
       };
     next.settings = { ...next.settings, language: next.settings.language || ar && "ar" || "en" };
+    next.settings = { ...next.settings, language: next.settings.language || ar && "ar" || "en" };
     next.onboarded = true;
     const saved = await setData(next);
     if (!saved) {

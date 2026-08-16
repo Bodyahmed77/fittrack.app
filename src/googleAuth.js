@@ -218,13 +218,14 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
   } catch (nativeError) {
     const mapped = mapAuthError(nativeError);
 
-    if (isNoCredentialError(mapped)) {
+    if (isNoCredentialError(mapped) || mapped?.googleStatusCode === "10" || mapped?.code === "developer_error") {
       try {
         console.warn(
-          "[GoogleSignIn] Credential Manager returned no credentials; retrying with legacy Google Sign-In chooser",
+          "[GoogleSignIn] modern native flow did not complete; retrying with legacy Google Sign-In chooser",
+          mapped?.googleStatusCode || mapped?.code || "unknown",
         );
         usedCredentialManager = false;
-        result = await runNativeGoogleSignIn(Boolean(0));
+        result = await runNativeGoogleSignIn(false);
       } catch (fallbackError) {
         const fallbackMapped = mapAuthError(fallbackError);
         try {

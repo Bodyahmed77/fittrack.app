@@ -2714,7 +2714,6 @@ function useAppData(uid) {
       const persisted = Object.fromEntries(
         Object.entries(next).filter(
           ([key]) =>
-            key !== "entitlements" &&
             key !== "customTrainingPlan" &&
             key !== "customNutritionPlan",
         ),
@@ -2734,6 +2733,15 @@ function useAppData(uid) {
         return true;
       } catch (e) {
         console.error("save failed", e);
+        try {
+          window.__fiftyFitFirestoreDiagnostics = {
+            stage: "users_profile_write",
+            uid,
+            code: String(e?.code || "unknown"),
+            message: String(e?.message || e || ""),
+            updatedAt: new Date().toISOString(),
+          };
+        } catch (_) {}
         setDataRaw(previous);
         setSaveError(e);
         return false;
@@ -12782,10 +12790,12 @@ export default function GymApp() {
   // the picker never reappears after a reinstall or on another device.
   const savedLanguage = loaded ? data.settings.language : null;
   useEffect(() => {
-    if (!savedLanguage || savedLanguage === localLang) return;
+    // Never overwrite a language the user explicitly selected on this device.
+    // Firestore only seeds local language when there is no local selection yet.
+    if (!savedLanguage || localLang) return;
     persistLanguage(savedLanguage);
     setLocalLang(savedLanguage);
-  }, [savedLanguage]); // eslint-disable-line
+  }, [savedLanguage, localLang]); // eslint-disable-line
 
   useEffect(() => {
     if (!localLang && !savedLanguage) {
@@ -12989,7 +12999,7 @@ export default function GymApp() {
   };
 
   const C = data.settings.theme === "light" ? LIGHT : DARK;
-  const lang = data.settings.language || localLang || "en";
+  const lang = localLang || data.settings.language || "en";
   const ui = { C, lang };
 
   // No internet: block the whole app behind a full-screen gate. This runs

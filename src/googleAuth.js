@@ -172,7 +172,13 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
     if (!existing.account?.email && user.email) patch["account.email"] = user.email;
     if (!existing.account?.name && user.displayName) patch["account.name"] = user.displayName;
     if (Object.keys(patch).length) {
-      try { await setDoc(ref, patch, { merge: true }); } catch (error) {
+      try {
+        await setDoc(
+          ref,
+          { ...patch, updatedAt: new Date().toISOString() },
+          { merge: true },
+        );
+      } catch (error) {
         console.warn("[GoogleSignIn] ensureUserDoc patch failed", error);
       }
     }
@@ -181,6 +187,7 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
   const initial = typeof createInitialState === "function"
     ? createInitialState(user, localLang)
     : minimalInitialState(user, localLang);
+  initial.updatedAt = new Date().toISOString();
   try { await setDoc(ref, initial, { merge: true }); } catch (error) {
     console.warn("[GoogleSignIn] ensureUserDoc create failed", error);
   }
@@ -236,7 +243,7 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
             nativeCode: fallbackMapped?.nativeCode || null,
             nativeErrorCode: fallbackMapped?.nativeErrorCode || null,
             nativeMessage: fallbackMapped?.nativeMessage || null,
-            firstAttempt: "no_credentials",
+            firstAttempt: "modern_flow_failed",
             message: fallbackMapped?.message || String(fallbackMapped || ""),
             updatedAt: new Date().toISOString(),
           };

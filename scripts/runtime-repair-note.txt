@@ -1,1 +1,0 @@
-Temporary runtime repair workflow was removed after source changes were validated. Runtime changes are now carried only in src/App.jsx, src/googleAuth.js, and src/billing.js.

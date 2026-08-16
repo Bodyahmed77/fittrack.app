@@ -46,7 +46,6 @@ jobs:
           test -s src/config.js
           node --check src/googleAuth.js
           node --check src/billing.js
-          echo "Release source files are present and syntactically valid; CI will not rewrite or commit application source."
 
       - name: Extract Google Web Client ID
         env:
@@ -64,19 +63,16 @@ jobs:
           GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           set -euo pipefail
-          test -n "${GS_B64:-}"
-          mkdir -p android/app
-          echo "$GS_B64" | base64 -d > android/app/google-services.json
+          test -n "${GS_B64:-}" || { echo 'GOOGLE_SERVICES_JSON_BASE64 secret is missing'; exit 1; }
+          printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
           python3 - <<'PY'
           import hashlib, json
-          p = 'android/app/google-services.json'
-          d = json.load(open(p, encoding='utf-8'))
-          assert d.get('project_info', {}).get('project_id') == 'fittrack-698fa'
+          from pathlib import Path
+          p = Path('android/app/google-services.json')
+          d = json.loads(p.read_text(encoding='utf-8'))
+          assert d.get('project_info', {}).get('project_id') == 'fittrack-698fa', 'Unexpected Firebase project_id'
           package = 'com.bodyahmed77.fiftyfit'
-          matching = [
-              c for c in (d.get('client') or [])
-              if ((c.get('client_info') or {}).get('android_client_info') or {}).get('package_name') == package
-          ]
+          matching = [c for c in (d.get('client') or []) if ((c.get('client_info') or {}).get('android_client_info') or {}).get('package_name') == package]
           assert matching, f'No google-services client for {package}'
           certs = []
           for client in matching:
@@ -86,9 +82,9 @@ jobs:
                       if cert:
                           certs.append(cert)
           assert '55384cf206854973c68dfba5be2a1bba8e048bee' in certs, 'Play App Signing SHA-1 missing'
-          print(f'google-services.json OK for {package}')
-          print('Android OAuth SHA-1:', sorted(set(certs)))
-          print('google-services.json sha256:', hashlib.sha256(open(p,'rb').read()).hexdigest())
+          print('google-services.json preflight OK')
+          print('OAuth SHA-1 values:', sorted(set(certs)))
+          print('google-services.json sha256:', hashlib.sha256(p.read_bytes()).hexdigest())
           PY
 
       - name: Configure Google Services and native Google Sign-In dependencies
@@ -177,23 +173,102 @@ jobs:
       - name: Force black Android system bars
         run: python3 scripts/inject-android-system-ui.py
 
-      - name: Verify Android release configuration
+      - name: Comprehensive Android release preflight
         working-directory: android
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
-          test "$(grep -o 'applicationId \"[^\"]*\"' app/build.gradle | head -n1 | cut -d'\"' -f2)" = "com.bodyahmed77.fiftyfit"
-          test "$(grep -o 'namespace \"[^\"]*\"' app/build.gradle | head -n1 | cut -d'\"' -f2)" = "com.bodyahmed77.fiftyfit"
-          test -s app/src/main/assets/public/index.html
-          test -s app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewPlugin.java
-          test -s app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, re
+
+          errors = []
+          root = Path('.')
+          app = root / 'app'
+          gradle = app / 'build.gradle'
+          vars_gradle = root / 'variables.gradle'
+          top_gradle = root / 'build.gradle'
+          manifest = app / 'src/main/AndroidManifest.xml'
+          assets_index = app / 'src/main/assets/public/index.html'
+          plugin_java = app / 'src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewPlugin.java'
+          activity_java = app / 'src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java'
+          google_json = app / 'google-services.json'
+          wrapper = root / 'gradlew'
+
+          def require(ok, message):
+              if not ok:
+                  errors.append(message)
+
+          for p, label in [
+              (gradle, 'android/app/build.gradle'),
+              (vars_gradle, 'android/variables.gradle'),
+              (top_gradle, 'android/build.gradle'),
+              (manifest, 'AndroidManifest.xml'),
+              (assets_index, 'web index.html'),
+              (plugin_java, 'TikTokWebViewPlugin.java'),
+              (activity_java, 'TikTokWebViewActivity.java'),
+              (google_json, 'google-services.json'),
+          ]:
+              require(p.is_file() and p.stat().st_size > 0, f'{label} missing or empty')
+          require(wrapper.is_file() and os.access(wrapper, os.X_OK), 'Gradle wrapper missing or not executable')
+
+          g = gradle.read_text(encoding='utf-8') if gradle.exists() else ''
+          vg = vars_gradle.read_text(encoding='utf-8') if vars_gradle.exists() else ''
+          mf = manifest.read_text(encoding='utf-8') if manifest.exists() else ''
+
+          app_ids = re.findall(r"\bapplicationId\s+[\"']([^\"']+)[\"']", g)
+          namespaces = re.findall(r"\bnamespace\s+[\"']([^\"']+)[\"']", g)
+          require(app_ids == ['com.bodyahmed77.fiftyfit'], f'Unexpected applicationId values: {app_ids}')
+          require(namespaces == ['com.bodyahmed77.fiftyfit'], f'Unexpected namespace values: {namespaces}')
+          require(bool(re.search(r'compileSdkVersion\s*=\s*36\b', vg)), 'compileSdkVersion is not 36')
+          require(bool(re.search(r'targetSdkVersion\s*=\s*36\b', vg)), 'targetSdkVersion is not 36')
+          require('com.google.gms.google-services' in g, 'Google Services plugin missing')
+          require('play-services-auth' in g, 'play-services-auth dependency missing')
+          require('enableSplit = false' in g, 'AAB language split protection missing')
+          require('rgcfaIncludeGoogle = true' in vg, 'Google auth support disabled')
+          require("androidxCredentialsVersion = '1.3.0'" in vg, 'Credential Manager version mismatch')
+          require("androidxCredentialsPlayServicesAuthVersion = '1.3.0'" in vg, 'Credential Manager Play Services Auth version mismatch')
+          require("librariesIdentityGoogleidVersion = '1.1.1'" in vg, 'Google Identity version mismatch')
+          require('TikTokWebViewPlugin' in mf, 'TikTokWebViewPlugin not present in AndroidManifest')
+          require('TikTokWebViewActivity' in mf, 'TikTokWebViewActivity not present in AndroidManifest')
+          require(g.count('defaultConfig {') == 1, f'Expected one defaultConfig block, found {g.count("defaultConfig {")}')
+          require(len(re.findall(r'\bversionCode\s+\d+', g)) == 1, 'Expected exactly one versionCode')
+          require(len(re.findall(r'\bversionName\s+[\"\'][^\"\']+[\"\']', g)) == 1, 'Expected exactly one versionName')
+          expected_code = 1000 + int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
+          actual_code = re.findall(r'\bversionCode\s+(\d+)', g)
+          require(actual_code == [str(expected_code)], f'versionCode {actual_code} != expected {expected_code}')
+          require('signingConfigs' in g and 'release' in g, 'Release signing configuration missing')
+
+          try:
+              data = json.loads(google_json.read_text(encoding='utf-8'))
+              require(data.get('project_info', {}).get('project_id') == 'fittrack-698fa', 'Firebase project_id mismatch')
+              clients = [c for c in (data.get('client') or []) if ((c.get('client_info') or {}).get('android_client_info') or {}).get('package_name') == 'com.bodyahmed77.fiftyfit']
+              require(bool(clients), 'Matching Android client absent from google-services.json')
+          except Exception as exc:
+              errors.append(f'google-services.json invalid: {exc}')
+
+          if errors:
+              print('ANDROID RELEASE PREFLIGHT FAILED')
+              for e in errors:
+                  print(' - ' + e)
+              raise SystemExit(1)
+
+          print('ANDROID RELEASE PREFLIGHT PASSED')
+          print(f'applicationId=com.bodyahmed77.fiftyfit')
+          print(f'namespace=com.bodyahmed77.fiftyfit')
+          print('compileSdkVersion=36')
+          print('targetSdkVersion=36')
+          print(f'versionCode={expected_code}')
+          PY
 
       - name: Decode release signing keystore
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          test -n "${KS_B64:-}"
-          echo "$KS_B64" | base64 -d > android/app/release.keystore
+          test -n "${KS_B64:-}" || { echo 'ANDROID_KEYSTORE_BASE64 secret is missing'; exit 1; }
+          printf '%s' "$KS_B64" | base64 -d > android/app/release.keystore
           test -s android/app/release.keystore
 
       - name: Verify signing and Firebase SHA configuration
@@ -204,8 +279,11 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_PASSWORD:-}" || { echo 'ANDROID_KEYSTORE_PASSWORD secret is missing'; exit 1; }
+          test -n "${ANDROID_KEY_ALIAS:-}" || { echo 'ANDROID_KEY_ALIAS secret is missing'; exit 1; }
+          test -n "${ANDROID_KEY_PASSWORD:-}" || { echo 'ANDROID_KEY_PASSWORD secret is missing'; exit 1; }
           actual="$(keytool -list -v -keystore app/release.keystore -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | awk -F': ' '/SHA1:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          test -n "$actual"
+          test -n "$actual" || { echo 'Could not read SHA-1 from release keystore'; exit 1; }
           echo "CI upload SHA-1: $actual"
           echo "Play App Signing SHA-1 was validated from google-services.json before build."
 

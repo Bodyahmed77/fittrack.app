@@ -26,7 +26,8 @@
       "skipNativeAuth": true,
       "providers": [
         "google.com"
-      ]
+      ],
+      "googleWebClientId": "632925500741-2jhmbh938ioakigle14lii1dr74suol0.apps.googleusercontent.com"
     },
     "Keyboard": {
       "resize": "native",

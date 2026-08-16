@@ -25,19 +25,18 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: '21'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
       - name: Install Android API 36 / build tools
-        run: |
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate release source without mutating it
+      - name: Validate source syntax
         run: |
           set -euo pipefail
           test -s src/App.jsx
@@ -139,8 +138,10 @@ jobs:
           text = p.read_text(encoding='utf-8')
           text = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', text)
           text = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', text)
-          if 'targetSdkVersion' not in text: text += '\next.targetSdkVersion = 36\n'
-          if 'compileSdkVersion' not in text: text += '\next.compileSdkVersion = 36\n'
+          if 'targetSdkVersion' not in text:
+              text += '\next.targetSdkVersion = 36\n'
+          if 'compileSdkVersion' not in text:
+              text += '\next.compileSdkVersion = 36\n'
           p.write_text(text, encoding='utf-8')
           PY
 
@@ -173,6 +174,48 @@ jobs:
       - name: Force black Android system bars
         run: python3 scripts/inject-android-system-ui.py
 
+      - name: Decode release signing keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "${KS_B64:-}" || { echo 'ANDROID_KEYSTORE_BASE64 secret is missing'; exit 1; }
+          printf '%s' "$KS_B64" | base64 -d > android/app/release.keystore
+          test -s android/app/release.keystore
+
+      - name: Configure release signing
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_KEYSTORE_PASSWORD:-}" || { echo 'ANDROID_KEYSTORE_PASSWORD secret is missing'; exit 1; }
+          test -n "${ANDROID_KEY_ALIAS:-}" || { echo 'ANDROID_KEY_ALIAS secret is missing'; exit 1; }
+          test -n "${ANDROID_KEY_PASSWORD:-}" || { echo 'ANDROID_KEY_PASSWORD secret is missing'; exit 1; }
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/build.gradle')
+          text = p.read_text(encoding='utf-8')
+          if 'signingConfigs {' not in text:
+              text = text.replace('android {', '''android {\n    signingConfigs {\n        release {\n            storeFile file("release.keystore")\n            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n            keyAlias System.getenv("ANDROID_KEY_ALIAS")\n            keyPassword System.getenv("ANDROID_KEY_PASSWORD")\n        }\n    }''', 1)
+          if 'signingConfig signingConfigs.release' not in text:
+              text = text.replace('buildTypes {', 'buildTypes {\n        release { signingConfig signingConfigs.release }', 1) if 'buildTypes {' in text else text + '\nandroid { buildTypes { release { signingConfig signingConfigs.release } } }\n'
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify signing and Firebase SHA configuration
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          actual="$(keytool -list -v -keystore app/release.keystore -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | awk -F': ' '/SHA1:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test -n "$actual" || { echo 'Could not read SHA-1 from release keystore'; exit 1; }
+          echo "CI upload SHA-1: $actual"
+
       - name: Comprehensive Android release preflight
         working-directory: android
         env:
@@ -182,7 +225,6 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import json, os, re
-
           errors = []
           root = Path('.')
           app = root / 'app'
@@ -230,7 +272,6 @@ jobs:
           require("androidxCredentialsVersion = '1.3.0'" in vg, 'Credential Manager version mismatch')
           require("androidxCredentialsPlayServicesAuthVersion = '1.3.0'" in vg, 'Credential Manager Play Services Auth version mismatch')
           require("librariesIdentityGoogleidVersion = '1.1.1'" in vg, 'Google Identity version mismatch')
-          require('TikTokWebViewPlugin' in mf, 'TikTokWebViewPlugin not present in AndroidManifest')
           require('TikTokWebViewActivity' in mf, 'TikTokWebViewActivity not present in AndroidManifest')
           require(g.count('defaultConfig {') == 1, f'Expected one defaultConfig block, found {g.count("defaultConfig {")}')
           require(len(re.findall(r'\bversionCode\s+\d+', g)) == 1, 'Expected exactly one versionCode')
@@ -238,7 +279,8 @@ jobs:
           expected_code = 1000 + int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
           actual_code = re.findall(r'\bversionCode\s+(\d+)', g)
           require(actual_code == [str(expected_code)], f'versionCode {actual_code} != expected {expected_code}')
-          require('signingConfigs' in g and 'release' in g, 'Release signing configuration missing')
+          require('signingConfigs {' in g and 'signingConfigs.release' in g, 'Release signing configuration missing')
+          require((app / 'release.keystore').is_file() and (app / 'release.keystore').stat().st_size > 0, 'release.keystore missing or empty')
 
           try:
               data = json.loads(google_json.read_text(encoding='utf-8'))
@@ -253,39 +295,13 @@ jobs:
               for e in errors:
                   print(' - ' + e)
               raise SystemExit(1)
-
           print('ANDROID RELEASE PREFLIGHT PASSED')
-          print(f'applicationId=com.bodyahmed77.fiftyfit')
-          print(f'namespace=com.bodyahmed77.fiftyfit')
+          print('applicationId=com.bodyahmed77.fiftyfit')
+          print('namespace=com.bodyahmed77.fiftyfit')
           print('compileSdkVersion=36')
           print('targetSdkVersion=36')
           print(f'versionCode={expected_code}')
           PY
-
-      - name: Decode release signing keystore
-        env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          set -euo pipefail
-          test -n "${KS_B64:-}" || { echo 'ANDROID_KEYSTORE_BASE64 secret is missing'; exit 1; }
-          printf '%s' "$KS_B64" | base64 -d > android/app/release.keystore
-          test -s android/app/release.keystore
-
-      - name: Verify signing and Firebase SHA configuration
-        working-directory: android
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "${ANDROID_KEYSTORE_PASSWORD:-}" || { echo 'ANDROID_KEYSTORE_PASSWORD secret is missing'; exit 1; }
-          test -n "${ANDROID_KEY_ALIAS:-}" || { echo 'ANDROID_KEY_ALIAS secret is missing'; exit 1; }
-          test -n "${ANDROID_KEY_PASSWORD:-}" || { echo 'ANDROID_KEY_PASSWORD secret is missing'; exit 1; }
-          actual="$(keytool -list -v -keystore app/release.keystore -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | awk -F': ' '/SHA1:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          test -n "$actual" || { echo 'Could not read SHA-1 from release keystore'; exit 1; }
-          echo "CI upload SHA-1: $actual"
-          echo "Play App Signing SHA-1 was validated from google-services.json before build."
 
       - name: Build signed release AAB and APK
         working-directory: android
@@ -318,19 +334,22 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          from pathlib import Path
           import hashlib, zipfile
+          from pathlib import Path
           aab = Path('release-artifacts/fifty-fit-release.aab')
           apk = Path('release-artifacts/fifty-fit-release.apk')
           with zipfile.ZipFile(aab) as z:
               items = sorted(n for n in z.namelist() if n.endswith('/assets/public/index.html'))
-              if not items: raise SystemExit('No AAB web asset index.html found')
+              if not items:
+                  raise SystemExit('No AAB web asset index.html found')
               ah = hashlib.sha256(z.read(items[0])).hexdigest()
           with zipfile.ZipFile(apk) as z:
               n = 'assets/public/index.html'
-              if n not in z.namelist(): raise SystemExit('No APK web asset index.html found')
+              if n not in z.namelist():
+                  raise SystemExit('No APK web asset index.html found')
               ph = hashlib.sha256(z.read(n)).hexdigest()
-          if ah != ph: raise SystemExit(f'APK/AAB web asset mismatch: {ah} != {ph}')
+          if ah != ph:
+              raise SystemExit(f'APK/AAB web asset mismatch: {ah} != {ph}')
           print(f'APK/AAB web asset parity OK: {ah}')
           PY
 

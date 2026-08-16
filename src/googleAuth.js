@@ -4,12 +4,10 @@
  * Web / desktop: Firebase JS signInWithPopup.
  * Android / iOS: @capacitor-firebase/authentication.
  *
- * Android prefers the current Credential Manager path, but falls back to the
- * plugin's legacy Google Sign-In path when Credential Manager reports that no
- * credentials are available. This is important for first-time Google sign-in:
- * Google documents that NoCredentialException can occur when there are no
- * authorized credentials, and the user must then be allowed to choose another
- * account.
+ * Android uses the current Credential Manager path first. The legacy native
+ * chooser is only a compatibility fallback for the documented no-credential
+ * case; a Google developer error (status 10) is never hidden by retrying the
+ * same broken configuration through another chooser.
  */
 import {
   GoogleAuthProvider,
@@ -27,20 +25,14 @@ const SETTLED_EVENT = "ft-google-auth-settled";
 
 function emitAuthSettled(detail = {}) {
   try {
-    window.dispatchEvent(
-      new CustomEvent(SETTLED_EVENT, { detail: { ...detail } }),
-    );
+    window.dispatchEvent(new CustomEvent(SETTLED_EVENT, { detail: { ...detail } }));
   } catch (_) {}
 }
 
 export function subscribeGoogleAuthSettled(handler) {
-  if (typeof window === "undefined" || typeof handler !== "function") {
-    return () => {};
-  }
+  if (typeof window === "undefined" || typeof handler !== "function") return () => {};
   const listener = (event) => {
-    try {
-      handler(event?.detail || {});
-    } catch (_) {}
+    try { handler(event?.detail || {}); } catch (_) {}
   };
   window.addEventListener(SETTLED_EVENT, listener);
   return () => {
@@ -81,12 +73,12 @@ function mapAuthError(error) {
   if (
     numericCode === "10" ||
     code === "10" ||
-    /developer.?error|DEVELOPER_ERROR/.test(`${code} ${numericCode} ${message}`)
+    /developer.?error|developer_error/.test(`${code} ${numericCode} ${message}`)
   ) {
     return copyDiagnostic(
       Object.assign(
         new Error(
-          "Google Sign-In developer error (10): Android package/SHA configuration does not match the certificate used by the installed build",
+          "Google Sign-In developer error (10): Android OAuth configuration does not match the certificate/package used by this release build",
         ),
         { code: "developer_error", googleStatusCode: "10" },
       ),
@@ -102,24 +94,15 @@ function mapAuthError(error) {
     code === "cancelled" ||
     /cancel|cancell?ed|user.?denied|access.?denied/i.test(message)
   ) {
-    return copyDiagnostic(
-      Object.assign(new Error("Google Sign-In was cancelled"), { code: "cancelled" }),
-      error,
-    );
+    return copyDiagnostic(Object.assign(new Error("Google Sign-In was cancelled"), { code: "cancelled" }), error);
   }
 
   if (code === "timeout" || /timed?\s*out/i.test(message)) {
-    return copyDiagnostic(
-      Object.assign(new Error(error.message || "Google Sign-In timed out"), { code: "timeout" }),
-      error,
-    );
+    return copyDiagnostic(Object.assign(new Error(error.message || "Google Sign-In timed out"), { code: "timeout" }), error);
   }
 
   if (/no.?id.?token|missing.?id.?token|null.?credential/i.test(message)) {
-    return copyDiagnostic(
-      Object.assign(new Error("Could not get a Google ID token"), { code: "no_id_token" }),
-      error,
-    );
+    return copyDiagnostic(Object.assign(new Error("Could not get a Google ID token"), { code: "no_id_token" }), error);
   }
 
   return error;
@@ -128,9 +111,7 @@ function mapAuthError(error) {
 function isNoCredentialError(error) {
   const code = String(error?.code ?? error?.errorCode ?? "").toLowerCase();
   const nativeCode = String(error?.nativeCode ?? error?.nativeErrorCode ?? "").toLowerCase();
-  const message = String(
-    error?.message || error?.nativeMessage || error || "",
-  ).toLowerCase();
+  const message = String(error?.message || error?.nativeMessage || error || "").toLowerCase();
   return (
     code.includes("no_credential") ||
     code.includes("no-credential") ||
@@ -156,6 +137,12 @@ function minimalInitialState(user, localLang) {
       theme: "dark",
       units: "metric",
     },
+    entitlements: {
+      trainingPro: false,
+      nutritionPro: false,
+      aiCoachPro: false,
+      proExpiresAt: null,
+    },
     onboarded: false,
     programStartDate: null,
   };
@@ -171,29 +158,32 @@ async function ensureUserDoc(userCred, localLang, createInitialState) {
     const patch = {};
     if (!existing.account?.email && user.email) patch["account.email"] = user.email;
     if (!existing.account?.name && user.displayName) patch["account.name"] = user.displayName;
-    if (Object.keys(patch).length) {
-      try {
-        await setDoc(
-          ref,
-          { ...patch, updatedAt: new Date().toISOString() },
-          { merge: true },
-        );
-      } catch (error) {
-        console.warn("[GoogleSignIn] ensureUserDoc patch failed", error);
-      }
+    if (!existing.settings?.language && (localLang === "ar" || localLang === "en")) {
+      patch["settings.language"] = localLang;
     }
+    if (!Object.keys(patch).length) return;
+    await setDoc(
+      ref,
+      { ...patch, updatedAt: new Date().toISOString() },
+      { merge: true },
+    );
     return;
   }
+
   const initial = typeof createInitialState === "function"
     ? createInitialState(user, localLang)
     : minimalInitialState(user, localLang);
+  initial.entitlements = {
+    trainingPro: false,
+    nutritionPro: false,
+    aiCoachPro: false,
+    proExpiresAt: null,
+  };
   initial.updatedAt = new Date().toISOString();
-  try { await setDoc(ref, initial, { merge: true }); } catch (error) {
-    console.warn("[GoogleSignIn] ensureUserDoc create failed", error);
-  }
+  await setDoc(ref, initial, { merge: true });
 }
 
-async function isNativePlatform() {
+function isNativePlatform() {
   try { return Capacitor.isNativePlatform(); } catch (_) { return false; }
 }
 
@@ -218,33 +208,32 @@ async function runNativeGoogleSignIn(useCredentialManager = true) {
 
 async function nativeGoogleSignIn(localLang, createInitialState) {
   let result;
-  const usedCredentialManager = false;
+  let usedCredentialManager = true;
   try {
-    // The tested build is failing inside Credential Manager / One Tap with
-    // Google status 10 [28444]. The plugin supports disabling Credential Manager,
-    // so use the legacy chooser directly and avoid the failing One Tap path.
-    console.info("[GoogleSignIn] native start: legacy chooser (Credential Manager disabled)");
-    result = await runNativeGoogleSignIn(false);
+    console.info("[GoogleSignIn] native start: Credential Manager");
+    result = await runNativeGoogleSignIn(true);
   } catch (nativeError) {
     const mapped = mapAuthError(nativeError);
-    try {
-      window.__fiftyFitGoogleAuthDiagnostics = {
-        stage: "native_sign_in_legacy",
-        code: mapped?.code || "unknown",
-        googleStatusCode: mapped?.googleStatusCode || mapped?.nativeCode || mapped?.nativeErrorCode || null,
-        nativeCode: mapped?.nativeCode || null,
-        nativeErrorCode: mapped?.nativeErrorCode || null,
-        nativeMessage: mapped?.nativeMessage || null,
-        message: mapped?.message || String(mapped || ""),
-        updatedAt: new Date().toISOString(),
-      };
-    } catch (_) {}
-    console.error(
-      "[GoogleSignIn] legacy native chooser failed",
-      mapped?.nativeCode || mapped?.nativeErrorCode || mapped?.code || "",
-      mapped?.nativeMessage || mapped?.message || "",
-    );
-    throw mapped;
+    if (!isNoCredentialError(mapped)) {
+      try {
+        window.__fiftyFitGoogleAuthDiagnostics = {
+          stage: "native_sign_in_credential_manager",
+          code: mapped?.code || "unknown",
+          googleStatusCode: mapped?.googleStatusCode || mapped?.nativeCode || mapped?.nativeErrorCode || null,
+          nativeCode: mapped?.nativeCode || null,
+          nativeErrorCode: mapped?.nativeErrorCode || null,
+          nativeMessage: mapped?.nativeMessage || null,
+          message: mapped?.message || String(mapped || ""),
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {}
+      console.error("[GoogleSignIn] Credential Manager failed", mapped?.code || mapped?.nativeCode || "", mapped?.message || "");
+      throw mapped;
+    }
+
+    console.warn("[GoogleSignIn] no authorized Credential Manager credential; using legacy chooser");
+    usedCredentialManager = false;
+    result = await runNativeGoogleSignIn(false);
   }
 
   const idToken = result?.credential?.idToken || result?.credential?.id_token || result?.idToken;
@@ -267,20 +256,13 @@ async function nativeGoogleSignIn(localLang, createInitialState) {
     throw mapped;
   }
 
-  try { await ensureUserDoc(userCred, localLang, createInitialState); } catch (error) {
-    console.warn("[GoogleSignIn] ensureUserDoc after native sign-in", error);
-  }
-  console.info(
-    "[GoogleSignIn] native success uid length",
-    userCred.user?.uid?.length || 0,
-    "credentialManager",
-    usedCredentialManager,
-  );
+  await ensureUserDoc(userCred, localLang, createInitialState);
+  console.info("[GoogleSignIn] native success", { credentialManager: usedCredentialManager });
   return userCred;
 }
 
 export async function signInWithGoogleFlow(localLang = "en", createInitialState) {
-  const native = await isNativePlatform();
+  const native = isNativePlatform();
   console.info("[GoogleSignIn] platform native?", native);
   try {
     if (native) {
@@ -300,15 +282,16 @@ export async function signInWithGoogleFlow(localLang = "en", createInitialState)
 }
 
 export async function reauthenticateWithGoogleFlow(user) {
-  const native = await isNativePlatform();
+  const native = isNativePlatform();
   try {
     if (native) {
       let result;
       try {
         result = await runNativeGoogleSignIn(true);
       } catch (firstError) {
-        if (!isNoCredentialError(firstError)) throw firstError;
-        result = await runNativeGoogleSignIn(Boolean(0));
+        const mapped = mapAuthError(firstError);
+        if (!isNoCredentialError(mapped)) throw mapped;
+        result = await runNativeGoogleSignIn(false);
       }
       const idToken = result?.credential?.idToken || result?.credential?.id_token || result?.idToken;
       const accessToken = result?.credential?.accessToken || result?.credential?.access_token || result?.accessToken || null;
@@ -320,6 +303,7 @@ export async function reauthenticateWithGoogleFlow(user) {
       const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
       return reauthenticateWithCredential(user, credential);
     }
+
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
     const result = await withTimeout(signInWithPopup(auth, provider), GOOGLE_SIGNIN_TIMEOUT_MS, "Google reauth");

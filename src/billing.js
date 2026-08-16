@@ -374,11 +374,37 @@ export async function purchase(planId, durationId) {
       throw billingError(queryError, "product_unavailable");
     }
 
+    let selectedOfferToken = null;
+    try {
+      const details = await queryAnyProductDetails(billing, productId);
+      selectedOfferToken =
+        details?.offerToken ||
+        details?.offer_token ||
+        details?.subscriptionOfferDetails?.[0]?.offerToken ||
+        details?.subscriptionOfferDetails?.[0]?.offer_token ||
+        details?.subscriptionOfferDetailsList?.[0]?.offerToken ||
+        details?.subscriptionOfferDetailsList?.[0]?.offer_token ||
+        details?.offers?.[0]?.offerToken ||
+        details?.offers?.[0]?.offer_token ||
+        null;
+    } catch (_) {}
+
+    try {
+      window.__fiftyFitBillingDiagnostics = {
+        ...(window.__fiftyFitBillingDiagnostics || {}),
+        stage: "before_launchBillingFlow",
+        productId,
+        offerTokenPresent: !!selectedOfferToken,
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (_) {}
+
     let result;
     try {
       result = await billing.launchBillingFlow({
         product: productId,
         type: "SUBS",
+        ...(selectedOfferToken ? { offerToken: selectedOfferToken } : {}),
       });
     } catch (launchError) {
       const launchMapped = billingError(launchError, "billing_flow_failed");

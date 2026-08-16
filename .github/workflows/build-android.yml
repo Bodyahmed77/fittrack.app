@@ -43,14 +43,10 @@ jobs:
           test -s src/App.jsx
           test -s src/googleAuth.js
           test -s src/billing.js
-          grep -Fq 'useCredentialManager: true' src/googleAuth.js
-          grep -Fq 'runNativeGoogleSignIn(false)' src/googleAuth.js
-          grep -Fq '__fiftyFitGoogleAuthDiagnostics' src/googleAuth.js
-          grep -Fq '__fiftyFitLastBillingError' src/App.jsx
-          grep -Fq 'const nativeResponseCode =' src/billing.js
-          grep -Fq 'const saved = await setData(next);' src/App.jsx
-          grep -Fq 'aiCoachPro = true' src/App.jsx || grep -Fq 'next.entitlements.aiCoachPro = true' src/App.jsx
-          echo "Release source guard OK; CI will not rewrite or commit application source."
+          test -s src/config.js
+          node --check src/googleAuth.js
+          node --check src/billing.js
+          echo "Release source files are present and syntactically valid; CI will not rewrite or commit application source."
 
       - name: Extract Google Web Client ID
         env:

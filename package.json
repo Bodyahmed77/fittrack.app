@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "postinstall": "python3 scripts/apply-billing-native-diagnostics.py && python3 scripts/apply-runtime-audit-fixes.py",
+    "postinstall": "python3 scripts/apply-billing-native-diagnostics.py && python3 scripts/apply-billing-native-offer-diagnostics.py && python3 scripts/apply-runtime-audit-fixes.py",
     "preview": "vite preview",
     "cap:sync": "npx cap sync android"
   },

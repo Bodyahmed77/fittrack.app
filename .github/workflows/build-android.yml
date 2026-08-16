@@ -1,0 +1,275 @@
+name: Build Fifty Fit Android Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android API 36 / build tools
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release source without mutating it
+        run: |
+          set -euo pipefail
+          test -s src/App.jsx
+          test -s src/googleAuth.js
+          test -s src/billing.js
+          grep -Fq 'useCredentialManager: true' src/googleAuth.js
+          grep -Fq 'runNativeGoogleSignIn(false)' src/googleAuth.js
+          grep -Fq '__fiftyFitGoogleAuthDiagnostics' src/googleAuth.js
+          grep -Fq '__fiftyFitLastBillingError' src/App.jsx
+          grep -Fq 'const nativeResponseCode =' src/billing.js
+          grep -Fq 'const saved = await setData(next);' src/App.jsx
+          grep -Fq 'aiCoachPro = true' src/App.jsx || grep -Fq 'next.entitlements.aiCoachPro = true' src/App.jsx
+          echo "Release source guard OK; CI will not rewrite or commit application source."
+
+      - name: Extract Google Web Client ID
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: python3 scripts/extract-google-web-client-id.py
+
+      - name: Build the web app
+        run: npm run build
+
+      - name: Add the Android platform
+        run: npx cap add android || true
+
+      - name: Inject google-services.json
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "${GS_B64:-}"
+          mkdir -p android/app
+          echo "$GS_B64" | base64 -d > android/app/google-services.json
+          python3 - <<'PY'
+          import hashlib, json
+          p = 'android/app/google-services.json'
+          d = json.load(open(p, encoding='utf-8'))
+          assert d.get('project_info', {}).get('project_id') == 'fittrack-698fa'
+          package = 'com.bodyahmed77.fiftyfit'
+          matching = [
+              c for c in (d.get('client') or [])
+              if ((c.get('client_info') or {}).get('android_client_info') or {}).get('package_name') == package
+          ]
+          assert matching, f'No google-services client for {package}'
+          certs = []
+          for client in matching:
+              for oauth in client.get('oauth_client') or []:
+                  if oauth.get('client_type') == 1:
+                      cert = ((oauth.get('android_info') or {}).get('certificate_hash') or '').replace(':','').lower()
+                      if cert:
+                          certs.append(cert)
+          assert '55384cf206854973c68dfba5be2a1bba8e048bee' in certs, 'Play App Signing SHA-1 missing'
+          print(f'google-services.json OK for {package}')
+          print('Android OAuth SHA-1:', sorted(set(certs)))
+          print('google-services.json sha256:', hashlib.sha256(open(p,'rb').read()).hexdigest())
+          PY
+
+      - name: Configure Google Services and native Google Sign-In dependencies
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path('android')
+          rb = root / 'build.gradle'
+          ab = root / 'app' / 'build.gradle'
+          vg = root / 'variables.gradle'
+
+          text = rb.read_text(encoding='utf-8')
+          if 'com.google.gms:google-services' not in text:
+              text = text.replace('dependencies {', "dependencies {\n        classpath 'com.google.gms:google-services:4.4.0'", 1)
+          rb.write_text(text, encoding='utf-8')
+
+          text = ab.read_text(encoding='utf-8')
+          if 'play-services-auth' not in text:
+              text = text.replace('dependencies {', "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
+          if 'com.google.gms.google-services' not in text:
+              text += "\napply plugin: 'com.google.gms.google-services'\n"
+          if 'enableSplit = false' not in text:
+              text += "\nandroid {\n    bundle {\n        language { enableSplit = false }\n    }\n}\n"
+          ab.write_text(text, encoding='utf-8')
+
+          text = vg.read_text(encoding='utf-8')
+          if 'rgcfaIncludeGoogle' not in text:
+              text = text.replace('ext {', "ext {\n    rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = '1.3.0'\n    androidxCredentialsPlayServicesAuthVersion = '1.3.0'\n    librariesIdentityGoogleidVersion = '1.1.1'", 1)
+          else:
+              text = text.replace('rgcfaIncludeGoogle = false', 'rgcfaIncludeGoogle = true')
+          text = re.sub(r"androidxCredentialsVersion\s*=\s*'[^']*'", "androidxCredentialsVersion = '1.3.0'", text)
+          text = re.sub(r"androidxCredentialsPlayServicesAuthVersion\s*=\s*'[^']*'", "androidxCredentialsPlayServicesAuthVersion = '1.3.0'", text)
+          text = re.sub(r"librariesIdentityGoogleidVersion\s*=\s*'[^']*'", "librariesIdentityGoogleidVersion = '1.1.1'", text)
+          if 'androidxCredentialsVersion' not in text:
+              text = text.replace('rgcfaIncludeGoogle = true', "rgcfaIncludeGoogle = true\n    androidxCredentialsVersion = '1.3.0'", 1)
+          if 'androidxCredentialsPlayServicesAuthVersion' not in text:
+              text = text.replace("androidxCredentialsVersion = '1.3.0'", "androidxCredentialsVersion = '1.3.0'\n    androidxCredentialsPlayServicesAuthVersion = '1.3.0'", 1)
+          if 'librariesIdentityGoogleidVersion' not in text:
+              text = text.replace("androidxCredentialsPlayServicesAuthVersion = '1.3.0'", "androidxCredentialsPlayServicesAuthVersion = '1.3.0'\n    librariesIdentityGoogleidVersion = '1.1.1'", 1)
+          vg.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Force Android API 36 target
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('android/variables.gradle')
+          text = p.read_text(encoding='utf-8')
+          text = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', text)
+          text = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', text)
+          if 'targetSdkVersion' not in text: text += '\next.targetSdkVersion = 36\n'
+          if 'compileSdkVersion' not in text: text += '\next.compileSdkVersion = 36\n'
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Set monotonic Play version code
+        env:
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          p = Path('android/app/build.gradle')
+          text = p.read_text(encoding='utf-8')
+          n = int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
+          text = re.sub(r'\n\s*versionCode\s+\d+', '', text)
+          text = re.sub(r'\n\s*versionName\s+"[^"]*"', '', text)
+          text = text.replace('defaultConfig {', f'defaultConfig {{\n        versionCode {1000+n}\n        versionName "1.0.{n}"', 1)
+          p.write_text(text, encoding='utf-8')
+          print(f'versionCode={1000+n}, versionName=1.0.{n}')
+          PY
+
+      - name: Generate assets and sync Capacitor
+        run: |
+          npx capacitor-assets generate --android
+          npx cap sync android
+
+      - name: Inject native TikTok WebView
+        run: python3 scripts/inject-tiktok-webview.py
+
+      - name: Force black Android system bars
+        run: python3 scripts/inject-android-system-ui.py
+
+      - name: Verify Android release configuration
+        working-directory: android
+        run: |
+          set -euo pipefail
+          test "$(grep -o 'applicationId \"[^\"]*\"' app/build.gradle | head -n1 | cut -d'\"' -f2)" = "com.bodyahmed77.fiftyfit"
+          test "$(grep -o 'namespace \"[^\"]*\"' app/build.gradle | head -n1 | cut -d'\"' -f2)" = "com.bodyahmed77.fiftyfit"
+          test -s app/src/main/assets/public/index.html
+          test -s app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewPlugin.java
+          test -s app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java
+
+      - name: Decode release signing keystore
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "${KS_B64:-}"
+          echo "$KS_B64" | base64 -d > android/app/release.keystore
+          test -s android/app/release.keystore
+
+      - name: Verify signing and Firebase SHA configuration
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          actual="$(keytool -list -v -keystore app/release.keystore -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | awk -F': ' '/SHA1:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          test -n "$actual"
+          echo "CI upload SHA-1: $actual"
+          echo "Play App Signing SHA-1 was validated from google-services.json before build."
+
+      - name: Build signed release AAB and APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew bundleRelease assembleRelease --no-daemon --stacktrace
+
+      - name: Collect and verify release artifacts
+        working-directory: android
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          mapfile -t AABS < <(find app/build/outputs/bundle/release -maxdepth 2 -type f -name '*.aab' -print | sort)
+          mapfile -t APKS < <(find app/build/outputs/apk/release -maxdepth 2 -type f -name '*.apk' -print | sort)
+          test "${#AABS[@]}" -ge 1 || { echo 'ERROR: no release AAB produced'; exit 1; }
+          test "${#APKS[@]}" -ge 1 || { echo 'ERROR: no release APK produced'; exit 1; }
+          cp "${AABS[0]}" release-artifacts/fifty-fit-release.aab
+          cp "${APKS[0]}" release-artifacts/fifty-fit-release.apk
+          test -s release-artifacts/fifty-fit-release.aab
+          test -s release-artifacts/fifty-fit-release.apk
+          sha256sum release-artifacts/fifty-fit-release.aab release-artifacts/fifty-fit-release.apk
+
+      - name: Verify APK/AAB web asset parity
+        working-directory: android
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, zipfile
+          aab = Path('release-artifacts/fifty-fit-release.aab')
+          apk = Path('release-artifacts/fifty-fit-release.apk')
+          with zipfile.ZipFile(aab) as z:
+              items = sorted(n for n in z.namelist() if n.endswith('/assets/public/index.html'))
+              if not items: raise SystemExit('No AAB web asset index.html found')
+              ah = hashlib.sha256(z.read(items[0])).hexdigest()
+          with zipfile.ZipFile(apk) as z:
+              n = 'assets/public/index.html'
+              if n not in z.namelist(): raise SystemExit('No APK web asset index.html found')
+              ph = hashlib.sha256(z.read(n)).hexdigest()
+          if ah != ph: raise SystemExit(f'APK/AAB web asset mismatch: {ah} != {ph}')
+          print(f'APK/AAB web asset parity OK: {ah}')
+          PY
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifty-fit-android-aab-${{ github.run_number }}
+          path: android/release-artifacts/fifty-fit-release.aab
+          if-no-files-found: error
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifty-fit-android-apk-${{ github.run_number }}
+          path: android/release-artifacts/fifty-fit-release.apk
+          if-no-files-found: error

@@ -18,5 +18,13 @@ text = text.replace(
     'const legacyAdmin = parsed.adminEntitlements || fresh.entitlements;',
 )
 
+# The previous runtime audit inserts a profileExists reset next to the verified
+# entitlement reset. Align the strict deep patch with that already-transformed
+# source so postinstall is deterministic.
+text = text.replace(
+    '      verifiedEntitlementsRef.current = null;\\n      return;',
+    '      verifiedEntitlementsRef.current = null;\\n      profileExistsRef.current = false;\\n      return;',
+)
+
 p.write_text(text, encoding="utf-8")
 print("deep runtime patch prepared")

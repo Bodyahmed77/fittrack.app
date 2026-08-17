@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src" / "googleWebClientId.js"
+CAPACITOR_CONFIG = ROOT / "capacitor.config.json"
 EXPECTED_PACKAGE = "com.bodyahmed77.fiftyfit"
 EXPECTED_PLAY_SHA1 = "55384cf206854973c68dfba5be2a1bba8e048bee"
 EXPECTED_UPLOAD_SHA1 = "c62c4d0c0ae964620887e464835de5196842131b"
@@ -55,6 +56,20 @@ def registered_sha1s(data: dict) -> set[str]:
     return certs
 
 
+def inject_capacitor_config(web_client_id: str) -> None:
+    if not CAPACITOR_CONFIG.is_file():
+        raise SystemExit(f"Missing {CAPACITOR_CONFIG}")
+    config = json.loads(CAPACITOR_CONFIG.read_text(encoding="utf-8"))
+    auth = config.setdefault("plugins", {}).setdefault("FirebaseAuthentication", {})
+    auth["skipNativeAuth"] = True
+    providers = list(auth.get("providers") or [])
+    if "google.com" not in providers:
+        providers.append("google.com")
+    auth["providers"] = providers
+    auth["googleWebClientId"] = web_client_id
+    CAPACITOR_CONFIG.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     data = load_gs()
     project_id = str(data.get("project_info", {}).get("project_id") or "")
@@ -70,9 +85,19 @@ def main() -> None:
         raise SystemExit(f"No Android client for {EXPECTED_PACKAGE} in google-services.json")
 
     certs = registered_sha1s(data)
-    missing = [label for label, value in (("Play App Signing SHA-1", EXPECTED_PLAY_SHA1), ("Upload SHA-1", EXPECTED_UPLOAD_SHA1)) if value not in certs]
+    missing = [
+        label
+        for label, value in (
+            ("Play App Signing SHA-1", EXPECTED_PLAY_SHA1),
+            ("Upload SHA-1", EXPECTED_UPLOAD_SHA1),
+        )
+        if value not in certs
+    ]
     if missing:
-        raise SystemExit(f"google-services.json is missing required OAuth SHA-1 entries: {', '.join(missing)}; registered={sorted(certs)}")
+        raise SystemExit(
+            "google-services.json is missing required OAuth SHA-1 entries: "
+            f"{', '.join(missing)}; registered={sorted(certs)}"
+        )
 
     client_id = find_web_client_id(data)
     content = (
@@ -84,10 +109,12 @@ def main() -> None:
     )
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(content, encoding="utf-8")
+    inject_capacitor_config(client_id)
     print(f"Google OAuth preflight OK: project={project_id}, package={EXPECTED_PACKAGE}")
     print(f"Play SHA-1 present: {EXPECTED_PLAY_SHA1}")
     print(f"Upload SHA-1 present: {EXPECTED_UPLOAD_SHA1}")
     print(f"Web client: …{client_id[-24:]}")
+    print("Capacitor FirebaseAuthentication googleWebClientId injected")
 
 
 if __name__ == "__main__":

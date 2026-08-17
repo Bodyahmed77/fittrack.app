@@ -25,6 +25,10 @@ text = text.replace(
     '      verifiedEntitlementsRef.current = null;\\n      return;',
     '      verifiedEntitlementsRef.current = null;\\n      profileExistsRef.current = false;\\n      return;',
 )
+text = text.replace(
+    '      verifiedEntitlementsRef.current = null;\\n      profileExistsRef.current = false;\\n      return;',
+    '      verifiedEntitlementsRef.current = null;\\n      profileExistsRef.current = false;\\n      adminEntitlementsRef.current = null;\\n      return;',
+)
 
 p.write_text(text, encoding="utf-8")
 print("deep runtime patch prepared")

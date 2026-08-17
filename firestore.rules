@@ -6,8 +6,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isAdmin() {
       return request.auth != null &&
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get("role", "") in ["owner", "staff"];
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
     function clientCreatedEntitlementsAreFree() {
@@ -19,16 +18,11 @@ service cloud.firestore {
       };
     }
 
-    // Marks who is an admin. A document only exists here if the owner created
-    // it deliberately. No client, admin or not, can grant itself access.
     match /admins/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
 
-    // Every signed-in user has exactly one document at users/{their own uid}.
-    // Normal users can update their own application data, but subscription
-    // entitlements and admin-managed plans are immutable from the client.
     match /users/{userId} {
       allow read: if request.auth != null && (
         request.auth.uid == userId || isAdmin()
@@ -57,8 +51,6 @@ service cloud.firestore {
           ])
         )
       );
-      // Required for in-app account deletion. The user can delete only their
-      // own Firestore profile; authorized staff may delete any user document.
       allow delete: if request.auth != null && (
         request.auth.uid == userId || isAdmin()
       );

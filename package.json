@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "postinstall": "python3 scripts/apply-billing-native-diagnostics.py && python3 scripts/apply-billing-native-offer-diagnostics.py && python3 scripts/apply-runtime-audit-fixes.py && python3 scripts/apply-deep-runtime-fixes.py",
+    "postinstall": "python3 scripts/apply-billing-native-diagnostics.py && python3 scripts/apply-billing-native-offer-diagnostics.py && python3 scripts/apply-runtime-audit-fixes.py && python3 scripts/apply-deep-runtime-fixes.py && python3 scripts/repair-google-auth-after-runtime-mutations.py",
     "preview": "vite preview",
     "cap:sync": "npx cap sync android"
   },

@@ -21,6 +21,18 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android API 36 / build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
       - name: Install dependencies
         run: npm ci
 
@@ -38,3 +50,43 @@ jobs:
 
       - name: Build web application
         run: npm run build
+
+      - name: Add Android platform
+        run: npx cap add android || true
+
+      - name: Inject google-services.json for Android compile validation
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "${GS_B64:-}" || { echo 'GOOGLE_SERVICES_JSON_BASE64 secret is missing'; exit 1; }
+          mkdir -p android/app
+          printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
+          test -s android/app/google-services.json
+
+      - name: Apply generated Android billing/runtime patches
+        run: |
+          set -euo pipefail
+          npx cap sync android
+          python3 scripts/inject-android-system-ui.py
+          python3 scripts/inject-tiktok-webview.py
+
+      - name: Validate Play Billing native compatibility
+        working-directory: android
+        run: |
+          set -euo pipefail
+          test -f app/build.gradle
+          grep -q 'com.android.billingclient:billing:9.1.0' app/build.gradle
+          if grep -Eq '\.enablePendingPurchases\(\)' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java 2>/dev/null; then
+            echo 'PBL7 no-arg enablePendingPurchases() remains in generated native source'
+            exit 1
+          fi
+          grep -q 'PendingPurchasesParams' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+          grep -q 'QueryProductDetailsResult' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+          grep -q 'getProductDetailsList()' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+          grep -q 'enableAutoServiceReconnection()' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+          grep -q 'FIFTYFIT_BILLING_ERROR' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+
+      - name: Compile Android debug artifact (Billing/PBL compatibility gate)
+        working-directory: android
+        run: ./gradlew :app:assembleDebug --no-daemon

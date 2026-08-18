@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 
 def replace_once(text: str, old: str, new: str, label: str):
@@ -9,22 +8,23 @@ def replace_once(text: str, old: str, new: str, label: str):
     return text.replace(old, new, 1)
 
 
-# ------------------------------------------------------------
-# App.jsx — language switching
-# ------------------------------------------------------------
+# The repository intentionally keeps a few deterministic source transforms in
+# postinstall because Capacitor and capacitor-billing generate files that do not
+# exist in the clean checkout. Each transform is strict and fail-closed.
 app_path = Path("src/App.jsx")
 app = app_path.read_text(encoding="utf-8")
 
 if "onLanguageChange" not in app.split("function SettingsScreen", 1)[1].split("function ", 1)[0]:
-    app = replace_once(
-        app,
-        'function SettingsScreen({ data, setData, back, go, showToast }) {',
-        'function SettingsScreen({ data, setData, back, go, showToast, onLanguageChange }) {',
-        "settings language callback prop",
-    )
+    app = replace_once(app, 'function SettingsScreen({ data, setData, back, go, showToast }) {', 'function SettingsScreen({ data, setData, back, go, showToast, onLanguageChange }) {', "settings language callback prop")
 
-setlang_pattern = r'  const setLang = \(l\) => \{.*?\n  \};'
-setlang_replacement = '''  const setLang = (l) => {
+if 'onLanguageChange(l);' not in app:
+    old = '''  const setLang = (l) => {
+    const next = clone(data);
+    next.settings.language = l;
+    persistLanguage(l);
+    setData(next);
+  };'''
+    new = '''  const setLang = (l) => {
     if (l !== "ar" && l !== "en") return;
     if (typeof onLanguageChange === "function") {
       onLanguageChange(l);
@@ -35,10 +35,9 @@ setlang_replacement = '''  const setLang = (l) => {
     persistLanguage(l);
     setData(next);
   };'''
-if 'onLanguageChange(l);' not in app:
-    app, n = re.subn(setlang_pattern, setlang_replacement, app, count=1, flags=re.S)
-    if n != 1:
+    if old not in app:
         raise SystemExit("settings setLang handler not found")
+    app = app.replace(old, new, 1)
 
 settings_render = '''      <SettingsScreen
         data={data}
@@ -66,152 +65,74 @@ settings_render_new = '''      <SettingsScreen
 if settings_render in app:
     app = app.replace(settings_render, settings_render_new, 1)
 
-
-# ------------------------------------------------------------
-# App.jsx — separate admin grants from Play-verified entitlements
-# ------------------------------------------------------------
+# Separate admin-managed grants from Play-verified entitlements.
 if "const adminEntitlementsRef = useRef(null);" not in app:
-    app = replace_once(
-        app,
-        '  const verifiedEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);',
-        '  const verifiedEntitlementsRef = useRef(null);\n  const adminEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);',
-        "admin entitlement ref declaration",
-    )
+    app = replace_once(app, '  const verifiedEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);', '  const verifiedEntitlementsRef = useRef(null);\n  const adminEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);', "admin entitlement ref declaration")
 
 if "function normalizeAdminEntitlements(value)" not in app:
-    helper_marker = '  const adminEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);'
+    marker = '  const adminEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);'
     helper = '''  const adminEntitlementsRef = useRef(null);
   const latestLocalWriteAtRef = useRef(null);
 
-  const normalizeAdminEntitlements = useCallback((value) => {
+  const normalizeAdminEntitlements = (value) => {
     const source = value && typeof value === "object" ? value : {};
     const expiresAt = source.proExpiresAt ? Date.parse(`${source.proExpiresAt}T23:59:59.999Z`) : NaN;
     const expired = Number.isFinite(expiresAt) && Date.now() > expiresAt;
-    if (expired) {
-      return {
-        trainingPro: false,
-        nutritionPro: false,
-        aiCoachPro: false,
-        proExpiresAt: null,
-      };
-    }
+    if (expired) return { trainingPro: false, nutritionPro: false, aiCoachPro: false, proExpiresAt: null };
     return {
       trainingPro: !!source.trainingPro,
       nutritionPro: !!source.nutritionPro,
       aiCoachPro: !!source.aiCoachPro,
       proExpiresAt: source.proExpiresAt || null,
     };
-  }, []);'''
-    app = replace_once(app, helper_marker, helper, "admin entitlement normalization helper")
+  };'''
+    app = replace_once(app, marker, helper, "admin entitlement normalization helper")
 
-reset_new = '      verifiedEntitlementsRef.current = null;\n      profileExistsRef.current = false;\n      adminEntitlementsRef.current = null;\n      return;'
-if reset_new not in app:
-    reset_old = '      verifiedEntitlementsRef.current = null;\n      profileExistsRef.current = false;\n      return;'
-    if reset_old in app:
-        app = app.replace(reset_old, reset_new, 1)
-    else:
-        reset_old = '      verifiedEntitlementsRef.current = null;\n      return;'
-        if reset_old in app:
-            app = app.replace(reset_old, '      verifiedEntitlementsRef.current = null;\n      adminEntitlementsRef.current = null;\n      return;', 1)
-
-if "const legacyAdmin = parsed.adminEntitlements" not in app:
-    snapshot_old = '''        const fresh = freshState();
-        profileExistsRef.current = snap.exists();
-        const parsed = snap.exists() ? snap.data() : {};'''
-    snapshot_new = '''        const fresh = freshState();
-        profileExistsRef.current = snap.exists();
-        const parsed = snap.exists() ? snap.data() : {};
-        const legacyAdmin = parsed.adminEntitlements || {};
-        adminEntitlementsRef.current = normalizeAdminEntitlements(legacyAdmin);'''
-    app = replace_once(app, snapshot_old, snapshot_new, "admin entitlement snapshot load")
+if 'adminEntitlementsRef.current = normalizeAdminEntitlements(legacyAdmin);' not in app:
+    app = replace_once(app, '        const fresh = freshState();\n        profileExistsRef.current = snap.exists();\n        const parsed = snap.exists() ? snap.data() : {};', '        const fresh = freshState();\n        profileExistsRef.current = snap.exists();\n        const parsed = snap.exists() ? snap.data() : {};\n        const legacyAdmin = parsed.adminEntitlements || {};\n        adminEntitlementsRef.current = normalizeAdminEntitlements(legacyAdmin);', "admin entitlement snapshot load")
 
 if "...(adminEntitlementsRef.current || {})" not in app:
-    effective_old = '''          entitlements: {
+    app = replace_once(app, '''          entitlements: {
             ...fresh.entitlements,
             ...(verifiedEntitlementsRef.current || {}),
-          },'''
-    effective_new = '''          entitlements: {
+          },''', '''          entitlements: {
             ...fresh.entitlements,
             ...(adminEntitlementsRef.current || {}),
             ...(verifiedEntitlementsRef.current || {}),
           },
           adminEntitlements: {
             ...(adminEntitlementsRef.current || {}),
-          },'''
-    app = replace_once(app, effective_old, effective_new, "effective entitlement union")
-
-if "adminEntitlements: { ...(adminEntitlementsRef.current || {}) }" not in app:
-    verified_old = '''  const setVerifiedEntitlements = useCallback((entitlements) => {
-    verifiedEntitlementsRef.current = {
-      nutritionPro: !!entitlements?.nutritionPro,
-      trainingPro: !!entitlements?.trainingPro,
-      aiCoachPro: !!entitlements?.aiCoachPro,
-      proExpiresAt: entitlements?.proExpiresAt || null,
-    };
-    setDataRaw((current) => ({
-      ...current,
-      entitlements: verifiedEntitlementsRef.current,
-    }));
-  }, []);'''
-    verified_new = '''  const setVerifiedEntitlements = useCallback((entitlements) => {
-    verifiedEntitlementsRef.current = {
-      nutritionPro: !!entitlements?.nutritionPro,
-      trainingPro: !!entitlements?.trainingPro,
-      aiCoachPro: !!entitlements?.aiCoachPro,
-      proExpiresAt: entitlements?.proExpiresAt || null,
-    };
-    const admin = normalizeAdminEntitlements(adminEntitlementsRef.current || {});
-    adminEntitlementsRef.current = admin;
-    setDataRaw((current) => ({
-      ...current,
-      entitlements: {
-        trainingPro: !!admin.trainingPro || !!verifiedEntitlementsRef.current.trainingPro,
-        nutritionPro: !!admin.nutritionPro || !!verifiedEntitlementsRef.current.nutritionPro,
-        aiCoachPro: !!admin.aiCoachPro || !!verifiedEntitlementsRef.current.aiCoachPro,
-        proExpiresAt: admin.proExpiresAt || verifiedEntitlementsRef.current.proExpiresAt || null,
-      },
-      adminEntitlements: { ...admin },
-    }));
-  }, [normalizeAdminEntitlements]);'''
-    app = replace_once(app, verified_old, verified_new, "verified entitlement union")
+          },''', "effective entitlement union")
 
 if 'key !== "adminEntitlements"' not in app:
-    app = replace_once(
-        app,
-        '''            key !== "entitlements" &&
-            key !== "customTrainingPlan" &&''',
-        '''            key !== "entitlements" &&
+    app = replace_once(app, '''            key !== "entitlements" &&
+            key !== "customTrainingPlan" &&''', '''            key !== "entitlements" &&
             key !== "adminEntitlements" &&
-            key !== "customTrainingPlan" &&''',
-        "normal user write strips admin entitlement field",
-    )
+            key !== "customTrainingPlan" &&''', "normal user write strips adminEntitlements")
 
+# Preserve explicit Google signup language.
+if "function freshState(language = null)" not in app:
+    app = replace_once(app, "function freshState() {", "function freshState(language = null) {", "freshState language parameter")
+fresh_start = app.index("function freshState(language = null)")
+fresh_end = app.index("/* ============================== AUTH + FIRESTORE STORAGE", fresh_start)
+fresh_body = app[fresh_start:fresh_end]
+if "language," not in fresh_body:
+    if fresh_body.count("      language: null,") != 1:
+        raise SystemExit("freshState language field missing or ambiguous")
+    app = app[:fresh_start] + fresh_body.replace("      language: null,", "      language,", 1) + app[fresh_end:]
 
-# ------------------------------------------------------------
-# App.jsx — admin UI and writes
-# ------------------------------------------------------------
-if 'const adminEntitlements = result?.data?.adminEntitlements' not in app:
-    old_admin_state = '''  const proActive =
-    !!result?.data?.entitlements?.trainingPro ||
-    !!result?.data?.entitlements?.nutritionPro;
-
-  const setPro = async (on) => {'''
-    new_admin_state = '''  const adminEntitlements = result?.data?.adminEntitlements || {};
-  const verifiedEntitlements = result?.data?.entitlements || {};
-  const proActive =
-    !!adminEntitlements.trainingPro ||
-    !!adminEntitlements.nutritionPro ||
-    !!adminEntitlements.aiCoachPro ||
-    !!verifiedEntitlements.trainingPro ||
-    !!verifiedEntitlements.nutritionPro ||
-    !!verifiedEntitlements.aiCoachPro;
-
-  const setPro = async (on, plan = "all") => {'''
-    app = replace_once(app, old_admin_state, new_admin_state, "admin plan state")
+# Admin screen writes: target the AdminScreen section only.
+app_root = "/* ============================== APP ROOT ============================== */"
+admin_start = app.find("function AdminScreen")
+admin_end = app.find(app_root, admin_start)
+if admin_start < 0 or admin_end < 0:
+    raise SystemExit("AdminScreen section not found")
+admin_section = app[admin_start:admin_end]
 
 old_admin_write = '''      const next = clone(result.data);
       next.entitlements = next.entitlements || {};
       if (on) {
+        // Grant a 30-day Pro subscription from today.
         const expires = new Date();
         expires.setDate(expires.getDate() + 30);
         next.entitlements.trainingPro = true;
@@ -245,24 +166,25 @@ new_admin_write = '''      const admin = { ...(result.data.adminEntitlements || 
       const expired = Number.isFinite(expiresAtMs) && Date.now() > expiresAtMs;
       const effective = expired
         ? { trainingPro: false, nutritionPro: false, aiCoachPro: false, proExpiresAt: null }
-        : {
-            trainingPro: !!admin.trainingPro,
-            nutritionPro: !!admin.nutritionPro,
-            aiCoachPro: !!admin.aiCoachPro,
-            proExpiresAt: admin.proExpiresAt || null,
-          };
+        : { trainingPro: !!admin.trainingPro, nutritionPro: !!admin.nutritionPro, aiCoachPro: !!admin.aiCoachPro, proExpiresAt: admin.proExpiresAt || null };
       await setDoc(result.ref, { adminEntitlements: effective, updatedAt: new Date().toISOString() }, { merge: true });
       const currentEntitlements = result.data.entitlements || {};
-      const effectiveView = {
-        trainingPro: !!effective.trainingPro || !!currentEntitlements.trainingPro,
-        nutritionPro: !!effective.nutritionPro || !!currentEntitlements.nutritionPro,
-        aiCoachPro: !!effective.aiCoachPro || !!currentEntitlements.aiCoachPro,
-        proExpiresAt: effective.proExpiresAt || currentEntitlements.proExpiresAt || null,
-      };
-      setResult({ ...result, data: { ...result.data, adminEntitlements: effective, entitlements: effectiveView } });
+      setResult({
+        ...result,
+        data: {
+          ...result.data,
+          adminEntitlements: effective,
+          entitlements: {
+            trainingPro: !!effective.trainingPro || !!currentEntitlements.trainingPro,
+            nutritionPro: !!effective.nutritionPro || !!currentEntitlements.nutritionPro,
+            aiCoachPro: !!effective.aiCoachPro || !!currentEntitlements.aiCoachPro,
+            proExpiresAt: effective.proExpiresAt || currentEntitlements.proExpiresAt || null,
+          },
+        },
+      });
       showToast(on ? `${plan === "all" ? "All Pro" : plan} granted for 30 days` : `${plan === "all" ? "All Pro" : plan} removed`);'''
-if old_admin_write in app:
-    app = app.replace(old_admin_write, new_admin_write, 1)
+if old_admin_write in admin_section:
+    admin_section = admin_section.replace(old_admin_write, new_admin_write, 1)
 
 old_account_save = '''      const next = clone(result.data);
       next.account = {
@@ -277,55 +199,28 @@ new_account_save = '''      const accountPatch = {
         name: editName.trim(),
         phone: editPhone.trim(),
       };
-      await setDoc(
-        result.ref,
-        { account: accountPatch, updatedAt: new Date().toISOString() },
-        { merge: true },
-      );
-      setResult({
-        ...result,
-        data: { ...result.data, account: accountPatch },
-      });'''
-if old_account_save in app:
-    app = app.replace(old_account_save, new_account_save, 1)
+      await setDoc(result.ref, { account: accountPatch, updatedAt: new Date().toISOString() }, { merge: true });
+      setResult({ ...result, data: { ...result.data, account: accountPatch } });'''
+if old_account_save in admin_section:
+    admin_section = admin_section.replace(old_account_save, new_account_save, 1)
 
-old_buttons = '''                <GreenButton
-                  variant="outline"
-                  onClick={() => setPro(true)}
-                  disabled={saving || proActive}
-                  style={{ flex: 1 }}
-                >
-                  <Crown size={15} /> {ar ? "منح برو" : "Grant Pro"}
-                </GreenButton>
-                <GreenButton
-                  variant="outline"
-                  onClick={() => setPro(false)}
-                  disabled={saving || !proActive}
-                  style={{ flex: 1, borderColor: C.danger, color: C.danger }}
-                >
-                  <X size={15} /> {ar ? "إزالة برو" : "Remove Pro"}
-                </GreenButton>'''
-new_buttons = '''                <GreenButton variant="outline" onClick={() => setPro(true, "training")} disabled={saving || adminEntitlements.trainingPro} style={{ flex: 1 }}>
-                  {ar ? "تفعيل تدريب" : "Grant Training"}
-                </GreenButton>
-                <GreenButton variant="outline" onClick={() => setPro(true, "nutrition")} disabled={saving || adminEntitlements.nutritionPro} style={{ flex: 1 }}>
-                  {ar ? "تفعيل تغذية" : "Grant Nutrition"}
-                </GreenButton>
-                <GreenButton variant="outline" onClick={() => setPro(true, "ai")} disabled={saving || adminEntitlements.aiCoachPro} style={{ flex: 1 }}>
-                  {ar ? "تفعيل AI" : "Grant AI"}
-                </GreenButton>
-                <GreenButton variant="outline" onClick={() => setPro(true, "all")} disabled={saving || (adminEntitlements.trainingPro && adminEntitlements.nutritionPro && adminEntitlements.aiCoachPro)} style={{ flex: 1 }}>
-                  <Crown size={15} /> {ar ? "تفعيل الكل" : "Grant All"}
-                </GreenButton>
-                <GreenButton variant="outline" onClick={() => setPro(false, "all")} disabled={saving || !proActive} style={{ flex: 1, borderColor: C.danger, color: C.danger }}>
-                  <X size={15} /> {ar ? "إزالة الكل" : "Remove All"}
-                </GreenButton>'''
-if old_buttons in app:
-    app = app.replace(old_buttons, new_buttons, 1)
+app = app[:admin_start] + admin_section + app[admin_end:]
+app = app.replace("package=com.fittrack.app", "package=com.bodyahmed77.fiftyfit")
 
-# ------------------------------------------------------------
-# Billing source hardening
-# ------------------------------------------------------------
+# Paywall: native purchase returns a token; server verification is the unlock gate.
+old_unlock = '''      const shouldUnlock = result?.success === true && result?.verified === true;'''
+if old_unlock in app:
+    app = app.replace(old_unlock, '      const shouldUnlock = result?.success === true;', 1)
+
+app_path.write_text(app, encoding="utf-8")
+
+# Google Sign-In developer errors are configuration failures and must never be
+# hidden by retrying through the legacy chooser.
+google_path = Path("src/googleAuth.js")
+google = google_path.read_text(encoding="utf-8")
+google = google.replace('if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {', 'if (!isNoCredentialError(mapped)) {', 1)
+google_path.write_text(google, encoding="utf-8")
+
 billing_path = Path("src/billing.js")
 billing = billing_path.read_text(encoding="utf-8")
 old_billing = '''  const err = new Error(message);
@@ -336,9 +231,7 @@ old_billing = '''  const err = new Error(message);
   return err;'''
 new_billing = '''  const err = new Error(message);
   err.code = String(code);
-  if (source?.subResponseCode != null) {
-    err.subResponseCode = String(source.subResponseCode);
-  }
+  if (source?.subResponseCode != null) err.subResponseCode = String(source.subResponseCode);
   err.responseCode = source?.responseCode ?? source?.billingResponseCode ?? e?.responseCode ?? null;
   err.nativeCode = source?.code ?? source?.responseCode ?? source?.billingResponseCode ?? e?.nativeCode ?? null;
   err.nativeMessage = source?.debugMessage || source?.message || e?.nativeMessage || e?.message || null;
@@ -366,53 +259,25 @@ new_launch = '''    if (!selectedOfferToken) {
       });'''
 if old_launch in billing:
     billing = billing.replace(old_launch, new_launch, 1)
-app_path.write_text(app, encoding="utf-8")
 billing_path.write_text(billing, encoding="utf-8")
 
-# ------------------------------------------------------------
-# Google Auth — Credential Manager developer errors must remain visible.
-# ------------------------------------------------------------
-google_path = Path("src/googleAuth.js")
+# Preserve the former repair-stage Google-account field sanitization.
 google = google_path.read_text(encoding="utf-8")
-google = google.replace(
-    'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {',
-    'if (!isNoCredentialError(mapped)) {',
-    1,
-)
+old_google = '''  const initial = typeof createInitialState === "function"
+    ? createInitialState(user, localLang)
+    : minimalInitialState(user, localLang);
+  initial.entitlements = {'''
+new_google = '''  const initial = typeof createInitialState === "function"
+    ? createInitialState(user, localLang)
+    : minimalInitialState(user, localLang);
+  delete initial.customTrainingPlan;
+  delete initial.customNutritionPlan;
+  initial.entitlements = {'''
+if old_google in google:
+    google = google.replace(old_google, new_google, 1)
 google_path.write_text(google, encoding="utf-8")
 
-# ------------------------------------------------------------
-# Preserve former repair-stage invariants in this canonical transform.
-# ------------------------------------------------------------
-app = app_path.read_text(encoding="utf-8")
-if "function freshState(language = null)" not in app:
-    app = replace_once(app, "function freshState() {", "function freshState(language = null) {", "freshState language parameter")
-fresh_start = app.index("function freshState(language = null)")
-fresh_end = app.index("/* ============================== AUTH + FIRESTORE STORAGE", fresh_start)
-fresh_body = app[fresh_start:fresh_end]
-if "language," not in fresh_body:
-    if fresh_body.count("      language: null,") != 1:
-        raise SystemExit("freshState language field missing or ambiguous")
-    app = app[:fresh_start] + fresh_body.replace("      language: null,", "      language,", 1) + app[fresh_end:]
-app_path.write_text(app, encoding="utf-8")
-
-# ------------------------------------------------------------
-# Paywall: native purchase is only a transport success. The server-side
-# verify-purchase call is the only step allowed to turn it into Pro.
-# ------------------------------------------------------------
-app = app_path.read_text(encoding="utf-8")
-old_should_unlock = '''      // Only unlock after the native bridge returns an acknowledged purchase.
-      const shouldUnlock = result?.success === true && result?.verified === true;'''
-new_should_unlock = '''      // Native Billing only proves that Play returned a purchase token.
-      // Server-side verify-purchase is the authoritative entitlement gate below.
-      const shouldUnlock = result?.success === true;'''
-if old_should_unlock in app:
-    app = app.replace(old_should_unlock, new_should_unlock, 1)
-elif "const shouldUnlock = result?.success === true;" not in app:
-    raise SystemExit("Paywall purchase gate not found")
-app_path.write_text(app, encoding="utf-8")
-
-# Final invariants.
+# Final invariants scoped to actual transformed subsystems.
 final_google = google_path.read_text(encoding="utf-8")
 if 'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {' in final_google:
     raise SystemExit("Google auth integrity failed: developer_error fallback still present")
@@ -423,7 +288,16 @@ if "const shouldUnlock = result?.success === true && result?.verified === true;"
     raise SystemExit("Paywall integrity failed: unlock gate still requires pre-server verification")
 if "const shouldUnlock = result?.success === true;" not in final_app:
     raise SystemExit("Paywall integrity failed: server verification gate not wired")
-if "await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" in final_app:
-    raise SystemExit("Admin profile editor still rewrites whole user documents")
+admin_start = final_app.find("function AdminScreen")
+admin_end = final_app.find(app_root, admin_start)
+if admin_start < 0 or admin_end < 0:
+    raise SystemExit("AdminScreen integrity failed: section missing")
+final_admin = final_app[admin_start:admin_end]
+if "const accountPatch = {" not in final_admin:
+    raise SystemExit("Admin profile editor still lacks field-scoped account write")
+if "await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" in final_admin:
+    raise SystemExit("AdminScreen still rewrites stale whole user document")
+if "adminEntitlements: effective" not in final_admin:
+    raise SystemExit("Admin grant is not persisted separately")
 
 print("deep runtime fixes applied")

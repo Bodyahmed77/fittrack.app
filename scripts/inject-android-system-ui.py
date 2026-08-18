@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Patch generated Android resources and enforce the current Play target API.
+"""Patch generated Android configuration and enforce the current Play target.
 
-This script runs after `npx cap sync`, so it is the right place for changes that
-must survive the generated Android project being recreated on every CI build.
-
-It currently:
-- forces pure-black Android status/navigation bars;
-- keeps adjustResize for the keyboard;
-- forces compileSdk/targetSdk 36 for the Google Play 2026 submission deadline;
-- installs Android 36/build-tools 36 when sdkmanager is available in CI.
+This script runs after `npx cap sync`, so generated Android changes belong here.
+It keeps UI/system-bar behavior deterministic and pins the Android billing stack
+used by the generated app to the current Google Play Billing release.
 """
 from __future__ import annotations
 
@@ -22,6 +17,7 @@ STYLES = ROOT / "android" / "app" / "src" / "main" / "res" / "values" / "styles.
 STYLES_V31 = ROOT / "android" / "app" / "src" / "main" / "res" / "values-v31" / "styles.xml"
 MANIFEST = ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
 VARIABLES = ROOT / "android" / "variables.gradle"
+APP_GRADLE = ROOT / "android" / "app" / "build.gradle"
 
 STATUS_ITEMS = [
     ("android:statusBarColor", "#000000"),
@@ -99,16 +95,8 @@ def patch_android_api() -> str:
 
     text = VARIABLES.read_text(encoding="utf-8")
     original = text
-    text = re.sub(
-        r"compileSdkVersion\s*=\s*\d+",
-        "compileSdkVersion = 36",
-        text,
-    )
-    text = re.sub(
-        r"targetSdkVersion\s*=\s*\d+",
-        "targetSdkVersion = 36",
-        text,
-    )
+    text = re.sub(r"compileSdkVersion\s*=\s*\d+", "compileSdkVersion = 36", text)
+    text = re.sub(r"targetSdkVersion\s*=\s*\d+", "targetSdkVersion = 36", text)
     if "compileSdkVersion" not in text:
         text = text.replace("ext {", "ext {\n    compileSdkVersion = 36", 1)
     if "targetSdkVersion" not in text:
@@ -137,8 +125,32 @@ def patch_android_api() -> str:
         raise SystemExit("Failed to install Android 36 SDK/build-tools") from exc
 
 
+def patch_billing_stack() -> str:
+    if not APP_GRADLE.is_file():
+        return "app/build.gradle missing — cap sync may have failed"
+
+    text = APP_GRADLE.read_text(encoding="utf-8")
+    original = text
+
+    dependency_lines = [
+        '    implementation \'com.android.billingclient:billing:9.1.0\'',
+        '    implementation \'androidx.core:core:1.9.0\'',
+    ]
+    if "com.android.billingclient:billing:9.1.0" not in text:
+        marker = "dependencies {"
+        if marker not in text:
+            raise SystemExit("Cannot pin Play Billing 9.1.0: dependencies block missing")
+        text = text.replace(marker, marker + "\n" + "\n".join(dependency_lines), 1)
+
+    if text != original:
+        APP_GRADLE.write_text(text, encoding="utf-8")
+        return "Play Billing 9.1.0 + AndroidX Core 1.9.0 pinned"
+    return "Play Billing 9.1.0 + AndroidX Core 1.9.0 already pinned"
+
+
 def main() -> None:
     print(patch_android_api())
+    print(patch_billing_stack())
     print(patch_styles(STYLES))
     print(patch_styles(STYLES_V31))
     print(patch_manifest(MANIFEST))

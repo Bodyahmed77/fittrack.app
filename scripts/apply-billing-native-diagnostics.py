@@ -17,31 +17,31 @@ original = text
 replacements = [
     (
         'call.reject("Error retrieving product details: " + suffix);',
-        'call.reject("Error retrieving product details: " + suffix, String.valueOf(code));',
+        'call.reject("Error retrieving product details [BillingResponseCode=" + code + "]: " + suffix, String.valueOf(code));',
     ),
     (
         'call.reject("Purchase canceled");',
-        'call.reject("Purchase canceled", String.valueOf(billingResult.getResponseCode()));',
+        'call.reject("Purchase canceled [BillingResponseCode=" + billingResult.getResponseCode() + "]", String.valueOf(billingResult.getResponseCode()));',
     ),
     (
         'call.reject("Error during purchase: " + billingResult.getDebugMessage());',
-        'call.reject("Error during purchase: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));',
+        'call.reject("Error during purchase [BillingResponseCode=" + billingResult.getResponseCode() + "]: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));',
     ),
     (
         'call.reject("Billing service not connected");',
-        'call.reject("Billing service not connected: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));',
+        'call.reject("Billing service not connected [BillingResponseCode=" + billingResult.getResponseCode() + "]: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));',
     ),
     (
         'call.reject("Billing service disconnected");',
-        'call.reject("Billing service disconnected", String.valueOf(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED));',
+        'call.reject("Billing service disconnected [BillingResponseCode=" + BillingClient.BillingResponseCode.SERVICE_DISCONNECTED + "]", String.valueOf(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED));',
     ),
     (
         'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());',
-        'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        'call.reject("Error launching billing flow [BillingResponseCode=" + billingResult2.getResponseCode() + "]: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
     ),
     (
         'call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage());',
-        'call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage(), String.valueOf(billingResult1.getResponseCode()));',
+        'call.reject("Error acknowledging purchase [BillingResponseCode=" + billingResult1.getResponseCode() + "]: " + billingResult1.getDebugMessage(), String.valueOf(billingResult1.getResponseCode()));',
     ),
 ]
 
@@ -63,6 +63,7 @@ if 'ret.put("subscription_offer_count"' not in text:
     text = text.replace(needle, insert, 1)
 
 required = [
+    'BillingResponseCode=',
     'String.valueOf(code)',
     'String.valueOf(billingResult2.getResponseCode())',
     'ret.put("subscription_offer_count"',

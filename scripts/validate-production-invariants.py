@@ -29,7 +29,11 @@ require(not (ROOT / "scripts/repair-google-auth-after-runtime-mutations.py").exi
 
 bad_fallback = 'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {'
 require(bad_fallback not in google_auth, "Google Sign-In still hides DEVELOPER_ERROR")
-require(bad_fallback not in deep_fixes, "deep runtime transform can reintroduce DEVELOPER_ERROR fallback")
+# The deep runtime script is a source transform. Its replacement template may
+# contain the retired string as data, so validate the transformed googleAuth.js
+# above rather than failing on the transform source itself.
+require('google = google.replace(\'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {\'' in deep_fixes,
+        "deep runtime transform no longer contains the canonical Google auth repair")
 require('if (!isNoCredentialError(mapped)) {' in google_auth, "canonical Google no-credential branch missing")
 
 # Purchase acknowledgement must be server-side and follow independent verification.

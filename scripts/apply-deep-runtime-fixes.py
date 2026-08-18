@@ -212,7 +212,6 @@ if 'const adminEntitlements = result?.data?.adminEntitlements' not in app:
 old_admin_write = '''      const next = clone(result.data);
       next.entitlements = next.entitlements || {};
       if (on) {
-        // Grant a 30-day Pro subscription from today.
         const expires = new Date();
         expires.setDate(expires.getDate() + 30);
         next.entitlements.trainingPro = true;
@@ -252,10 +251,7 @@ new_admin_write = '''      const admin = { ...(result.data.adminEntitlements || 
             aiCoachPro: !!admin.aiCoachPro,
             proExpiresAt: admin.proExpiresAt || null,
           };
-      await setDoc(result.ref, {
-        adminEntitlements: effective,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
+      await setDoc(result.ref, { adminEntitlements: effective, updatedAt: new Date().toISOString() }, { merge: true });
       const currentEntitlements = result.data.entitlements || {};
       const effectiveView = {
         trainingPro: !!effective.trainingPro || !!currentEntitlements.trainingPro,
@@ -267,6 +263,31 @@ new_admin_write = '''      const admin = { ...(result.data.adminEntitlements || 
       showToast(on ? `${plan === "all" ? "All Pro" : plan} granted for 30 days` : `${plan === "all" ? "All Pro" : plan} removed`);'''
 if old_admin_write in app:
     app = app.replace(old_admin_write, new_admin_write, 1)
+
+old_account_save = '''      const next = clone(result.data);
+      next.account = {
+        ...next.account,
+        name: editName.trim(),
+        phone: editPhone.trim(),
+      };
+      await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });
+      setResult({ ...result, data: next });'''
+new_account_save = '''      const accountPatch = {
+        ...(result.data.account || {}),
+        name: editName.trim(),
+        phone: editPhone.trim(),
+      };
+      await setDoc(
+        result.ref,
+        { account: accountPatch, updatedAt: new Date().toISOString() },
+        { merge: true },
+      );
+      setResult({
+        ...result,
+        data: { ...result.data, account: accountPatch },
+      });'''
+if old_account_save in app:
+    app = app.replace(old_account_save, new_account_save, 1)
 
 old_buttons = '''                <GreenButton
                   variant="outline"
@@ -349,7 +370,7 @@ app_path.write_text(app, encoding="utf-8")
 billing_path.write_text(billing, encoding="utf-8")
 
 # ------------------------------------------------------------
-# Google Auth: Credential Manager developer errors must remain visible.
+# Google Auth — Credential Manager developer errors must remain visible.
 # ------------------------------------------------------------
 google_path = Path("src/googleAuth.js")
 google = google_path.read_text(encoding="utf-8")
@@ -376,8 +397,8 @@ if "language," not in fresh_body:
 app_path.write_text(app, encoding="utf-8")
 
 # ------------------------------------------------------------
-# Paywall: a native purchase is only a transport success. The server-side
-# verify-purchase call below is the only step allowed to turn it into Pro.
+# Paywall: native purchase is only a transport success. The server-side
+# verify-purchase call is the only step allowed to turn it into Pro.
 # ------------------------------------------------------------
 app = app_path.read_text(encoding="utf-8")
 old_should_unlock = '''      // Only unlock after the native bridge returns an acknowledged purchase.
@@ -387,10 +408,8 @@ new_should_unlock = '''      // Native Billing only proves that Play returned a 
       const shouldUnlock = result?.success === true;'''
 if old_should_unlock in app:
     app = app.replace(old_should_unlock, new_should_unlock, 1)
-else:
-    # Build must not retain the old pre-verification gate.
-    if "const shouldUnlock = result?.success === true;" not in app:
-        raise SystemExit("Paywall purchase gate not found")
+elif "const shouldUnlock = result?.success === true;" not in app:
+    raise SystemExit("Paywall purchase gate not found")
 app_path.write_text(app, encoding="utf-8")
 
 # Final invariants.
@@ -404,5 +423,7 @@ if "const shouldUnlock = result?.success === true && result?.verified === true;"
     raise SystemExit("Paywall integrity failed: unlock gate still requires pre-server verification")
 if "const shouldUnlock = result?.success === true;" not in final_app:
     raise SystemExit("Paywall integrity failed: server verification gate not wired")
+if "await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" in final_app:
+    raise SystemExit("Admin profile editor still rewrites whole user documents")
 
 print("deep runtime fixes applied")

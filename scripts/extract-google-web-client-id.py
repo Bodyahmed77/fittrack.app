@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the Google OAuth configuration and extract the Web client ID."""
+"""Validate Google OAuth configuration and extract the Web client ID."""
 from __future__ import annotations
 
 import base64
@@ -11,7 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src" / "googleWebClientId.js"
 CAPACITOR_CONFIG = ROOT / "capacitor.config.json"
 EXPECTED_PACKAGE = "com.bodyahmed77.fiftyfit"
-EXPECTED_PLAY_SHA1 = "55384cf206854973c68dfba5be2a1bba8e048bee"
+EXPECTED_PLAY_SHA1S = {
+    "deployment": "e961b1050f3171d90877e9ff0cd156b960321a87",
+    "hybrid_classical": "55384cf206854973c68dfba5be2a1bba8e048bee",
+    "hybrid_pqc": "5fd40a5821b05277f2d0bd055918676f7912c131",
+}
 EXPECTED_UPLOAD_SHA1 = "c62c4d0c0ae964620887e464835de5196842131b"
 
 
@@ -50,7 +54,7 @@ def registered_sha1s(data: dict) -> set[str]:
         for oa in client.get("oauth_client") or []:
             if oa.get("client_type") != 1:
                 continue
-            cert = str(((oa.get("android_info") or {}).get("certificate_hash") or "")).replace(":", "").lower()
+            cert = str(((oa.get("android_info") or {}).get("certificate_hash") or "")).replace(":", "").replace(" ", "").lower()
             if cert:
                 certs.add(cert)
     return certs
@@ -85,14 +89,8 @@ def main() -> None:
         raise SystemExit(f"No Android client for {EXPECTED_PACKAGE} in google-services.json")
 
     certs = registered_sha1s(data)
-    missing = [
-        label
-        for label, value in (
-            ("Play App Signing SHA-1", EXPECTED_PLAY_SHA1),
-            ("Upload SHA-1", EXPECTED_UPLOAD_SHA1),
-        )
-        if value not in certs
-    ]
+    required = {**EXPECTED_PLAY_SHA1S, "upload": EXPECTED_UPLOAD_SHA1}
+    missing = [label for label, value in required.items() if value not in certs]
     if missing:
         raise SystemExit(
             "google-services.json is missing required OAuth SHA-1 entries: "
@@ -111,10 +109,18 @@ def main() -> None:
     OUT.write_text(content, encoding="utf-8")
     inject_capacitor_config(client_id)
     print(f"Google OAuth preflight OK: project={project_id}, package={EXPECTED_PACKAGE}")
-    print(f"Play SHA-1 present: {EXPECTED_PLAY_SHA1}")
-    print(f"Upload SHA-1 present: {EXPECTED_UPLOAD_SHA1}")
+    for label, value in REQUIRED_LOG_ORDER:
+        print(f"{label} SHA-1 present: {value}")
     print(f"Web client: …{client_id[-24:]}")
     print("Capacitor FirebaseAuthentication googleWebClientId injected")
+
+
+REQUIRED_LOG_ORDER = [
+    ("Deployment", EXPECTED_PLAY_SHA1S["deployment"]),
+    ("Hybrid Classical", EXPECTED_PLAY_SHA1S["hybrid_classical"]),
+    ("Hybrid PQC", EXPECTED_PLAY_SHA1S["hybrid_pqc"]),
+    ("Upload", EXPECTED_UPLOAD_SHA1),
+]
 
 
 if __name__ == "__main__":

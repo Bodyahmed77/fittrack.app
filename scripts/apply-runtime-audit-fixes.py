@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def replace_once(text: str, old: str, new: str, label: str):
@@ -44,8 +45,38 @@ app = replace_once(
     "Firestore read error state",
 )
 
-old_persist = '''      const persisted = Object.fromEntries(\n        Object.entries(next).filter(\n          ([key]) =>\n            key !== \"customTrainingPlan\" &&\n            key !== \"customNutritionPlan\",\n        ),\n      );\n      verifiedEntitlementsRef.current = next.entitlements;'''
-new_persist = '''      const persistedBase = Object.fromEntries(\n        Object.entries(next).filter(\n          ([key]) =>\n            key !== \"entitlements\" &&\n            key !== \"customTrainingPlan\" &&\n            key !== \"customNutritionPlan\",\n        ),\n      );\n      // Firestore rules deliberately make entitlements server-authoritative.\n      // Existing profiles must never receive client-written Pro flags. A\n      // missing profile may only be created with the exact free entitlement\n      // object required by firestore.rules.\n      const persisted = profileExistsRef.current\n        ? persistedBase\n        : {\n            ...persistedBase,\n            entitlements: {\n              trainingPro: false,\n              nutritionPro: false,\n              aiCoachPro: false,\n              proExpiresAt: null,\n            },\n          };\n      verifiedEntitlementsRef.current = next.entitlements;'''
+old_persist = '''      const persisted = Object.fromEntries(
+        Object.entries(next).filter(
+          ([key]) =>
+            key !== "customTrainingPlan" &&
+            key !== "customNutritionPlan",
+        ),
+      );
+      verifiedEntitlementsRef.current = next.entitlements;'''
+new_persist = '''      const persistedBase = Object.fromEntries(
+        Object.entries(next).filter(
+          ([key]) =>
+            key !== "entitlements" &&
+            key !== "customTrainingPlan" &&
+            key !== "customNutritionPlan",
+        ),
+      );
+      // Firestore rules deliberately make entitlements server-authoritative.
+      // Existing profiles must never receive client-written Pro flags. A
+      // missing profile may only be created with the exact free entitlement
+      // object required by firestore.rules.
+      const persisted = profileExistsRef.current
+        ? persistedBase
+        : {
+            ...persistedBase,
+            entitlements: {
+              trainingPro: false,
+              nutritionPro: false,
+              aiCoachPro: false,
+              proExpiresAt: null,
+            },
+          };
+      verifiedEntitlementsRef.current = next.entitlements;'''
 app = replace_once(app, old_persist, new_persist, "entitlement-safe Firestore payload")
 
 app = replace_once(
@@ -55,8 +86,28 @@ app = replace_once(
     "profile exists ref after successful write",
 )
 
-old_onboarding_read = '''    try {\n      const snap = await getDoc(doc(db, \"users\", uid));\n      base = snap.exists() ? { ...freshState(), ...snap.data() } : clone(data);\n    } catch (e) {\n      // getDoc is best-effort here. useAppData already has a live, Firestore-backed\n      // snapshot and setData below is the authoritative persistence boundary.\n      // A transient read failure must not trap a brand-new user in onboarding.\n      console.warn(\"[onboarding] direct profile read failed; using trusted app state\", e);\n      base = clone(data);\n    }'''
-new_onboarding_read = '''    try {\n      const snap = await getDoc(doc(db, \"users\", uid));\n      if (!snap.exists()) {\n        setErr(ar ? \"لم يتم العثور على ملف حسابك — حاول تسجيل الدخول مرة أخرى\" : \"Your profile could not be found — please sign in again\");\n        return;\n      }\n      base = { ...freshState(), ...snap.data() };\n    } catch (e) {\n      console.error(\"[onboarding] direct profile read failed\", e);\n      setErr(ar ? \"تعذر قراءة بيانات حسابك — حاول مرة أخرى\" : \"Couldn’t read your profile — please try again\");\n      return;\n    }'''
+old_onboarding_read = '''    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      base = snap.exists() ? { ...freshState(), ...snap.data() } : clone(data);
+    } catch (e) {
+      // getDoc is best-effort here. useAppData already has a live, Firestore-backed
+      // snapshot and setData below is the authoritative persistence boundary.
+      // A transient read failure must not trap a brand-new user in onboarding.
+      console.warn("[onboarding] direct profile read failed; using trusted app state", e);
+      base = clone(data);
+    }'''
+new_onboarding_read = '''    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      if (!snap.exists()) {
+        setErr(ar ? "لم يتم العثور على ملف حسابك — حاول تسجيل الدخول مرة أخرى" : "Your profile could not be found — please sign in again");
+        return;
+      }
+      base = { ...freshState(), ...snap.data() };
+    } catch (e) {
+      console.error("[onboarding] direct profile read failed", e);
+      setErr(ar ? "تعذر قراءة بيانات حسابك — حاول مرة أخرى" : "Couldn’t read your profile — please try again");
+      return;
+    }'''
 app = replace_once(app, old_onboarding_read, new_onboarding_read, "onboarding read must fail closed")
 
 app = replace_once(
@@ -82,15 +133,85 @@ app = replace_once(
 
 # Insert a small fail-closed Firestore recovery screen before the app root.
 marker = "/* ============================== APP ROOT ============================== */"
-insert = '''function DataErrorScreen({ error }) {\n  const { C, lang } = useUI();\n  const ar = lang === \"ar\";\n  return (\n    <div\n      dir={ar ? \"rtl\" : \"ltr\"}\n      style={{\n        minHeight: \"100vh\",\n        display: \"flex\",\n        flexDirection: \"column\",\n        alignItems: \"center\",\n        justifyContent: \"center\",\n        padding: 28,\n        background: C.bg,\n        textAlign: \"center\",\n      }}\n    >\n      <WifiOff size={42} color={C.danger} />\n      <div style={{ color: C.text, fontSize: 20, fontWeight: 800, marginTop: 16 }}>\n        {ar ? \"تعذر تحميل بيانات حسابك\" : \"Couldn’t load your account data\"}\n      </div>\n      <div style={{ color: C.sub, fontSize: 13, lineHeight: 1.6, marginTop: 10, maxWidth: 330 }}>\n        {ar\n          ? \"لم نغيّر بياناتك محليًا لأن قاعدة البيانات لم تؤكد القراءة. حاول مرة أخرى.\"\n          : \"Your data was not changed locally because Firestore did not confirm the read. Try again.\"}\n      </div>\n      <div style={{ color: C.sub2, fontSize: 11, marginTop: 12, maxWidth: 330, wordBreak: \"break-word\" }}>\n        {String(error?.code || error?.message || \"firestore_read_failed\")}\n      </div>\n      <GreenButton onClick={() => window.location.reload()} style={{ marginTop: 28, maxWidth: 320 }}>\n        {ar ? \"إعادة المحاولة\" : \"Retry\"}\n      </GreenButton>\n    </div>\n  );\n}\n\n'''
+insert = '''function DataErrorScreen({ error }) {
+  const { C, lang } = useUI();
+  const ar = lang === "ar";
+  return (
+    <div
+      dir={ar ? "rtl" : "ltr"}
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 28,
+        background: C.bg,
+        textAlign: "center",
+      }}
+    >
+      <WifiOff size={42} color={C.danger} />
+      <div style={{ color: C.text, fontSize: 20, fontWeight: 800, marginTop: 16 }}>
+        {ar ? "تعذر تحميل بيانات حسابك" : "Couldn’t load your account data"}
+      </div>
+      <div style={{ color: C.sub, fontSize: 13, lineHeight: 1.6, marginTop: 10, maxWidth: 330 }}>
+        {ar
+          ? "لم نغيّر بياناتك محليًا لأن قاعدة البيانات لم تؤكد القراءة. حاول مرة أخرى."
+          : "Your data was not changed locally because Firestore did not confirm the read. Try again."}
+      </div>
+      <div style={{ color: C.sub2, fontSize: 11, marginTop: 12, maxWidth: 330, wordBreak: "break-word" }}>
+        {String(error?.code || error?.message || "firestore_read_failed")}
+      </div>
+      <GreenButton onClick={() => window.location.reload()} style={{ marginTop: 28, maxWidth: 320 }}>
+        {ar ? "إعادة المحاولة" : "Retry"}
+      </GreenButton>
+    </div>
+  );
+}
+
+'''
 if app.count(marker) != 1:
     raise SystemExit("APP ROOT marker not found exactly once")
 app = app.replace(marker, insert + marker, 1)
 
-app = app.replace(
-    "package=com.fittrack.app",
-    "package=com.bodyahmed77.fiftyfit",
+app = app.replace("package=com.fittrack.app", "package=com.bodyahmed77.fiftyfit")
+
+# Admin profile edits must be field-scoped. Never write a stale snapshot of the
+# whole user document from the admin screen, because that could overwrite a
+# newer server-verified entitlement or admin grant.
+save_account_pattern = re.compile(
+    r'  const saveAccount = async \(\) => \{.*?\n  \};',
+    re.S,
 )
+safe_save_account = '''  const saveAccount = async () => {
+    if (!result) return;
+    setSaving(true);
+    try {
+      const accountPatch = {
+        ...(result.data.account || {}),
+        name: editName.trim(),
+        phone: editPhone.trim(),
+      };
+      await setDoc(
+        result.ref,
+        { account: accountPatch, updatedAt: new Date().toISOString() },
+        { merge: true },
+      );
+      setResult({
+        ...result,
+        data: { ...result.data, account: accountPatch },
+      });
+      showToast(ar ? "تم حفظ بيانات المستخدم" : "User details saved");
+    } catch (e) {
+      console.error("admin save failed", e);
+      showToast(ar ? "فشل الحفظ" : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };'''
+app, save_count = save_account_pattern.subn(safe_save_account, app, count=1)
+if save_count != 1:
+    raise SystemExit(f"admin profile save patch: expected 1 match, found {save_count}")
 
 app_path.write_text(app, encoding="utf-8")
 
@@ -99,8 +220,17 @@ app_path.write_text(app, encoding="utf-8")
 # ------------------------------------------------------------
 google_path = Path("src/googleAuth.js")
 google = google_path.read_text(encoding="utf-8")
-old_google = '''  const initial = typeof createInitialState === \"function\"\n    ? createInitialState(user, localLang)\n    : minimalInitialState(user, localLang);\n  initial.entitlements = {'''
-new_google = '''  const initial = typeof createInitialState === \"function\"\n    ? createInitialState(user, localLang)\n    : minimalInitialState(user, localLang);\n  // firestore.rules rejects admin-managed plan fields on client-created docs.\n  delete initial.customTrainingPlan;\n  delete initial.customNutritionPlan;\n  initial.entitlements = {'''
+old_google = '''  const initial = typeof createInitialState === "function"
+    ? createInitialState(user, localLang)
+    : minimalInitialState(user, localLang);
+  initial.entitlements = {'''
+new_google = '''  const initial = typeof createInitialState === "function"
+    ? createInitialState(user, localLang)
+    : minimalInitialState(user, localLang);
+  // firestore.rules rejects admin-managed plan fields on client-created docs.
+  delete initial.customTrainingPlan;
+  delete initial.customNutritionPlan;
+  initial.entitlements = {'''
 if google.count(old_google) != 1:
     raise SystemExit(f"Google create sanitization: expected 1 match, found {google.count(old_google)}")
 google = google.replace(old_google, new_google, 1)

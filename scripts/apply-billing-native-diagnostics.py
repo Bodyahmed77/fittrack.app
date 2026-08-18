@@ -14,9 +14,41 @@ if version != "8.1.0":
 text = PLUGIN.read_text(encoding="utf-8")
 original = text
 
-# PBL 9 exposes richer error context through BillingResult.getSubResponseCode().
-# Keep the existing public plugin API but surface the extra signal in the native
-# rejection text so the React layer can diagnose Play failures without logcat.
+# PBL 9 compatibility migration for the upstream capacitor-billing 8.1.0 native bridge.
+# The upstream plugin still ships PBL7-era APIs, so pinning the dependency alone is
+# insufficient. Migrate those APIs here before Gradle compiles the generated project.
+imports = [
+    "import com.android.billingclient.api.PendingPurchasesParams;",
+    "import com.android.billingclient.api.QueryProductDetailsResult;",
+]
+for imp in imports:
+    if imp not in text:
+        marker = "import com.android.billingclient.api.QueryProductDetailsParams;\n"
+        if marker not in text:
+            raise SystemExit("BillingPlugin import insertion point not found")
+        text = text.replace(marker, marker + imp + "\n", 1)
+
+# PBL9 requires explicit pending-purchase parameters and benefits from automatic
+# BillingClient reconnection. Keep one-time products enabled because the plugin's
+# public API supports INAPP as well as SUBS.
+old_builder = ".enablePendingPurchases()\n                .build();"
+new_builder = ".enablePendingPurchases(\n                        PendingPurchasesParams.newBuilder()\n                                .enableOneTimeProducts()\n                                .build())\n                .enableAutoServiceReconnection()\n                .build();"
+if old_builder in text:
+    text = text.replace(old_builder, new_builder, 1)
+elif ".enablePendingPurchases()" in text:
+    raise SystemExit("Found unrecognized PBL7 enablePendingPurchases() form")
+
+# PBL9 changed queryProductDetailsAsync's callback from List<ProductDetails> to
+# QueryProductDetailsResult. There are exactly two query call sites in this plugin:
+# querySkuDetails and launchBillingFlow.
+old_callback = "billingClient.queryProductDetailsAsync(params, (billingResult1, productDetailsList) -> {"
+new_callback = "billingClient.queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) -> {\n                        List<ProductDetails> productDetailsList = queryProductDetailsResult == null\n                                ? new ArrayList<>()\n                                : queryProductDetailsResult.getProductDetailsList();"
+count = text.count(old_callback)
+if count != 2:
+    raise SystemExit(f"Expected exactly 2 PBL7 query callbacks, found {count}")
+text = text.replace(old_callback, new_callback)
+
+# Native diagnostics: preserve the real BillingResult values through Capacitor.
 replacements = [
     (
         'call.reject("Error retrieving product details: " + suffix);',
@@ -66,11 +98,15 @@ if 'ret.put("subscription_offer_count"' not in text:
     text = text.replace(needle, insert, 1)
 
 required = [
-    'FIFTYFIT_BILLING_ERROR',
-    'BillingResponseCode=',
-    'getSubResponseCode()',
-    'String.valueOf(code)',
-    'String.valueOf(billingResult2.getResponseCode())',
+    "import com.android.billingclient.api.PendingPurchasesParams;",
+    "import com.android.billingclient.api.QueryProductDetailsResult;",
+    ".enablePendingPurchases(\n                        PendingPurchasesParams.newBuilder()",
+    ".enableAutoServiceReconnection()",
+    "queryProductDetailsResult.getProductDetailsList()",
+    "FIFTYFIT_BILLING_ERROR",
+    "BillingResponseCode=",
+    "getSubResponseCode()",
+    "String.valueOf(billingResult2.getResponseCode())",
     'ret.put("subscription_offer_count"',
     'ret.put("base_plan_id"',
     'ret.put("offer_id"',
@@ -78,10 +114,15 @@ required = [
 ]
 missing = [x for x in required if x not in text]
 if missing:
-    raise SystemExit("Billing native diagnostics incomplete: " + ", ".join(missing))
+    raise SystemExit("Billing native PBL9 diagnostics/migration incomplete: " + ", ".join(missing))
+
+if ".enablePendingPurchases()" in text:
+    raise SystemExit("PBL7 no-arg enablePendingPurchases() still present after migration")
+if text.count("queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) ->") != 2:
+    raise SystemExit("PBL9 queryProductDetailsAsync migration did not produce exactly two migrated callbacks")
 
 if text == original:
-    print("Billing native diagnostics already applied")
+    print("Billing native PBL9 compatibility + diagnostics already applied")
 else:
     PLUGIN.write_text(text, encoding="utf-8")
-    print("Applied capacitor-billing 8.1.0 native diagnostics with PBL 9 sub-response support")
+    print("Applied capacitor-billing 8.1.0 native PBL9 compatibility + diagnostics")

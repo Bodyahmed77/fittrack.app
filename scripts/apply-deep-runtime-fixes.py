@@ -78,6 +78,33 @@ if "const adminEntitlementsRef = useRef(null);" not in app:
         "admin entitlement ref declaration",
     )
 
+# Server-managed admin grants must never inherit old Play-verified entitlements.
+if "function normalizeAdminEntitlements(value)" not in app:
+    helper_marker = '  const adminEntitlementsRef = useRef(null);\n  const latestLocalWriteAtRef = useRef(null);'
+    helper = '''  const adminEntitlementsRef = useRef(null);
+  const latestLocalWriteAtRef = useRef(null);
+
+  const normalizeAdminEntitlements = useCallback((value) => {
+    const source = value && typeof value === "object" ? value : {};
+    const expiresAt = source.proExpiresAt ? Date.parse(`${source.proExpiresAt}T23:59:59.999Z`) : NaN;
+    const expired = Number.isFinite(expiresAt) && Date.now() > expiresAt;
+    if (expired) {
+      return {
+        trainingPro: false,
+        nutritionPro: false,
+        aiCoachPro: false,
+        proExpiresAt: null,
+      };
+    }
+    return {
+      trainingPro: !!source.trainingPro,
+      nutritionPro: !!source.nutritionPro,
+      aiCoachPro: !!source.aiCoachPro,
+      proExpiresAt: source.proExpiresAt || null,
+    };
+  }, []);'''
+    app = replace_once(app, helper_marker, helper, "admin entitlement normalization helper")
+
 reset_new = '      verifiedEntitlementsRef.current = null;\n      profileExistsRef.current = false;\n      adminEntitlementsRef.current = null;\n      return;'
 if reset_new not in app:
     reset_old = '      verifiedEntitlementsRef.current = null;\n      profileExistsRef.current = false;\n      return;'
@@ -95,13 +122,8 @@ if "const legacyAdmin = parsed.adminEntitlements" not in app:
     snapshot_new = '''        const fresh = freshState();
         profileExistsRef.current = snap.exists();
         const parsed = snap.exists() ? snap.data() : {};
-        const legacyAdmin = parsed.adminEntitlements || fresh.entitlements;
-        adminEntitlementsRef.current = {
-          trainingPro: !!legacyAdmin?.trainingPro,
-          nutritionPro: !!legacyAdmin?.nutritionPro,
-          aiCoachPro: !!legacyAdmin?.aiCoachPro,
-          proExpiresAt: legacyAdmin?.proExpiresAt || null,
-        };'''
+        const legacyAdmin = parsed.adminEntitlements || {};
+        adminEntitlementsRef.current = normalizeAdminEntitlements(legacyAdmin);'''
     app = replace_once(app, snapshot_old, snapshot_new, "admin entitlement snapshot load")
 
 if "...(adminEntitlementsRef.current || {})" not in app:
@@ -115,7 +137,7 @@ if "...(adminEntitlementsRef.current || {})" not in app:
             ...(verifiedEntitlementsRef.current || {}),
           },
           adminEntitlements: {
-            ...(adminEntitlementsRef.current || fresh.entitlements),
+            ...(adminEntitlementsRef.current || {}),
           },'''
     app = replace_once(app, effective_old, effective_new, "effective entitlement union")
 
@@ -139,17 +161,19 @@ if "adminEntitlements: { ...(adminEntitlementsRef.current || {}) }" not in app:
       aiCoachPro: !!entitlements?.aiCoachPro,
       proExpiresAt: entitlements?.proExpiresAt || null,
     };
+    const admin = normalizeAdminEntitlements(adminEntitlementsRef.current || {});
+    adminEntitlementsRef.current = admin;
     setDataRaw((current) => ({
       ...current,
       entitlements: {
-        trainingPro: !!adminEntitlementsRef.current?.trainingPro || !!verifiedEntitlementsRef.current.trainingPro,
-        nutritionPro: !!adminEntitlementsRef.current?.nutritionPro || !!verifiedEntitlementsRef.current.nutritionPro,
-        aiCoachPro: !!adminEntitlementsRef.current?.aiCoachPro || !!verifiedEntitlementsRef.current.aiCoachPro,
-        proExpiresAt: adminEntitlementsRef.current?.proExpiresAt || verifiedEntitlementsRef.current.proExpiresAt || null,
+        trainingPro: !!admin.trainingPro || !!verifiedEntitlementsRef.current.trainingPro,
+        nutritionPro: !!admin.nutritionPro || !!verifiedEntitlementsRef.current.nutritionPro,
+        aiCoachPro: !!admin.aiCoachPro || !!verifiedEntitlementsRef.current.aiCoachPro,
+        proExpiresAt: admin.proExpiresAt || verifiedEntitlementsRef.current.proExpiresAt || null,
       },
-      adminEntitlements: { ...(adminEntitlementsRef.current || {}) },
+      adminEntitlements: { ...admin },
     }));
-  }, []);'''
+  }, [normalizeAdminEntitlements]);'''
     app = replace_once(app, verified_old, verified_new, "verified entitlement union")
 
 if 'key !== "adminEntitlements"' not in app:
@@ -215,15 +239,9 @@ new_admin_write = '''      const admin = { ...(result.data.adminEntitlements || 
         if (plan === "all" || plan === "ai") admin.aiCoachPro = false;
         if (!admin.trainingPro && !admin.nutritionPro && !admin.aiCoachPro) admin.proExpiresAt = null;
       }
-      const effective = {
-        trainingPro: !!admin.trainingPro,
-        nutritionPro: !!admin.nutritionPro,
-        aiCoachPro: !!admin.aiCoachPro,
-        proExpiresAt: admin.proExpiresAt || null,
-      };
+      const effective = normalizeAdminEntitlements(admin);
       await setDoc(result.ref, {
         adminEntitlements: effective,
-        entitlements: effective,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
       setResult({ ...result, data: { ...result.data, adminEntitlements: effective, entitlements: effective } });
@@ -269,7 +287,7 @@ app_path.write_text(app, encoding="utf-8")
 
 
 # ------------------------------------------------------------
-# billing.js — expose native diagnostics and make offer-token absence fatal
+# billing.js — native diagnostics and offer-token validation
 # ------------------------------------------------------------
 billing_path = Path("src/billing.js")
 billing = billing_path.read_text(encoding="utf-8")
@@ -318,18 +336,12 @@ billing_path.write_text(billing, encoding="utf-8")
 
 # ------------------------------------------------------------
 # Google Auth — Credential Manager developer errors must remain visible.
-# They are configuration failures, not equivalent to "no credential".
 # ------------------------------------------------------------
 google_path = Path("src/googleAuth.js")
 google = google_path.read_text(encoding="utf-8")
 google = google.replace(
     'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {',
     'if (!isNoCredentialError(mapped)) {',
-    1,
-)
-google = google.replace(
-    'if (!isNoCredentialError(mapped)) {\n',
-    'if (!isNoCredentialError(mapped)) {\n',
     1,
 )
 google_path.write_text(google, encoding="utf-8")

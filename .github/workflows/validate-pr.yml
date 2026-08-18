@@ -75,8 +75,15 @@ jobs:
         run: |
           set -euo pipefail
           PLUGIN='node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java'
+          PLUGIN_GRADLE='node_modules/capacitor-billing/android/build.gradle'
           test -f "$PLUGIN"
+          test -f "$PLUGIN_GRADLE"
           grep -q 'com.android.billingclient:billing:9.1.0' android/app/build.gradle
+          grep -q 'com.android.billingclient:billing:9.1.0' "$PLUGIN_GRADLE"
+          if grep -q 'com.android.billingclient:billing:7.1.0' "$PLUGIN_GRADLE"; then
+            echo 'PBL7 billing dependency remains in capacitor-billing module'
+            exit 1
+          fi
           if grep -Eq '\.enablePendingPurchases\(\)' "$PLUGIN"; then
             echo 'PBL7 no-arg enablePendingPurchases() remains in patched native source'
             exit 1
@@ -85,7 +92,16 @@ jobs:
           grep -q 'QueryProductDetailsResult' "$PLUGIN"
           grep -q 'getProductDetailsList()' "$PLUGIN"
           grep -q 'enableAutoServiceReconnection()' "$PLUGIN"
+          grep -q 'getOnPurchasesUpdatedSubResponseCode()' "$PLUGIN"
           grep -q 'FIFTYFIT_BILLING_ERROR' "$PLUGIN"
+
+      - name: Inspect resolved Play Billing version for capacitor-billing
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew :capacitor-billing:dependencyInsight \
+            --dependency com.android.billingclient:billing \
+            --configuration debugCompileClasspath
 
       - name: Compile Android debug artifact (Billing/PBL compatibility gate)
         working-directory: android

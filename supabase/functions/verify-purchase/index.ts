@@ -7,8 +7,8 @@
 // service account, and only writes an entitlement if Google confirms:
 //   - the token is valid for THIS app's package name
 //   - the subscription line item's productId matches what the client claims
-//   - the subscription is in an entitlement-granting state
-//     (ACTIVE or IN_GRACE_PERIOD)
+//   - the subscription currently has paid entitlement time remaining
+//     (ACTIVE / IN_GRACE_PERIOD, or CANCELED with a future expiryTime)
 // A fabricated or arbitrary purchaseToken is rejected by Google's API
 // (404/400) and NO entitlement is written.
 //
@@ -71,6 +71,13 @@ function log(event: string, extra: Record<string, unknown> = {}) {
   } catch {
     console.log("[VERIFY_PURCHASE]", event);
   }
+}
+
+function hasPaidEntitlement(state: string, expiryTime: string | null): boolean {
+  if (ENTITLING_STATES.has(state)) return true;
+  if (state !== "SUBSCRIPTION_STATE_CANCELED" || !expiryTime) return false;
+  const expiryMs = Date.parse(expiryTime);
+  return Number.isFinite(expiryMs) && expiryMs > Date.now();
 }
 
 async function verifyFirebaseIdToken(idToken: string) {
@@ -335,12 +342,18 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (!ENTITLING_STATES.has(verification.state)) {
-    log("purchase_rejected_not_entitling", { uid, productId, state: verification.state });
+  if (!hasPaidEntitlement(verification.state, verification.expiryTime)) {
+    log("purchase_rejected_not_entitling", {
+      uid,
+      productId,
+      state: verification.state,
+      expiryTime: verification.expiryTime,
+    });
     return json(402, {
       error: "purchase_not_active",
       message: "This subscription is not currently active.",
       subscriptionState: verification.state,
+      expiresAt: verification.expiryTime,
     });
   }
 

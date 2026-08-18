@@ -302,7 +302,6 @@ new_buttons = '''                <GreenButton variant="outline" onClick={() => s
 if old_buttons in app:
     app = app.replace(old_buttons, new_buttons, 1)
 
-
 # ------------------------------------------------------------
 # Billing source hardening
 # ------------------------------------------------------------
@@ -326,7 +325,6 @@ new_billing = '''  const err = new Error(message);
   return err;'''
 if old_billing in billing:
     billing = billing.replace(old_billing, new_billing, 1)
-
 old_launch = '''    try {
       result = await billing.launchBillingFlow({
         product: productId,
@@ -339,7 +337,6 @@ new_launch = '''    if (!selectedOfferToken) {
       err.productId = productId;
       throw err;
     }
-
     try {
       result = await billing.launchBillingFlow({
         product: productId,
@@ -348,10 +345,11 @@ new_launch = '''    if (!selectedOfferToken) {
       });'''
 if old_launch in billing:
     billing = billing.replace(old_launch, new_launch, 1)
+app_path.write_text(app, encoding="utf-8")
 billing_path.write_text(billing, encoding="utf-8")
 
 # ------------------------------------------------------------
-# Google Auth — Credential Manager developer errors must remain visible.
+# Google Auth: Credential Manager developer errors must remain visible.
 # ------------------------------------------------------------
 google_path = Path("src/googleAuth.js")
 google = google_path.read_text(encoding="utf-8")
@@ -362,88 +360,49 @@ google = google.replace(
 )
 google_path.write_text(google, encoding="utf-8")
 
-
 # ------------------------------------------------------------
-# Preserve the two integrity fixes that used to live in the now-retired
-# repair script: explicit Google-account language and legacy admin safety.
+# Preserve former repair-stage invariants in this canonical transform.
 # ------------------------------------------------------------
 app = app_path.read_text(encoding="utf-8")
-
 if "function freshState(language = null)" not in app:
-    app = replace_once(
-        app,
-        "function freshState() {",
-        "function freshState(language = null) {",
-        "freshState language parameter",
-    )
-
+    app = replace_once(app, "function freshState() {", "function freshState(language = null) {", "freshState language parameter")
 fresh_start = app.index("function freshState(language = null)")
 fresh_end = app.index("/* ============================== AUTH + FIRESTORE STORAGE", fresh_start)
 fresh_body = app[fresh_start:fresh_end]
 if "language," not in fresh_body:
     if fresh_body.count("      language: null,") != 1:
         raise SystemExit("freshState language field missing or ambiguous")
-    replacement = fresh_body.replace("      language: null,", "      language,", 1)
-    app = app[:fresh_start] + replacement + app[fresh_end:]
+    app = app[:fresh_start] + fresh_body.replace("      language: null,", "      language,", 1) + app[fresh_end:]
+app_path.write_text(app, encoding="utf-8")
 
-legacy_admin_write_old = '''      await setDoc(result.ref, {
-        adminEntitlements: effective,
-        entitlements: effective,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      setResult({ ...result, data: { ...result.data, adminEntitlements: effective, entitlements: effective } });'''
-legacy_admin_write_new = '''      await setDoc(result.ref, {
-        adminEntitlements: effective,
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      const currentEntitlements = result.data.entitlements || {};
-      const effectiveView = {
-        trainingPro: !!effective.trainingPro || !!currentEntitlements.trainingPro,
-        nutritionPro: !!effective.nutritionPro || !!currentEntitlements.nutritionPro,
-        aiCoachPro: !!effective.aiCoachPro || !!currentEntitlements.aiCoachPro,
-        proExpiresAt: effective.proExpiresAt || currentEntitlements.proExpiresAt || null,
-      };
-      setResult({ ...result, data: { ...result.data, adminEntitlements: effective, entitlements: effectiveView } });'''
-if legacy_admin_write_old in app:
-    app = app.replace(legacy_admin_write_old, legacy_admin_write_new, 1)
+# ------------------------------------------------------------
+# Paywall: a native purchase is only a transport success. The server-side
+# verify-purchase call below is the only step allowed to turn it into Pro.
+# ------------------------------------------------------------
+app = app_path.read_text(encoding="utf-8")
+old_should_unlock = '''      // Only unlock after the native bridge returns an acknowledged purchase.
+      const shouldUnlock = result?.success === true && result?.verified === true;'''
+new_should_unlock = '''      // Native Billing only proves that Play returned a purchase token.
+      // Server-side verify-purchase is the authoritative entitlement gate below.
+      const shouldUnlock = result?.success === true;'''
+if old_should_unlock in app:
+    app = app.replace(old_should_unlock, new_should_unlock, 1)
+else:
+    # Build must not retain the old pre-verification gate.
+    if "const shouldUnlock = result?.success === true;" not in app:
+        raise SystemExit("Paywall purchase gate not found")
+app_path.write_text(app, encoding="utf-8")
 
-legacy_admin_state_old = '''  const adminEntitlements = result?.data?.adminEntitlements || {};
-  const proActive =
-    !!adminEntitlements.trainingPro ||
-    !!adminEntitlements.nutritionPro ||
-    !!adminEntitlements.aiCoachPro;'''
-legacy_admin_state_new = '''  const adminEntitlements = result?.data?.adminEntitlements || {};
-  const verifiedEntitlements = result?.data?.entitlements || {};
-  const proActive =
-    !!adminEntitlements.trainingPro ||
-    !!adminEntitlements.nutritionPro ||
-    !!adminEntitlements.aiCoachPro ||
-    !!verifiedEntitlements.trainingPro ||
-    !!verifiedEntitlements.nutritionPro ||
-    !!verifiedEntitlements.aiCoachPro;'''
-if legacy_admin_state_old in app:
-    app = app.replace(legacy_admin_state_old, legacy_admin_state_new, 1)
-
-# Canonical assertions: the final transformed source must not hide developer errors,
-# must persist explicit signup language, and must not migrate old purchase entitlements
-# into adminEntitlements.
+# Final invariants.
 final_google = google_path.read_text(encoding="utf-8")
 if 'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {' in final_google:
     raise SystemExit("Google auth integrity failed: developer_error fallback still present")
-if 'if (!isNoCredentialError(mapped)) {' not in final_google:
-    raise SystemExit("Google auth integrity failed: canonical error branch missing")
-
-app_path.write_text(app, encoding="utf-8")
-
 final_app = app_path.read_text(encoding="utf-8")
-fresh_start = final_app.index("function freshState(language = null)")
-fresh_end = final_app.index("/* ============================== AUTH + FIRESTORE STORAGE", fresh_start)
-fresh_body = final_app[fresh_start:fresh_end]
-if "language," not in fresh_body or "language: null" in fresh_body:
-    raise SystemExit("Language integrity failed: freshState is not canonical")
-if "const legacyAdmin = parsed.adminEntitlements || {};" not in final_app:
-    raise SystemExit("Admin entitlement integrity failed: legacy purchase entitlements must not become admin grants")
-if "adminEntitlements: effective" not in final_app:
-    raise SystemExit("Admin entitlement integrity failed: admin grants are not persisted separately")
+if "function freshState(language = null)" not in final_app:
+    raise SystemExit("Language integrity failed: freshState signature missing")
+if "const shouldUnlock = result?.success === true && result?.verified === true;" in final_app:
+    raise SystemExit("Paywall integrity failed: unlock gate still requires pre-server verification")
+if "const shouldUnlock = result?.success === true;" not in final_app:
+    raise SystemExit("Paywall integrity failed: server verification gate not wired")
 
 print("deep runtime fixes applied")

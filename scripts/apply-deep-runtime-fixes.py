@@ -269,7 +269,7 @@ app_path.write_text(app, encoding="utf-8")
 
 
 # ------------------------------------------------------------
-# billing.js — retain native diagnostics and make offer-token failures explicit
+# billing.js — expose native diagnostics and make offer-token absence fatal
 # ------------------------------------------------------------
 billing_path = Path("src/billing.js")
 billing = billing_path.read_text(encoding="utf-8")
@@ -317,20 +317,19 @@ billing_path.write_text(billing, encoding="utf-8")
 
 
 # ------------------------------------------------------------
-# googleAuth.js — developer error 10 is a Credential Manager/config failure;
-# allow compatibility fallback so the user can still authenticate while the
-# native config is being corrected.
+# Google Auth — Credential Manager developer errors must remain visible.
+# They are configuration failures, not equivalent to "no credential".
 # ------------------------------------------------------------
 google_path = Path("src/googleAuth.js")
 google = google_path.read_text(encoding="utf-8")
 google = google.replace(
-    'if (!isNoCredentialError(mapped)) {',
     'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {',
+    'if (!isNoCredentialError(mapped)) {',
     1,
 )
 google = google.replace(
-    'console.warn("[GoogleSignIn] no authorized Credential Manager credential; using legacy chooser");',
-    'console.warn("[GoogleSignIn] Credential Manager unavailable; using legacy chooser", { code: mapped?.code, googleStatusCode: mapped?.googleStatusCode, nativeCode: mapped?.nativeCode });',
+    'if (!isNoCredentialError(mapped)) {\n',
+    'if (!isNoCredentialError(mapped)) {\n',
     1,
 )
 google_path.write_text(google, encoding="utf-8")

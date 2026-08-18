@@ -16,6 +16,7 @@ package = read("package.json")
 billing = read("src/billing.js")
 register_purchase = read("src/registerPurchase.js")
 google_auth = read("src/googleAuth.js")
+app = read("src/App.jsx")
 deep_fixes = read("scripts/apply-deep-runtime-fixes.py")
 runtime_audit = read("scripts/apply-runtime-audit-fixes.py")
 
@@ -47,6 +48,21 @@ require(register_verify in register_purchase, "server verification request missi
 require(register_ack in register_purchase, "acknowledgement is not sequenced after verification")
 require(register_purchase.index(register_verify) < register_purchase.index(register_ack),
         "acknowledgement appears before server verification")
+
+# The Paywall must treat the native purchase as a transport success only. The
+# registerServerEntitlement call below it is the authoritative unlock gate.
+require(
+    "const shouldUnlock = result?.success === true;" in app,
+    "Paywall does not hand successful native purchases to server verification",
+)
+require(
+    "const shouldUnlock = result?.success === true && result?.verified === true;" not in app,
+    "Paywall still requires pre-server verification and would reject deferred verification",
+)
+require(
+    "await registerServerEntitlement(" in app,
+    "Paywall server entitlement registration is missing",
+)
 
 # Billing must fail closed when Google returns no eligible subscription offer.
 require('code = "offer_token_missing"' in billing,

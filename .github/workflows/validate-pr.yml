@@ -72,20 +72,20 @@ jobs:
           python3 scripts/inject-tiktok-webview.py
 
       - name: Validate Play Billing native compatibility
-        working-directory: android
         run: |
           set -euo pipefail
-          test -f app/build.gradle
-          grep -q 'com.android.billingclient:billing:9.1.0' app/build.gradle
-          if grep -Eq '\.enablePendingPurchases\(\)' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java 2>/dev/null; then
-            echo 'PBL7 no-arg enablePendingPurchases() remains in generated native source'
+          PLUGIN='node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java'
+          test -f "$PLUGIN"
+          grep -q 'com.android.billingclient:billing:9.1.0' android/app/build.gradle
+          if grep -Eq '\.enablePendingPurchases\(\)' "$PLUGIN"; then
+            echo 'PBL7 no-arg enablePendingPurchases() remains in patched native source'
             exit 1
           fi
-          grep -q 'PendingPurchasesParams' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
-          grep -q 'QueryProductDetailsResult' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
-          grep -q 'getProductDetailsList()' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
-          grep -q 'enableAutoServiceReconnection()' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
-          grep -q 'FIFTYFIT_BILLING_ERROR' app/src/main/java/de/carstenklaffke/billing/BillingPlugin.java
+          grep -q 'PendingPurchasesParams' "$PLUGIN"
+          grep -q 'QueryProductDetailsResult' "$PLUGIN"
+          grep -q 'getProductDetailsList()' "$PLUGIN"
+          grep -q 'enableAutoServiceReconnection()' "$PLUGIN"
+          grep -q 'FIFTYFIT_BILLING_ERROR' "$PLUGIN"
 
       - name: Compile Android debug artifact (Billing/PBL compatibility gate)
         working-directory: android

@@ -19,6 +19,7 @@ google_auth = read("src/googleAuth.js")
 app = read("src/App.jsx")
 deep_fixes = read("scripts/apply-deep-runtime-fixes.py")
 runtime_audit = read("scripts/apply-runtime-audit-fixes.py")
+verify_purchase = read("supabase/functions/verify-purchase/index.ts")
 
 # Build mutation chain: the retired Google repair stage must no longer be required.
 require(
@@ -78,6 +79,10 @@ require('adminEntitlements: effective' in deep_fixes,
         "admin grant is not persisted in adminEntitlements")
 require('entitlements: effective' not in deep_fixes,
         "admin write still overwrites the Play-verified entitlements source")
+require('const accountPatch = {' in runtime_audit,
+        "admin profile editor does not use a field-scoped account patch")
+require('await setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });' not in runtime_audit,
+        "admin profile editor can still overwrite the whole user document")
 
 # The account initializer must persist the explicit signup language.
 require('function freshState(language = null)' in deep_fixes,
@@ -90,5 +95,16 @@ require('key !== "entitlements"' in runtime_audit,
         "normal profile writes are not stripping entitlements")
 require('key !== "adminEntitlements"' in deep_fixes,
         "normal profile writes are not stripping adminEntitlements")
+
+# Server entitlement lifecycle: subscription cancellation does not end access
+# early; CANCELED remains entitled until expiryTime, while ACTIVE/GRACE are valid.
+require('function hasPaidEntitlement(state: string, expiryTime: string | null)' in verify_purchase,
+        "server entitlement lifecycle helper missing")
+require('SUBSCRIPTION_STATE_CANCELED' in verify_purchase and 'expiryMs > Date.now()' in verify_purchase,
+        "server incorrectly treats all canceled subscriptions as immediately expired")
+require('acknowledgeSubscription(' in verify_purchase,
+        "server-side Play acknowledgement is missing")
+require('acknowledgementState' in verify_purchase,
+        "server does not inspect Google Play acknowledgement state")
 
 print("Production invariants passed")

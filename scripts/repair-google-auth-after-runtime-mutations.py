@@ -1,12 +1,9 @@
 from pathlib import Path
 
-# The legacy/deep runtime mutation script historically rewrote the Google
-# Sign-In error-10 branch to retry through the legacy chooser. That is unsafe:
-# DEVELOPER_ERROR is a configuration failure and retrying the same native
-# configuration only discards the useful diagnostic and produces a second,
-# confusing failure. Keep this small integrity guard immediately after the
-# existing postinstall mutations until those legacy mutation scripts are
-# retired completely.
+# Postinstall integrity guard for the small set of runtime mutations that
+# still have legacy producers. The long-term goal is to retire source mutation
+# entirely; until then, this script makes the final shipped source canonical
+# and fails closed when the expected surrounding code is missing.
 
 # ------------------------------------------------------------
 # Google Sign-In: DEVELOPER_ERROR must fail fast
@@ -32,11 +29,9 @@ if required_google not in google_text:
     raise SystemExit("Google Sign-In integrity check failed: canonical no-credential branch missing")
 
 # ------------------------------------------------------------
-# Language persistence: Google-created accounts must persist the
-# language selected before account creation. The committed freshState()
-# historically ignored the localLang argument supplied by googleAuth.js.
-# Keep the transformation deterministic and idempotent until the legacy
-# runtime mutation chain is retired and this logic becomes normal source.
+# Language persistence: Google-created accounts must persist the explicit
+# language selected before account creation. `freshState()` historically
+# ignored the language argument supplied by googleAuth.js.
 # ------------------------------------------------------------
 app_path = Path("src/App.jsx")
 app = app_path.read_text(encoding="utf-8")
@@ -69,17 +64,65 @@ if new_language not in fresh_segment:
         raise SystemExit(f"Language integrity check failed: expected one freshState language field, found {body.count(old_language)}")
     body = body.replace(old_language, new_language, 1)
     app = before + new_header + body + '/* ============================== AUTH + FIRESTORE STORAGE' + after
-    app_path.write_text(app, encoding="utf-8")
     print("freshState() now persists the supplied language")
-else:
-    app_path.write_text(app, encoding="utf-8")
-    print("freshState() language persistence already correct")
 
-# Verify the final build-time source state has both protections.
+# ------------------------------------------------------------
+# Admin entitlement safety: an admin grant must only change the
+# server-managed adminEntitlements layer. It must never overwrite a real
+# Google Play-verified entitlement with false. The effective entitlement is
+# the union of adminEntitlements and verified entitlements elsewhere.
+# ------------------------------------------------------------
+old_admin_write = '''      await setDoc(result.ref, {
+        adminEntitlements: effective,
+        entitlements: effective,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      setResult({ ...result, data: { ...result.data, adminEntitlements: effective, entitlements: effective } });'''
+new_admin_write = '''      await setDoc(result.ref, {
+        adminEntitlements: effective,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      const currentEntitlements = result.data.entitlements || {};
+      const effectiveView = {
+        trainingPro: !!effective.trainingPro || !!currentEntitlements.trainingPro,
+        nutritionPro: !!effective.nutritionPro || !!currentEntitlements.nutritionPro,
+        aiCoachPro: !!effective.aiCoachPro || !!currentEntitlements.aiCoachPro,
+        proExpiresAt: effective.proExpiresAt || currentEntitlements.proExpiresAt || null,
+      };
+      setResult({ ...result, data: { ...result.data, adminEntitlements: effective, entitlements: effectiveView } });'''
+
+if old_admin_write in app:
+    app = app.replace(old_admin_write, new_admin_write, 1)
+    print("Admin grant now preserves Play-verified entitlements")
+
+old_admin_state = '''  const adminEntitlements = result?.data?.adminEntitlements || {};
+  const proActive =
+    !!adminEntitlements.trainingPro ||
+    !!adminEntitlements.nutritionPro ||
+    !!adminEntitlements.aiCoachPro;'''
+new_admin_state = '''  const adminEntitlements = result?.data?.adminEntitlements || {};
+  const verifiedEntitlements = result?.data?.entitlements || {};
+  const proActive =
+    !!adminEntitlements.trainingPro ||
+    !!adminEntitlements.nutritionPro ||
+    !!adminEntitlements.aiCoachPro ||
+    !!verifiedEntitlements.trainingPro ||
+    !!verifiedEntitlements.nutritionPro ||
+    !!verifiedEntitlements.aiCoachPro;'''
+if old_admin_state in app:
+    app = app.replace(old_admin_state, new_admin_state, 1)
+    print("Admin Pro status now reflects effective entitlement")
+
+app_path.write_text(app, encoding="utf-8")
+
+# Final assertions: build must ship the canonical Google and language logic.
+final_google = google_path.read_text(encoding="utf-8")
+if bad_google in final_google:
+    raise SystemExit("Google Sign-In integrity check failed after all mutations")
+
 final_app = app_path.read_text(encoding="utf-8")
 if "function freshState(language = null)" not in final_app:
-    raise SystemExit("Language integrity check failed: freshState language signature missing")
-
+    raise SystemExit("Language integrity check failed: freshState signature missing")
 fresh_start = final_app.index("function freshState(language = null)")
 fresh_end = final_app.index("/* ============================== AUTH + FIRESTORE STORAGE", fresh_start)
 fresh_body = final_app[fresh_start:fresh_end]

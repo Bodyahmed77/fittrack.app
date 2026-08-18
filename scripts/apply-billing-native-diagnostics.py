@@ -14,6 +14,9 @@ if version != "8.1.0":
 text = PLUGIN.read_text(encoding="utf-8")
 original = text
 
+# PBL 9 exposes richer error context through BillingResult.getSubResponseCode().
+# Keep the existing public plugin API but surface the extra signal in the native
+# rejection text so the React layer can diagnose Play failures without logcat.
 replacements = [
     (
         'call.reject("Error retrieving product details: " + suffix);',
@@ -25,7 +28,7 @@ replacements = [
     ),
     (
         'call.reject("Error during purchase: " + billingResult.getDebugMessage());',
-        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult.getResponseCode() + "] Error during purchase: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));',
+        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult.getResponseCode() + "][SubResponseCode=" + billingResult.getSubResponseCode() + "] Error during purchase: " + billingResult.getDebugMessage(), String.valueOf(billingResult.getResponseCode()));',
     ),
     (
         'call.reject("Billing service not connected");',
@@ -37,11 +40,11 @@ replacements = [
     ),
     (
         'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());',
-        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "][SubResponseCode=" + billingResult2.getSubResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
     ),
     (
         'call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage());',
-        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult1.getResponseCode() + "] Error acknowledging purchase: " + billingResult1.getDebugMessage(), String.valueOf(billingResult1.getResponseCode()));',
+        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult1.getResponseCode() + "][SubResponseCode=" + billingResult1.getSubResponseCode() + "] Error acknowledging purchase: " + billingResult1.getDebugMessage(), String.valueOf(billingResult1.getResponseCode()));',
     ),
 ]
 
@@ -65,6 +68,7 @@ if 'ret.put("subscription_offer_count"' not in text:
 required = [
     'FIFTYFIT_BILLING_ERROR',
     'BillingResponseCode=',
+    'getSubResponseCode()',
     'String.valueOf(code)',
     'String.valueOf(billingResult2.getResponseCode())',
     'ret.put("subscription_offer_count"',
@@ -80,4 +84,4 @@ if text == original:
     print("Billing native diagnostics already applied")
 else:
     PLUGIN.write_text(text, encoding="utf-8")
-    print("Applied capacitor-billing 8.1.0 native diagnostics")
+    print("Applied capacitor-billing 8.1.0 native diagnostics with PBL 9 sub-response support")

@@ -37,14 +37,10 @@ async function ensureNativeKeyboardResize() {
 }
 ensureNativeKeyboardResize();
 
-// Load the Play catalog early so the AI Coach limit dialog never falls back to
-// a hard-coded USD/EGP price. Google Play is the only price authority on Android.
 let __playCatalogPromise = null;
 export function ensurePlayCatalogLoaded() {
   if (__playCatalogPromise) return __playCatalogPromise;
-  __playCatalogPromise = Promise.resolve()
-    .then(() => billingQueryProducts())
-    .catch(() => null);
+  __playCatalogPromise = Promise.resolve().then(() => billingQueryProducts()).catch(() => null);
   return __playCatalogPromise;
 }
 ensurePlayCatalogLoaded();
@@ -98,6 +94,16 @@ function classifyHttpError(status, data) {
   if (status >= 400) return "bad_request";
   return "backend_error";
 }
+function writeAiDiagnostics(payload) {
+  if (typeof window === "undefined") return;
+  try {
+    window.__fiftyFitAiDiagnostics = {
+      ...(window.__fiftyFitAiDiagnostics || {}),
+      ...payload,
+      updatedAt: new Date().toISOString(),
+    };
+  } catch (_) {}
+}
 
 async function postAiRequest(endpoint, headers, body) {
   try {
@@ -131,15 +137,17 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
   if (__aiCoachInFlight) {
     const e = new Error("Request already in progress");
     e.code = "busy";
+    writeAiDiagnostics({ stage: "client_guard", code: e.code });
     throw e;
   }
   __aiCoachInFlight = true;
+  writeAiDiagnostics({ stage: "request_start" });
   try {
     await ensureNativeKeyboardResize();
     const endpoint = resolveEndpoint();
-    if (!endpoint) { const e = new Error("AI endpoint is not configured"); e.code = "no_endpoint"; throw e; }
+    if (!endpoint) { const e = new Error("AI endpoint is not configured"); e.code = "no_endpoint"; writeAiDiagnostics({ stage: "client_config", code: e.code }); throw e; }
     const user = auth.currentUser;
-    if (!user) { const e = new Error("Sign in required"); e.code = "auth_missing"; throw e; }
+    if (!user) { const e = new Error("Sign in required"); e.code = "auth_missing"; writeAiDiagnostics({ stage: "auth", code: e.code }); throw e; }
 
     const requestDate = localISODateNow();
     const idToken = await user.getIdToken(true);
@@ -155,25 +163,36 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
       for (let attempt = 0; attempt < 2; attempt += 1) {
         response = await postAiRequest(endpoint, headers, body);
         if (response.status !== 503 || attempt === 1) break;
+        writeAiDiagnostics({ stage: "backend_retry", attempt: attempt + 1, status: response.status });
         await new Promise((resolve) => setTimeout(resolve, 900));
       }
     } catch (e) {
       const err = new Error(e?.message || "Network error");
       err.code = "network";
+      writeAiDiagnostics({ stage: "network_error", code: err.code, message: err.message.slice(0, 160) });
       throw err;
     }
 
     const data = response?.data || null;
     const usage = normalizeUsage(data, requestDate);
     if (!response?.ok) {
-      const err = new Error(data?.message || data?.error || `HTTP ${response?.status || 0}`);
-      err.code = classifyHttpError(response?.status || 0, data);
+      const code = classifyHttpError(response?.status || 0, data);
+      const message = String(data?.message || data?.error || `HTTP ${response?.status || 0}`);
+      writeAiDiagnostics({ stage: "backend_error", status: response?.status || 0, code, message: message.slice(0, 200), model: data?.model || null });
+      const err = new Error(message);
+      err.code = code;
       err.status = response?.status || 0;
       if (err.code === "daily_limit") err.usage = usage;
       throw err;
     }
     const reply = extractReply(data);
-    if (!reply) { const e = new Error("Empty AI response"); e.code = "empty_response"; throw e; }
+    if (!reply) {
+      const e = new Error("Empty AI response");
+      e.code = "empty_response";
+      writeAiDiagnostics({ stage: "empty_response", status: response?.status || 200, model: data?.model || null });
+      throw e;
+    }
+    writeAiDiagnostics({ stage: "success", status: response?.status || 200, model: data?.model || null, usage });
     return { reply, usage };
   } finally {
     __aiCoachInFlight = false;

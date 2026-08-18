@@ -3,6 +3,8 @@
 // ============================================================
 // Native Google Play Billing is the source of purchase state.
 // Product IDs and localized prices come from Google Play at runtime.
+// Server verification/entitlement registration happens before the
+// purchase is acknowledged; see registerPurchase.js.
 
 import { BILLING_PRODUCTS, setPlayStorePricing } from "./config";
 
@@ -119,9 +121,20 @@ function billingError(e, fallbackCode = "billing_error") {
   );
   const err = new Error(message);
   err.code = String(code);
+  err.responseCode =
+    source?.responseCode ?? source?.billingResponseCode ?? e?.responseCode ?? null;
+  err.nativeCode =
+    source?.code ??
+    source?.responseCode ??
+    source?.billingResponseCode ??
+    e?.nativeCode ??
+    null;
+  err.nativeMessage =
+    source?.debugMessage || source?.message || e?.nativeMessage || e?.message || null;
   if (source?.subResponseCode != null) {
     err.subResponseCode = String(source.subResponseCode);
   }
+  err.raw = e;
   return err;
 }
 
@@ -271,8 +284,6 @@ export async function queryProducts() {
       }
     }
 
-    // Never infer currency from language/region. Only localized Play prices
-    // are written into the paywall catalog.
     setPlayStorePricing(products);
 
     if (typeof window !== "undefined") {
@@ -290,9 +301,7 @@ export async function queryProducts() {
             : null,
           updatedAt: new Date().toISOString(),
         };
-      } catch (_) {
-        /* ignore */
-      }
+      } catch (_) {}
     }
 
     return {
@@ -310,9 +319,7 @@ export async function queryProducts() {
           error: { code: error.code, message: error.message },
           updatedAt: new Date().toISOString(),
         };
-      } catch (_) {
-        /* ignore */
-      }
+      } catch (_) {}
     }
     return {
       preview: false,
@@ -359,52 +366,58 @@ export async function purchase(planId, durationId) {
   try {
     await ensureBillingConnection(billing);
 
-    // Refresh the exact selected product before launching purchase. This also
-    // guarantees the UI and purchase path are using the same Play catalog.
-    try {
-      const selected = await queryAnyProductDetails(billing, productId);
-      if (!selected || !localizedDisplayPrice(selected)) {
-        const err = new Error(
-          `Google Play did not return an available localized product for ${productId}`,
-        );
-        err.code = "product_unavailable";
-        throw err;
-      }
-    } catch (queryError) {
-      throw billingError(queryError, "product_unavailable");
+    const selected = await queryAnyProductDetails(billing, productId);
+    if (!selected || !localizedDisplayPrice(selected)) {
+      const err = new Error(
+        `Google Play did not return an available localized product for ${productId}`,
+      );
+      err.code = "product_unavailable";
+      throw err;
     }
 
     let selectedOfferToken = null;
     try {
-      const details = await queryAnyProductDetails(billing, productId);
       selectedOfferToken =
-        details?.offerToken ||
-        details?.offer_token ||
-        details?.subscriptionOfferDetails?.[0]?.offerToken ||
-        details?.subscriptionOfferDetails?.[0]?.offer_token ||
-        details?.subscriptionOfferDetailsList?.[0]?.offerToken ||
-        details?.subscriptionOfferDetailsList?.[0]?.offer_token ||
-        details?.offers?.[0]?.offerToken ||
-        details?.offers?.[0]?.offer_token ||
+        selected?.offerToken ||
+        selected?.offer_token ||
+        selected?.subscriptionOfferDetails?.[0]?.offerToken ||
+        selected?.subscriptionOfferDetails?.[0]?.offer_token ||
+        selected?.subscriptionOfferDetailsList?.[0]?.offerToken ||
+        selected?.subscriptionOfferDetailsList?.[0]?.offer_token ||
+        selected?.offers?.[0]?.offerToken ||
+        selected?.offers?.[0]?.offer_token ||
         null;
-    } catch (_) {}
+    } catch (_) {
+      selectedOfferToken = null;
+    }
 
-    try {
-      window.__fiftyFitBillingDiagnostics = {
-        ...(window.__fiftyFitBillingDiagnostics || {}),
-        stage: "before_launchBillingFlow",
-        productId,
-        offerTokenPresent: !!selectedOfferToken,
-        updatedAt: new Date().toISOString(),
-      };
-    } catch (_) {}
+    if (!selectedOfferToken) {
+      const err = new Error(
+        `Google Play returned no eligible subscription offer for ${productId}`,
+      );
+      err.code = "offer_token_missing";
+      err.productId = productId;
+      throw err;
+    }
+
+    if (typeof window !== "undefined") {
+      try {
+        window.__fiftyFitBillingDiagnostics = {
+          ...(window.__fiftyFitBillingDiagnostics || {}),
+          stage: "before_launchBillingFlow",
+          productId,
+          offerTokenPresent: true,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {}
+    }
 
     let result;
     try {
       result = await billing.launchBillingFlow({
         product: productId,
         type: "SUBS",
-        ...(selectedOfferToken ? { offerToken: selectedOfferToken } : {}),
+        offerToken: selectedOfferToken,
       });
     } catch (launchError) {
       const launchMapped = billingError(launchError, "billing_flow_failed");
@@ -413,6 +426,7 @@ export async function purchase(planId, durationId) {
           stage: "launchBillingFlow_exception",
           productId,
           code: launchMapped.code,
+          responseCode: launchMapped.responseCode,
           message: launchMapped.message,
           nativeCode: launchMapped.nativeCode || null,
           nativeMessage: launchMapped.nativeMessage || null,
@@ -433,17 +447,19 @@ export async function purchase(planId, durationId) {
       result?.message ||
       "Google Play did not complete the purchase";
 
-    try {
-      window.__fiftyFitBillingDiagnostics = {
-        stage: "launchBillingFlow_result",
-        productId,
-        responseCode: responseCode ?? null,
-        debugMessage,
-        subResponseCode: result?.subResponseCode ?? null,
-        rawResult: result,
-        updatedAt: new Date().toISOString(),
-      };
-    } catch (_) {}
+    if (typeof window !== "undefined") {
+      try {
+        window.__fiftyFitBillingDiagnostics = {
+          stage: "launchBillingFlow_result",
+          productId,
+          responseCode: responseCode ?? null,
+          debugMessage,
+          subResponseCode: result?.subResponseCode ?? null,
+          rawResult: result,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (_) {}
+    }
 
     if (responseCode != null && String(responseCode) !== "0") {
       const flowError = billingError(
@@ -480,42 +496,14 @@ export async function purchase(planId, durationId) {
       };
     }
 
-    if (typeof billing.sendAck === "function") {
-      try {
-        await billing.sendAck({ purchaseToken: token });
-      } catch (ackErr) {
-        return {
-          success: false,
-          preview: false,
-          error: billingError(ackErr, "ack_failed"),
-        };
-      }
-    } else if (typeof billing.acknowledgePurchase === "function") {
-      try {
-        await billing.acknowledgePurchase({ purchaseToken: token });
-      } catch (ackErr) {
-        return {
-          success: false,
-          preview: false,
-          error: billingError(ackErr, "ack_failed"),
-        };
-      }
-    } else {
-      return {
-        success: false,
-        preview: false,
-        error: Object.assign(
-          new Error("Google Play acknowledgement is unavailable"),
-          { code: "ack_unavailable" },
-        ),
-      };
-    }
-
+    // IMPORTANT: do not acknowledge here. The server must independently verify
+    // the token with Google Play before the purchase becomes acknowledged.
     return {
       success: true,
       preview: false,
-      verified: true,
-      nativeAcknowledged: true,
+      verified: false,
+      nativeAcknowledged: false,
+      acknowledgementDeferred: true,
       productId: purchaseProducts(result)[0] || productId,
       result,
     };

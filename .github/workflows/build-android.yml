@@ -13,12 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Set up Java
@@ -80,7 +80,14 @@ jobs:
                       cert = ((oauth.get('android_info') or {}).get('certificate_hash') or '').replace(':','').lower()
                       if cert:
                           certs.append(cert)
-          assert '55384cf206854973c68dfba5be2a1bba8e048bee' in certs, 'Play App Signing SHA-1 missing'
+          required = {
+              'deployment': 'e961b1050f3171d90877e9ff0cd156b960321a87',
+              'hybrid_classical': '55384cf206854973c68dfba5be2a1bba8e048bee',
+              'hybrid_pqc': '5fd40a5821b05277f2d0bd055918676f7912c131',
+              'upload': 'c62c4d0c0ae964620887e464835de5196842131b',
+          }
+          missing = [label for label, value in required.items() if value not in set(certs)]
+          assert not missing, f'google-services.json missing required OAuth SHA-1 entries: {missing}'
           print('google-services.json preflight OK')
           print('OAuth SHA-1 values:', sorted(set(certs)))
           print('google-services.json sha256:', hashlib.sha256(p.read_bytes()).hexdigest())
@@ -242,23 +249,13 @@ jobs:
               if not ok:
                   errors.append(message)
 
-          for p, label in [
-              (gradle, 'android/app/build.gradle'),
-              (vars_gradle, 'android/variables.gradle'),
-              (top_gradle, 'android/build.gradle'),
-              (manifest, 'AndroidManifest.xml'),
-              (assets_index, 'web index.html'),
-              (plugin_java, 'TikTokWebViewPlugin.java'),
-              (activity_java, 'TikTokWebViewActivity.java'),
-              (google_json, 'google-services.json'),
-          ]:
+          for p, label in [(gradle, 'android/app/build.gradle'), (vars_gradle, 'android/variables.gradle'), (top_gradle, 'android/build.gradle'), (manifest, 'AndroidManifest.xml'), (assets_index, 'web index.html'), (plugin_java, 'TikTokWebViewPlugin.java'), (activity_java, 'TikTokWebViewActivity.java'), (google_json, 'google-services.json')]:
               require(p.is_file() and p.stat().st_size > 0, f'{label} missing or empty')
           require(wrapper.is_file() and os.access(wrapper, os.X_OK), 'Gradle wrapper missing or not executable')
 
           g = gradle.read_text(encoding='utf-8') if gradle.exists() else ''
           vg = vars_gradle.read_text(encoding='utf-8') if vars_gradle.exists() else ''
           mf = manifest.read_text(encoding='utf-8') if manifest.exists() else ''
-
           app_ids = re.findall(r"\bapplicationId\s+[\"']([^\"']+)[\"']", g)
           namespaces = re.findall(r"\bnamespace\s+[\"']([^\"']+)[\"']", g)
           require(app_ids == ['com.bodyahmed77.fiftyfit'], f'Unexpected applicationId values: {app_ids}')
@@ -298,8 +295,6 @@ jobs:
           print('ANDROID RELEASE PREFLIGHT PASSED')
           print('applicationId=com.bodyahmed77.fiftyfit')
           print('namespace=com.bodyahmed77.fiftyfit')
-          print('compileSdkVersion=36')
-          print('targetSdkVersion=36')
           print(f'versionCode={expected_code}')
           PY
 
@@ -340,16 +335,13 @@ jobs:
           apk = Path('release-artifacts/fifty-fit-release.apk')
           with zipfile.ZipFile(aab) as z:
               items = sorted(n for n in z.namelist() if n.endswith('/assets/public/index.html'))
-              if not items:
-                  raise SystemExit('No AAB web asset index.html found')
+              if not items: raise SystemExit('No AAB web asset index.html found')
               ah = hashlib.sha256(z.read(items[0])).hexdigest()
           with zipfile.ZipFile(apk) as z:
               n = 'assets/public/index.html'
-              if n not in z.namelist():
-                  raise SystemExit('No APK web asset index.html found')
+              if n not in z.namelist(): raise SystemExit('No APK web asset index.html found')
               ph = hashlib.sha256(z.read(n)).hexdigest()
-          if ah != ph:
-              raise SystemExit(f'APK/AAB web asset mismatch: {ah} != {ph}')
+          if ah != ph: raise SystemExit(f'APK/AAB web asset mismatch: {ah} != {ph}')
           print(f'APK/AAB web asset parity OK: {ah}')
           PY
 

@@ -2,10 +2,11 @@
 // Register a completed Google Play purchase in the server-side
 // entitlement store (public.entitlements in Postgres).
 //
-// The ai-coach Edge Function decides quotas from this table ONLY.
-// This module reports a purchase AFTER the native billing flow
-// completed AND the purchase was acknowledged to Google Play, so
-// the entitlement write is backed by a real acknowledged purchase.
+// The backend independently verifies the purchase with Google Play,
+// grants the entitlement atomically, and acknowledges the subscription
+// server-side. The Android client does not acknowledge purchases itself;
+// this keeps the purchase state transition centralized and resilient to
+// a user leaving the app immediately after checkout.
 // ============================================================
 
 import { VERIFY_PURCHASE_ENDPOINT } from "./config";
@@ -13,9 +14,9 @@ import { auth } from "./firebase";
 
 function extractToken(purchaseResult) {
   if (!purchaseResult || typeof purchaseResult !== "object") return null;
-  // purchaseToken may sit at several levels depending on the plugin shape.
   const direct =
     purchaseResult.purchaseToken ||
+    purchaseResult.token ||
     purchaseResult.purchase?.purchaseToken ||
     purchaseResult.product?.purchaseToken;
   if (typeof direct === "string" && direct) return direct;

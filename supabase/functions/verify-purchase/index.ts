@@ -7,10 +7,15 @@
 // service account, and only writes an entitlement if Google confirms:
 //   - the token is valid for THIS app's package name
 //   - the subscription line item's productId matches what the client claims
-//   - the subscription is in an entitlement-granting state
-//     (ACTIVE or IN_GRACE_PERIOD)
+//   - the subscription currently has paid entitlement time remaining
+//     (ACTIVE / IN_GRACE_PERIOD, or CANCELED with a future expiryTime)
 // A fabricated or arbitrary purchaseToken is rejected by Google's API
 // (404/400) and NO entitlement is written.
+//
+// After the entitlement is granted, the function also acknowledges the
+// subscription through the Google Play Developer API. A successful server
+// acknowledgement removes the dependency on the client staying online for
+// three days after checkout.
 
 import * as jose from "https://deno.land/x/jose@v4.15.5/index.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -66,6 +71,13 @@ function log(event: string, extra: Record<string, unknown> = {}) {
   } catch {
     console.log("[VERIFY_PURCHASE]", event);
   }
+}
+
+function hasPaidEntitlement(state: string, expiryTime: string | null): boolean {
+  if (ENTITLING_STATES.has(state)) return true;
+  if (state !== "SUBSCRIPTION_STATE_CANCELED" || !expiryTime) return false;
+  const expiryMs = Date.parse(expiryTime);
+  return Number.isFinite(expiryMs) && expiryMs > Date.now();
 }
 
 async function verifyFirebaseIdToken(idToken: string) {
@@ -159,7 +171,14 @@ async function getPlayAccessToken(key: ServiceAccountKey): Promise<string> {
 }
 
 type PlayVerifyResult =
-  | { ok: true; state: string; lineItemProductIds: string[]; expiryTime: string | null }
+  | {
+      ok: true;
+      state: string;
+      lineItemProductIds: string[];
+      expiryTime: string | null;
+      acknowledgementState: string;
+      accessToken: string;
+    }
   | { ok: false; reason: "not_found" | "provider_error" | "config_missing" };
 
 async function verifyWithGooglePlay(purchaseToken: string): Promise<PlayVerifyResult> {
@@ -202,6 +221,7 @@ async function verifyWithGooglePlay(purchaseToken: string): Promise<PlayVerifyRe
 
   const data = await res.json().catch(() => null);
   const state = String(data?.subscriptionState || "");
+  const acknowledgementState = String(data?.acknowledgementState || "ACKNOWLEDGEMENT_STATE_UNSPECIFIED");
   const lineItems = Array.isArray(data?.lineItems) ? data.lineItems : [];
   const lineItemProductIds = lineItems
     .map((li: { productId?: string }) => String(li?.productId || ""))
@@ -209,7 +229,50 @@ async function verifyWithGooglePlay(purchaseToken: string): Promise<PlayVerifyRe
   const expiryTime =
     typeof lineItems?.[0]?.expiryTime === "string" ? lineItems[0].expiryTime : null;
 
-  return { ok: true, state, lineItemProductIds, expiryTime };
+  return {
+    ok: true,
+    state,
+    lineItemProductIds,
+    expiryTime,
+    acknowledgementState,
+    accessToken,
+  };
+}
+
+async function acknowledgeSubscription(
+  accessToken: string,
+  productId: string,
+  purchaseToken: string,
+): Promise<{ acknowledged: boolean; code?: string }> {
+  const url =
+    `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/` +
+    `${encodeURIComponent(ANDROID_PACKAGE_NAME)}/purchases/subscriptions/` +
+    `${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}:acknowledge`;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    if (res.ok) return { acknowledged: true };
+    const detail = await res.text().catch(() => "");
+    log("play_acknowledge_failed", {
+      status: res.status,
+      productId,
+      detail: detail.slice(0, 160),
+    });
+    return { acknowledged: false, code: `ack_${res.status}` };
+  } catch (e) {
+    log("play_acknowledge_network_error", {
+      productId,
+      detail: String((e as Error)?.message || e).slice(0, 100),
+    });
+    return { acknowledged: false, code: "ack_network_error" };
+  }
 }
 
 Deno.serve(async (req) => {
@@ -279,12 +342,18 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (!ENTITLING_STATES.has(verification.state)) {
-    log("purchase_rejected_not_entitling", { uid, productId, state: verification.state });
+  if (!hasPaidEntitlement(verification.state, verification.expiryTime)) {
+    log("purchase_rejected_not_entitling", {
+      uid,
+      productId,
+      state: verification.state,
+      expiryTime: verification.expiryTime,
+    });
     return json(402, {
       error: "purchase_not_active",
       message: "This subscription is not currently active.",
       subscriptionState: verification.state,
+      expiresAt: verification.expiryTime,
     });
   }
 
@@ -320,11 +389,24 @@ Deno.serve(async (req) => {
       });
     }
 
+    let acknowledged = verification.acknowledgementState === "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED";
+    let acknowledgementError: string | null = null;
+    if (!acknowledged) {
+      const ack = await acknowledgeSubscription(
+        verification.accessToken,
+        productId,
+        purchaseToken,
+      );
+      acknowledged = ack.acknowledged;
+      acknowledgementError = ack.acknowledged ? null : ack.code || "ack_failed";
+    }
+
     const activated = Array.isArray(grantRow.activated) ? grantRow.activated : [...grantedKeys];
     log("purchase_verified_and_granted", {
       uid,
       productId,
       state: verification.state,
+      acknowledged,
       activated,
     });
     return json(200, {
@@ -333,6 +415,8 @@ Deno.serve(async (req) => {
       activated,
       subscriptionState: verification.state,
       expiresAt,
+      acknowledged,
+      acknowledgementError,
     });
   } catch (e) {
     log("unexpected_error", { detail: String((e as Error)?.message || e).slice(0, 120) });

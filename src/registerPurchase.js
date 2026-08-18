@@ -2,25 +2,15 @@
 // Register a completed Google Play purchase in the server-side
 // entitlement store (public.entitlements in Postgres).
 //
-// The AI Coach Edge Function decides quotas from this table ONLY.
-// This module reports a purchase AFTER the native billing flow
-// completed. It server-verifies the token against Google Play first,
-// then acknowledges the purchase. That ordering prevents an
-// acknowledged-but-unverified purchase from becoming the recovery path.
+// The backend independently verifies the purchase with Google Play,
+// grants the entitlement atomically, and acknowledges the subscription
+// server-side. The Android client does not acknowledge purchases itself;
+// this keeps the purchase state transition centralized and resilient to
+// a user leaving the app immediately after checkout.
 // ============================================================
 
 import { VERIFY_PURCHASE_ENDPOINT } from "./config";
 import { auth } from "./firebase";
-
-async function getBillingPlugin() {
-  try {
-    const mod = await import(/* @vite-ignore */ "capacitor-billing");
-    return mod?.BillingPlugin || mod?.default || null;
-  } catch (e) {
-    console.warn("[Billing] native plugin unavailable for acknowledgement", e);
-    return null;
-  }
-}
 
 function extractToken(purchaseResult) {
   if (!purchaseResult || typeof purchaseResult !== "object") return null;
@@ -47,47 +37,6 @@ async function postPurchase(endpoint, idToken, productId, purchaseToken) {
       purchaseToken,
     }),
   });
-}
-
-async function acknowledgePurchaseToken(purchaseToken) {
-  const billing = await getBillingPlugin();
-  if (!billing) {
-    return { acknowledged: false, code: "ack_plugin_unavailable" };
-  }
-
-  const ack = async () => {
-    if (typeof billing.sendAck === "function") {
-      await billing.sendAck({ purchaseToken });
-      return;
-    }
-    if (typeof billing.acknowledgePurchase === "function") {
-      await billing.acknowledgePurchase({ purchaseToken });
-      return;
-    }
-    const err = new Error("Google Play acknowledgement is unavailable");
-    err.code = "ack_unavailable";
-    throw err;
-  };
-
-  try {
-    await ack();
-    return { acknowledged: true, code: null };
-  } catch (firstError) {
-    // A transient Play/service disconnect should not leave a verified purchase
-    // permanently unacknowledged. Retry once; the server entitlement is already
-    // authoritative and remains valid while Play completes the acknowledgement.
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      await ack();
-      return { acknowledged: true, code: null };
-    } catch (secondError) {
-      return {
-        acknowledged: false,
-        code: String(secondError?.code || firstError?.code || "ack_failed"),
-        message: String(secondError?.message || firstError?.message || "Acknowledgement failed"),
-      };
-    }
-  }
 }
 
 export async function registerServerEntitlement(
@@ -130,21 +79,5 @@ export async function registerServerEntitlement(
     err.backend = data;
     throw err;
   }
-
-  const ack = await acknowledgePurchaseToken(purchaseToken);
-  if (!ack.acknowledged) {
-    // Do not roll back a server-verified entitlement because Play acknowledgement
-    // had a transient client-side failure. The next restore/login flow will retry.
-    console.warn("[Billing] server entitlement granted but acknowledgement is pending", {
-      productId: serverProductId,
-      code: ack.code,
-      message: ack.message || null,
-    });
-  }
-
-  return {
-    ...data,
-    acknowledged: ack.acknowledged,
-    acknowledgementError: ack.acknowledged ? null : ack.code,
-  };
+  return data;
 }

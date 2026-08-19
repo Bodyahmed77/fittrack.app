@@ -8,6 +8,14 @@
 
 import { BILLING_PRODUCTS, setPlayStorePricing } from "./config";
 
+const ANDROID_PACKAGE_NAME = "com.bodyahmed77.fiftyfit";
+const EXPECTED_BASE_PLAN_BY_DURATION = {
+  monthly: "monthly",
+  quarterly: "quarterly",
+  halfyearly: "halfyearly",
+  yearly: "yearly",
+};
+
 let plugin = null;
 let purchaseInFlight = false;
 let billingConnected = false;
@@ -22,6 +30,35 @@ async function getPlugin() {
     console.warn("Billing plugin unavailable", e);
     return null;
   }
+}
+
+function billingResponseName(code) {
+  const names = {
+    "0": "OK",
+    "1": "USER_CANCELED",
+    "2": "SERVICE_UNAVAILABLE",
+    "3": "BILLING_UNAVAILABLE",
+    "4": "ITEM_UNAVAILABLE",
+    "5": "DEVELOPER_ERROR",
+    "6": "ERROR",
+    "7": "ITEM_ALREADY_OWNED",
+    "8": "ITEM_NOT_OWNED",
+    "-1": "SERVICE_DISCONNECTED",
+    "-2": "FEATURE_NOT_SUPPORTED",
+  };
+  return names[String(code)] || "UNKNOWN";
+}
+
+function writeBillingDiagnostics(patch) {
+  if (typeof window === "undefined") return;
+  try {
+    window.__fiftyFitBillingDiagnostics = {
+      ...(window.__fiftyFitBillingDiagnostics || {}),
+      ...patch,
+      packageName: ANDROID_PACKAGE_NAME,
+      updatedAt: new Date().toISOString(),
+    };
+  } catch (_) {}
 }
 
 async function ensureBillingConnection(billing) {
@@ -46,8 +83,21 @@ async function ensureBillingConnection(billing) {
     }
 
     billingConnected = true;
+    writeBillingDiagnostics({
+      stage: "billing_connected",
+      billingConnection: "connected",
+      responseCode: responseCode ?? 0,
+      responseName: billingResponseName(responseCode ?? 0),
+    });
   } catch (e) {
     billingConnected = false;
+    writeBillingDiagnostics({
+      stage: "billing_connection_failed",
+      billingConnection: "failed",
+      responseCode: e?.responseCode ?? e?.code ?? null,
+      responseName: billingResponseName(e?.responseCode ?? e?.code),
+      debugMessage: e?.debugMessage || e?.nativeMessage || e?.message || null,
+    });
     throw billingError(e, "billing_connection_failed");
   }
 }
@@ -131,6 +181,7 @@ function billingError(e, fallbackCode = "billing_error") {
     null;
   err.nativeMessage =
     source?.debugMessage || source?.message || e?.nativeMessage || e?.message || null;
+  err.billingResponseCodeName = billingResponseName(err.responseCode ?? err.code);
   if (source?.subResponseCode != null) {
     err.subResponseCode = String(source.subResponseCode);
   }
@@ -170,6 +221,55 @@ function localizedDisplayPrice(details) {
     if (candidate != null && String(candidate).trim()) return String(candidate).trim();
   }
   return null;
+}
+
+function getSubscriptionOffers(details) {
+  if (!details || typeof details !== "object") return [];
+  const candidates = [
+    details.subscriptionOfferDetails,
+    details.subscriptionOfferDetailsList,
+    details.offers,
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate.filter(Boolean);
+  }
+  return [];
+}
+
+function offerTokenOf(offer) {
+  return (
+    offer?.offerToken ||
+    offer?.offer_token ||
+    null
+  );
+}
+
+function basePlanIdOf(offer) {
+  return offer?.basePlanId || offer?.base_plan_id || null;
+}
+
+function offerIdOf(offer) {
+  return offer?.offerId || offer?.offer_id || null;
+}
+
+function selectSubscriptionOffer(details, durationId) {
+  const offers = getSubscriptionOffers(details);
+  const expectedBasePlan = EXPECTED_BASE_PLAN_BY_DURATION[durationId] || null;
+
+  const eligible = offers.filter((offer) => !!offerTokenOf(offer));
+  if (!eligible.length) return { offer: null, offers, expectedBasePlan };
+
+  const basePlanMatches = expectedBasePlan
+    ? eligible.filter((offer) => basePlanIdOf(offer) === expectedBasePlan)
+    : [];
+
+  const candidates = basePlanMatches.length ? basePlanMatches : eligible;
+  const preferred =
+    candidates.find((offer) => !offerIdOf(offer)) ||
+    candidates[0] ||
+    null;
+
+  return { offer: preferred, offers, expectedBasePlan };
 }
 
 async function queryModernProductDetailsForProduct(billing, productId) {
@@ -234,6 +334,27 @@ async function queryAnyProductDetails(billing, productId) {
   return querySkuDetailsForProduct(billing, productId);
 }
 
+async function queryActiveSubscriptions(billing) {
+  try {
+    if (typeof billing?.queryPurchases === "function") {
+      const result = await billing.queryPurchases({ type: "SUBS" });
+      return Array.isArray(result) ? result : result?.purchases || [];
+    }
+    if (typeof billing?.getPurchases === "function") {
+      const result = await billing.getPurchases();
+      return Array.isArray(result) ? result : result?.purchases || [];
+    }
+  } catch (e) {
+    writeBillingDiagnostics({
+      stage: "active_subscription_query_failed",
+      responseCode: e?.responseCode ?? e?.code ?? null,
+      responseName: billingResponseName(e?.responseCode ?? e?.code),
+      debugMessage: e?.debugMessage || e?.nativeMessage || e?.message || String(e),
+    });
+  }
+  return [];
+}
+
 export async function queryProducts() {
   const billing = await getPlugin();
   if (!billing) return { preview: true, products: null };
@@ -286,23 +407,19 @@ export async function queryProducts() {
 
     setPlayStorePricing(products);
 
-    if (typeof window !== "undefined") {
-      try {
-        window.__fiftyFitBillingDiagnostics = {
-          productCount: products.length,
-          unfetched,
-          firstProduct: products[0]
-            ? {
-                productId: products[0].productId,
-                formattedPrice: products[0].formattedPrice,
-                priceCurrencyCode: products[0].priceCurrencyCode || null,
-                source: products[0].source || null,
-              }
-            : null,
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (_) {}
-    }
+    writeBillingDiagnostics({
+      stage: "catalog_loaded",
+      productCount: products.length,
+      unfetched,
+      firstProduct: products[0]
+        ? {
+            productId: products[0].productId,
+            formattedPrice: products[0].formattedPrice,
+            priceCurrencyCode: products[0].priceCurrencyCode || null,
+            source: products[0].source || null,
+          }
+        : null,
+    });
 
     return {
       preview: false,
@@ -311,16 +428,15 @@ export async function queryProducts() {
     };
   } catch (e) {
     const error = billingError(e, "billing_query_failed");
-    if (typeof window !== "undefined") {
-      try {
-        window.__fiftyFitBillingDiagnostics = {
-          productCount: 0,
-          unfetched: [],
-          error: { code: error.code, message: error.message },
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (_) {}
-    }
+    writeBillingDiagnostics({
+      stage: "catalog_query_failed",
+      productCount: 0,
+      unfetched: [],
+      code: error.code,
+      responseCode: error.responseCode,
+      responseName: error.billingResponseCodeName,
+      message: error.message,
+    });
     return {
       preview: false,
       products: [],
@@ -366,30 +482,53 @@ export async function purchase(planId, durationId) {
   try {
     await ensureBillingConnection(billing);
 
+    // Google documents that an app should not attempt to sell a subscription
+    // that the user already owns. Detect that condition before launch so a
+    // repeated tester account does not look like an opaque Play failure.
+    const activeSubscriptions = await queryActiveSubscriptions(billing);
+    const alreadyOwned = activeSubscriptions.find((purchase) =>
+      isPurchased(purchase) && purchaseProducts(purchase).includes(productId),
+    );
+    if (alreadyOwned) {
+      const token = extractPurchaseToken(alreadyOwned);
+      const err = new Error(
+        `This Google Play subscription is already owned: ${productId}`,
+      );
+      err.code = "ITEM_ALREADY_OWNED";
+      err.responseCode = 7;
+      err.nativeCode = 7;
+      err.billingResponseCodeName = "ITEM_ALREADY_OWNED";
+      err.productId = productId;
+      writeBillingDiagnostics({
+        stage: "purchase_blocked_already_owned",
+        productId,
+        responseCode: 7,
+        responseName: "ITEM_ALREADY_OWNED",
+        purchaseTokenPresent: !!token,
+        message: err.message,
+      });
+      return {
+        success: false,
+        preview: false,
+        error: err,
+        alreadyOwned: true,
+      };
+    }
+
     const selected = await queryAnyProductDetails(billing, productId);
     if (!selected || !localizedDisplayPrice(selected)) {
       const err = new Error(
         `Google Play did not return an available localized product for ${productId}`,
       );
       err.code = "product_unavailable";
+      err.productId = productId;
       throw err;
     }
 
-    let selectedOfferToken = null;
-    try {
-      selectedOfferToken =
-        selected?.offerToken ||
-        selected?.offer_token ||
-        selected?.subscriptionOfferDetails?.[0]?.offerToken ||
-        selected?.subscriptionOfferDetails?.[0]?.offer_token ||
-        selected?.subscriptionOfferDetailsList?.[0]?.offerToken ||
-        selected?.subscriptionOfferDetailsList?.[0]?.offer_token ||
-        selected?.offers?.[0]?.offerToken ||
-        selected?.offers?.[0]?.offer_token ||
-        null;
-    } catch (_) {
-      selectedOfferToken = null;
-    }
+    const selectedOffer = selectSubscriptionOffer(selected, durationId);
+    const selectedOfferToken = offerTokenOf(selectedOffer.offer);
+    const basePlanId = basePlanIdOf(selectedOffer.offer);
+    const offerId = offerIdOf(selectedOffer.offer);
 
     if (!selectedOfferToken) {
       const err = new Error(
@@ -397,20 +536,22 @@ export async function purchase(planId, durationId) {
       );
       err.code = "offer_token_missing";
       err.productId = productId;
+      err.basePlanId = basePlanId;
+      err.offerId = offerId;
       throw err;
     }
 
-    if (typeof window !== "undefined") {
-      try {
-        window.__fiftyFitBillingDiagnostics = {
-          ...(window.__fiftyFitBillingDiagnostics || {}),
-          stage: "before_launchBillingFlow",
-          productId,
-          offerTokenPresent: true,
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (_) {}
-    }
+    writeBillingDiagnostics({
+      stage: "before_launchBillingFlow",
+      productId,
+      durationId,
+      expectedBasePlanId: selectedOffer.expectedBasePlan,
+      selectedBasePlanId: basePlanId,
+      selectedOfferId: offerId,
+      offerCount: selectedOffer.offers.length,
+      offerTokenPresent: true,
+      offerTokenMatchesProduct: true,
+    });
 
     let result;
     try {
@@ -421,19 +562,22 @@ export async function purchase(planId, durationId) {
       });
     } catch (launchError) {
       const launchMapped = billingError(launchError, "billing_flow_failed");
-      try {
-        window.__fiftyFitBillingDiagnostics = {
-          stage: "launchBillingFlow_exception",
-          productId,
-          code: launchMapped.code,
-          responseCode: launchMapped.responseCode,
-          message: launchMapped.message,
-          nativeCode: launchMapped.nativeCode || null,
-          nativeMessage: launchMapped.nativeMessage || null,
-          raw: String(launchError?.message || launchError || ""),
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (_) {}
+      writeBillingDiagnostics({
+        stage: "launchBillingFlow_exception",
+        productId,
+        durationId,
+        selectedBasePlanId: basePlanId,
+        selectedOfferId: offerId,
+        offerTokenPresent: true,
+        code: launchMapped.code,
+        responseCode: launchMapped.responseCode,
+        responseName: launchMapped.billingResponseCodeName,
+        message: launchMapped.message,
+        nativeCode: launchMapped.nativeCode || null,
+        nativeMessage: launchMapped.nativeMessage || null,
+        subResponseCode: launchMapped.subResponseCode || null,
+        raw: String(launchError?.message || launchError || ""),
+      });
       throw launchMapped;
     }
 
@@ -446,31 +590,36 @@ export async function purchase(planId, durationId) {
       result?.response?.message ||
       result?.message ||
       "Google Play did not complete the purchase";
+    const responseName = billingResponseName(responseCode);
 
-    if (typeof window !== "undefined") {
-      try {
-        window.__fiftyFitBillingDiagnostics = {
-          stage: "launchBillingFlow_result",
-          productId,
-          responseCode: responseCode ?? null,
-          debugMessage,
-          subResponseCode: result?.subResponseCode ?? null,
-          rawResult: result,
-          updatedAt: new Date().toISOString(),
-        };
-      } catch (_) {}
-    }
+    writeBillingDiagnostics({
+      stage: "launchBillingFlow_result",
+      productId,
+      durationId,
+      selectedBasePlanId: basePlanId,
+      selectedOfferId: offerId,
+      offerTokenPresent: true,
+      responseCode: responseCode ?? null,
+      responseName,
+      debugMessage,
+      subResponseCode: result?.subResponseCode ?? null,
+      rawResult: result,
+    });
 
     if (responseCode != null && String(responseCode) !== "0") {
       const flowError = billingError(
         {
           responseCode,
-          message: debugMessage,
+          message: `Google Play ${responseName} (code ${responseCode}): ${debugMessage}`,
           subResponseCode: result?.subResponseCode,
         },
         "billing_flow_failed",
       );
-      flowError.message = `Google Play Billing code ${responseCode}: ${debugMessage}`;
+      flowError.message =
+        `Google Play ${responseName} (code ${responseCode}) — ${debugMessage}`;
+      flowError.productId = productId;
+      flowError.basePlanId = basePlanId;
+      flowError.offerId = offerId;
       return {
         success: false,
         preview: false,
@@ -480,19 +629,34 @@ export async function purchase(planId, durationId) {
 
     const token = extractPurchaseToken(result);
     if (!token) {
+      const noTokenError = Object.assign(
+        new Error(
+          "Google Play opened/returned from the billing flow but did not provide a purchase token",
+        ),
+        {
+          code: result?.pending ? "purchase_pending" : "purchase_not_completed",
+          productId,
+          basePlanId,
+          offerId,
+        },
+      );
+      writeBillingDiagnostics({
+        stage: result?.pending ? "purchase_pending" : "purchase_token_missing",
+        productId,
+        selectedBasePlanId: basePlanId,
+        selectedOfferId: offerId,
+        responseCode: responseCode ?? null,
+        responseName,
+        pending: !!result?.pending,
+        cancelled: !!result?.cancelled || !!result?.canceled,
+        message: noTokenError.message,
+      });
       return {
         success: false,
         preview: false,
         pending: !!result?.pending,
         cancelled: !!result?.cancelled || !!result?.canceled,
-        error: Object.assign(
-          new Error("Google Play did not return a purchase token"),
-          {
-            code: result?.pending
-              ? "purchase_pending"
-              : "purchase_not_completed",
-          },
-        ),
+        error: noTokenError,
       };
     }
 
@@ -508,10 +672,22 @@ export async function purchase(planId, durationId) {
       result,
     };
   } catch (e) {
+    const error = billingError(e, "billing_flow_failed");
+    writeBillingDiagnostics({
+      stage: "purchase_exception",
+      productId,
+      durationId,
+      code: error.code,
+      responseCode: error.responseCode,
+      responseName: error.billingResponseCodeName,
+      message: error.message,
+      nativeMessage: error.nativeMessage || null,
+      subResponseCode: error.subResponseCode || null,
+    });
     return {
       success: false,
       preview: false,
-      error: billingError(e, "billing_flow_failed"),
+      error,
     };
   } finally {
     purchaseInFlight = false;
@@ -580,6 +756,12 @@ export async function restorePurchases() {
       });
     });
 
+    writeBillingDiagnostics({
+      stage: "restore_complete",
+      activePurchaseCount: activePurchases.length,
+      restoredPlans,
+    });
+
     return {
       restoredPlans,
       purchases: purchasesOut,
@@ -587,11 +769,19 @@ export async function restorePurchases() {
       verified: false,
     };
   } catch (e) {
+    const error = billingError(e, "billing_restore_failed");
+    writeBillingDiagnostics({
+      stage: "restore_failed",
+      code: error.code,
+      responseCode: error.responseCode,
+      responseName: error.billingResponseCodeName,
+      message: error.message,
+    });
     return {
       restoredPlans,
       purchases: purchasesOut,
       preview: false,
-      error: billingError(e, "billing_restore_failed"),
+      error,
     };
   }
 }

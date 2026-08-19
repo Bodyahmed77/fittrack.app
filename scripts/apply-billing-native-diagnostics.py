@@ -86,7 +86,7 @@ replacements = [
     ),
     (
         'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());',
-        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "][ProductId=" + productDetails.getProductId() + "][BasePlanId=" + subscriptionOfferDetails.getBasePlanId() + "][OfferId=" + String.valueOf(subscriptionOfferDetails.getOfferId()) + "][RequestedOfferTokenPresent=" + String.valueOf(requestedOfferToken != null && !requestedOfferToken.trim().isEmpty()) + "][OfferTokenMatch=" + String.valueOf(requestedOfferToken == null || requestedOfferToken.equals(subscriptionOfferDetails.getOfferToken())) + "] Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
     ),
     (
         'call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage());',
@@ -121,10 +121,6 @@ required = [
     "BillingResponseCode=",
     "getOnPurchasesUpdatedSubResponseCode()",
     "String.valueOf(billingResult2.getResponseCode())",
-    "[ProductId=",
-    "[BasePlanId=",
-    "[RequestedOfferTokenPresent=",
-    "[OfferTokenMatch=",
     'ret.put("subscription_offer_count"',
     'ret.put("base_plan_id"',
     'ret.put("offer_id"',

@@ -1,5 +1,4 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 
 function fiftyFitReleaseCompatibility() {
   return {
@@ -77,7 +76,7 @@ function fiftyFitReleaseCompatibility() {
 }
 
 export default defineConfig({
-  plugins: [fiftyFitReleaseCompatibility(), react()],
+  plugins: [fiftyFitReleaseCompatibility()],
   base: "./",
   build: {
     outDir: "dist",

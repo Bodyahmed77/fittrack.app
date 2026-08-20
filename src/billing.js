@@ -589,8 +589,13 @@ export async function purchase(planId, durationId) {
       result?.debugMessage ||
       result?.response?.message ||
       result?.message ||
-      "Google Play did not complete the purchase";
+      null;
     const responseName = billingResponseName(responseCode);
+    const resolvedDebug =
+      debugMessage ||
+      (responseCode != null
+        ? `Google Play ${responseName} (code ${responseCode})`
+        : "Google Play did not complete the purchase");
 
     writeBillingDiagnostics({
       stage: "launchBillingFlow_result",
@@ -601,7 +606,7 @@ export async function purchase(planId, durationId) {
       offerTokenPresent: true,
       responseCode: responseCode ?? null,
       responseName,
-      debugMessage,
+      debugMessage: resolvedDebug,
       subResponseCode: result?.subResponseCode ?? null,
       rawResult: result,
     });
@@ -610,13 +615,14 @@ export async function purchase(planId, durationId) {
       const flowError = billingError(
         {
           responseCode,
-          message: `Google Play ${responseName} (code ${responseCode}): ${debugMessage}`,
+          message: `Google Play ${responseName} (code ${responseCode}): ${resolvedDebug}`,
           subResponseCode: result?.subResponseCode,
         },
         "billing_flow_failed",
       );
       flowError.message =
-        `Google Play ${responseName} (code ${responseCode}) — ${debugMessage}`;
+        `Google Play ${responseName} (code ${responseCode}) — ${resolvedDebug}`;
+      flowError.debugMessage = resolvedDebug;
       flowError.productId = productId;
       flowError.basePlanId = basePlanId;
       flowError.offerId = offerId;

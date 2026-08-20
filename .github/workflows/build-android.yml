@@ -163,11 +163,12 @@ jobs:
           p = Path('android/app/build.gradle')
           text = p.read_text(encoding='utf-8')
           n = int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
+          # Base 2000 so main builds stay above any previously uploaded verified builds (e.g. 2003)
           text = re.sub(r'\n\s*versionCode\s+\d+', '', text)
           text = re.sub(r'\n\s*versionName\s+"[^"]*"', '', text)
-          text = text.replace('defaultConfig {', f'defaultConfig {{\n        versionCode {1000+n}\n        versionName "1.0.{n}"', 1)
+          text = text.replace('defaultConfig {', f'defaultConfig {{\n        versionCode {2000+n}\n        versionName "1.0.{n}"', 1)
           p.write_text(text, encoding='utf-8')
-          print(f'versionCode={1000+n}, versionName=1.0.{n}')
+          print(f'versionCode={2000+n}, versionName=1.0.{n}')
           PY
 
       - name: Generate assets and sync Capacitor
@@ -273,7 +274,7 @@ jobs:
           require(g.count('defaultConfig {') == 1, f'Expected one defaultConfig block, found {g.count("defaultConfig {")}')
           require(len(re.findall(r'\bversionCode\s+\d+', g)) == 1, 'Expected exactly one versionCode')
           require(len(re.findall(r'\bversionName\s+[\"\'][^\"\']+[\"\']', g)) == 1, 'Expected exactly one versionName')
-          expected_code = 1000 + int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
+          expected_code = 2000 + int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
           actual_code = re.findall(r'\bversionCode\s+(\d+)', g)
           require(actual_code == [str(expected_code)], f'versionCode {actual_code} != expected {expected_code}')
           require('signingConfigs {' in g and 'signingConfigs.release' in g, 'Release signing configuration missing')

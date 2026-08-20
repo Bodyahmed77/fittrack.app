@@ -49,8 +49,6 @@ for imp in imports:
             raise SystemExit("BillingPlugin import insertion point not found")
         text = text.replace(marker, marker + imp + "\n", 1)
 
-# PBL9 requires explicit pending-purchase parameters and supports automatic
-# BillingClient reconnection.
 old_builder = ".enablePendingPurchases()\n                .build();"
 new_builder = ".enablePendingPurchases(\n                        PendingPurchasesParams.newBuilder()\n                                .enableOneTimeProducts()\n                                .build())\n                .enableAutoServiceReconnection()\n                .build();"
 if old_builder in text:
@@ -58,8 +56,6 @@ if old_builder in text:
 elif ".enablePendingPurchases()" in text:
     raise SystemExit("Found unrecognized PBL7 enablePendingPurchases() form")
 
-# PBL9 changed queryProductDetailsAsync's callback from List<ProductDetails> to
-# QueryProductDetailsResult. There are exactly two query call sites in this plugin.
 old_callback = "billingClient.queryProductDetailsAsync(params, (billingResult1, productDetailsList) -> {"
 new_callback = "billingClient.queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) -> {\n                        List<ProductDetails> productDetailsList = queryProductDetailsResult == null\n                                ? new ArrayList<>()\n                                : queryProductDetailsResult.getProductDetailsList();"
 count = text.count(old_callback)
@@ -67,9 +63,6 @@ if count != 2:
     raise SystemExit(f"Expected exactly 2 PBL7 query callbacks, found {count}")
 text = text.replace(old_callback, new_callback)
 
-# Native diagnostics: sub-response codes are only defined for the purchase
-# update callback in the current PBL API, so do not call them on unrelated
-# BillingResult instances such as product queries or acknowledgements.
 replacements = [
     (
         'call.reject("Error retrieving product details: " + suffix);',
@@ -135,7 +128,7 @@ required = [
 ]
 missing = [x for x in required if x not in text]
 if missing:
-    raise SystemExit("Billing native PBL9 diagnostics/migration incomplete: " + ", ".join(missing))
+    raise SystemExit("Billing native PBL9 diagnostics incomplete: " + ", ".join(missing))
 
 if ".enablePendingPurchases()" in text:
     raise SystemExit("PBL7 no-arg enablePendingPurchases() still present after migration")

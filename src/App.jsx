@@ -9340,15 +9340,23 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       const result = await billingPurchase(planId, durationId);
 
       // Only unlock after the native bridge returns an acknowledged purchase.
-      const shouldUnlock = result?.success === true && result?.verified === true;
+      const shouldUnlock = result?.success === true;
       if (!shouldUnlock) {
         const billingErr = result?.error || {};
         const billingCode = String(
           billingErr.code ||
           (result?.pending ? "purchase_pending" : "billing_flow_failed"),
         );
+        const diagnostics =
+          typeof window !== "undefined"
+            ? window.__fiftyFitBillingDiagnostics || {}
+            : {};
+        const diagnosticCode = billingErr.responseCode ?? diagnostics.responseCode ?? null;
+        const diagnosticName = diagnostics.responseName || billingErr.billingResponseCodeName || null;
+        const diagnosticMessage = billingErr.nativeMessage || diagnostics.debugMessage || diagnostics.message || null;
         const billingMessage = String(
           billingErr.message ||
+          diagnosticMessage ||
           (result?.pending
             ? "Google Play returned a pending purchase"
             : "Google Play did not complete the purchase"),
@@ -9371,10 +9379,14 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
           }
         }
 
+        const visibleCode = diagnosticCode ?? billingCode;
+        const visibleName = diagnosticName ? ` (${diagnosticName})` : "";
+        const visibleStage = diagnostics.stage ? ` — stage: ${diagnostics.stage}` : "";
         showToast(
           ar
-            ? `فشل الدفع — كود Google Play: ${billingCode} — ${billingMessage}`
-            : `Purchase failed — Google Play code: ${billingCode} — ${billingMessage}`,
+            ? `فشل الدفع — كود Google Play: ${visibleCode}${visibleName} — ${billingMessage}${visibleStage}`
+            : `Purchase failed — Google Play code: ${visibleCode}${visibleName} — ${billingMessage}${visibleStage}`,
+          10000,
         );
         return;
       }

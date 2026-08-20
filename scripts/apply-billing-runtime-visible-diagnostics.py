@@ -10,11 +10,7 @@ if not APP.exists() or not BILLING.exists():
 app = APP.read_text(encoding="utf-8")
 billing = BILLING.read_text(encoding="utf-8")
 
-# ---------------------------------------------------------------------------
-# billing.js: normalize every native rejection shape into responseCode and
-# nativeMessage. The native plugin may expose the numeric response as
-# error.code/nativeCode, or embed it in FIFTYFIT_BILLING_ERROR text.
-# ---------------------------------------------------------------------------
+# Normalize every native rejection shape into responseCode and nativeMessage.
 billing_pattern = re.compile(
     r'function billingError\(e, fallbackCode = "billing_error"\) \{.*?\n\}\n\nfunction normalizeSkuDetails',
     re.S,
@@ -87,15 +83,17 @@ billing_replacement = '''function billingError(e, fallbackCode = "billing_error"
 
 function normalizeSkuDetails'''
 
-billing2, billing_count = billing_pattern.subn(billing_replacement, billing, count=1)
+billing2, billing_count = billing_pattern.subn(
+    lambda _match: billing_replacement,
+    billing,
+    count=1,
+)
 if billing_count != 1:
     raise SystemExit(
         f"billing.js: expected exactly one billingError block before normalizeSkuDetails, found {billing_count}"
     )
 billing = billing2
 
-# Ensure the launch exception diagnostics preserve nativeCode when responseCode
-# was not exposed directly by the bridge.
 billing = billing.replace(
     'responseCode: launchMapped.responseCode,\n        responseName: launchMapped.billingResponseCodeName,',
     'responseCode: launchMapped.responseCode ?? launchMapped.nativeCode ?? null,\n        responseName: launchMapped.billingResponseCodeName,',
@@ -107,10 +105,7 @@ billing = billing.replace(
     1,
 )
 
-# ---------------------------------------------------------------------------
-# App.jsx: diagnostics must beat generic bridge fallback messages. Otherwise
-# a generic message can hide the actual BillingResult debugMessage/code.
-# ---------------------------------------------------------------------------
+# App.jsx: diagnostics must beat generic bridge fallback messages.
 app = app.replace(
     'const diagnosticCode = billingErr.responseCode ?? diagnostics.responseCode ?? null;',
     '''const diagnosticCode =
@@ -175,9 +170,9 @@ app = app.replace(
     1,
 )
 
-# Outer catch path: also consult the shared diagnostics object.
 app = app.replace(
-    '''const billingCode = String(
+    '''    } catch (e) {
+      const billingCode = String(
         e?.code || e?.responseCode || e?.nativeCode || "billing_flow_failed",
       );
       const billingMessage = String(
@@ -186,7 +181,8 @@ app = app.replace(
           e?.message ||
           "Google Play did not complete the purchase",
       );''',
-    '''const catchDiagnostics =
+    '''    } catch (e) {
+      const catchDiagnostics =
         typeof window !== "undefined"
           ? window.__fiftyFitBillingDiagnostics || {}
           : {};
@@ -211,8 +207,6 @@ app = app.replace(
     1,
 )
 
-# We require the exact contract in the transformed source. A silent no-op is
-# unacceptable because it would recreate the old generic message.
 required_app = [
     'const shouldUnlock = result?.success === true;',
     'billingErr.nativeCode',

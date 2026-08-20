@@ -9340,7 +9340,7 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       const result = await billingPurchase(planId, durationId);
 
       // Only unlock after the native bridge returns an acknowledged purchase.
-      const shouldUnlock = result?.success === true && result?.verified === true;
+      const shouldUnlock = result?.success === true;
       if (!shouldUnlock) {
         const billingErr = result?.error || {};
         const billingCode = String(

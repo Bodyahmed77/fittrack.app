@@ -1,0 +1,295 @@
+name: One-time billing diagnostics source hardening v2
+
+on:
+  push:
+    branches: [fix/billing-diagnostics-authoritative-v2]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Patch canonical billing error propagation
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          import subprocess
+
+          app_path = Path('src/App.jsx')
+          billing_path = Path('src/billing.js')
+          app = app_path.read_text(encoding='utf-8')
+          billing = billing_path.read_text(encoding='utf-8')
+
+          # ---------- billing.js: preserve every native error shape ----------
+          old_billing = '''function billingError(e, fallbackCode = "billing_error") {
+  const source = e?.error || e?.response || e;
+  const code =
+    source?.code ??
+    source?.responseCode ??
+    source?.billingResponseCode ??
+    e?.code ??
+    e?.responseCode ??
+    fallbackCode;
+  const message = String(
+    source?.message ||
+      source?.debugMessage ||
+      e?.message ||
+      "Google Play Billing could not complete the operation",
+  );
+  const err = new Error(message);
+  err.code = String(code);
+  err.responseCode =
+    source?.responseCode ?? source?.billingResponseCode ?? e?.responseCode ?? null;
+  err.nativeCode =
+    source?.code ??
+    source?.responseCode ??
+    source?.billingResponseCode ??
+    e?.nativeCode ??
+    null;
+  err.nativeMessage =
+    source?.debugMessage || source?.message || e?.nativeMessage || e?.message || null;
+  err.billingResponseCodeName = billingResponseName(err.responseCode ?? err.code);
+  if (source?.subResponseCode != null) {
+    err.subResponseCode = String(source.subResponseCode);
+  }
+  err.raw = e;
+  return err;
+}'''
+
+          new_billing = '''function billingError(e, fallbackCode = "billing_error") {
+  const source = e?.error || e?.response || e;
+  const rawMessage = String(
+    source?.debugMessage ||
+      source?.message ||
+      e?.debugMessage ||
+      e?.nativeMessage ||
+      e?.message ||
+      "Google Play Billing could not complete the operation",
+  );
+
+  const numericCandidates = [
+    source?.responseCode,
+    source?.billingResponseCode,
+    source?.code,
+    e?.responseCode,
+    e?.billingResponseCode,
+    e?.nativeCode,
+  ];
+  let parsedResponseCode = numericCandidates.find(
+    (value) => value !== null && value !== undefined && /^-?\\d+$/.test(String(value).trim()),
+  );
+  if (parsedResponseCode === undefined) parsedResponseCode = null;
+
+  if (parsedResponseCode === null) {
+    const embedded = rawMessage.match(/BillingResponseCode\\s*[=:]\\s*(-?\\d+)/i);
+    if (embedded) parsedResponseCode = Number(embedded[1]);
+  }
+
+  const code =
+    parsedResponseCode ??
+    source?.code ??
+    e?.code ??
+    fallbackCode;
+
+  const err = new Error(rawMessage);
+  err.code = String(code);
+  err.responseCode = parsedResponseCode;
+  err.nativeCode =
+    source?.code ??
+    source?.responseCode ??
+    source?.billingResponseCode ??
+    e?.nativeCode ??
+    parsedResponseCode ??
+    null;
+  err.nativeMessage =
+    source?.debugMessage ||
+    source?.nativeMessage ||
+    e?.nativeMessage ||
+    e?.debugMessage ||
+    null;
+  err.billingResponseCodeName = billingResponseName(parsedResponseCode ?? code);
+  if (source?.subResponseCode != null) {
+    err.subResponseCode = String(source.subResponseCode);
+  }
+  err.raw = e;
+  return err;
+}'''
+
+          if old_billing in billing:
+              billing = billing.replace(old_billing, new_billing, 1)
+          elif 'function billingError(e, fallbackCode = "billing_error") {' not in billing:
+              raise SystemExit('billingError function not found')
+
+          # Every native launch exception must preserve the exact normalized code/message.
+          old_launch_diag = '''        code: launchMapped.code,
+        responseCode: launchMapped.responseCode,
+        responseName: launchMapped.billingResponseCodeName,
+        message: launchMapped.message,
+        nativeCode: launchMapped.nativeCode || null,
+        nativeMessage: launchMapped.nativeMessage || null,'''
+          new_launch_diag = '''        code: launchMapped.code,
+        responseCode: launchMapped.responseCode ?? launchMapped.nativeCode ?? null,
+        responseName: launchMapped.billingResponseCodeName,
+        message: launchMapped.nativeMessage || launchMapped.message,
+        nativeCode: launchMapped.nativeCode || null,
+        nativeMessage: launchMapped.nativeMessage || null,'''
+          if old_launch_diag in billing:
+              billing = billing.replace(old_launch_diag, new_launch_diag, 1)
+
+          # ---------- App.jsx: read diagnostics before generic bridge text ----------
+          old_diag_code = 'const diagnosticCode = billingErr.responseCode ?? diagnostics.responseCode ?? null;'
+          new_diag_code = '''const diagnosticCode =
+          billingErr.responseCode ??
+          diagnostics.responseCode ??
+          billingErr.nativeCode ??
+          diagnostics.nativeCode ??
+          diagnostics.code ??
+          null;'''
+          if old_diag_code in app:
+              app = app.replace(old_diag_code, new_diag_code, 1)
+
+          old_diag_name = 'const diagnosticName = diagnostics.responseName || billingErr.billingResponseCodeName || null;'
+          new_diag_name = '''const diagnosticName =
+          diagnostics.responseName ||
+          billingErr.billingResponseCodeName ||
+          (diagnosticCode != null ? ({
+            "0": "OK",
+            "1": "USER_CANCELED",
+            "2": "SERVICE_UNAVAILABLE",
+            "3": "BILLING_UNAVAILABLE",
+            "4": "ITEM_UNAVAILABLE",
+            "5": "DEVELOPER_ERROR",
+            "6": "ERROR",
+            "7": "ITEM_ALREADY_OWNED",
+            "8": "ITEM_NOT_OWNED",
+            "-1": "SERVICE_DISCONNECTED",
+            "-2": "FEATURE_NOT_SUPPORTED",
+          }[String(diagnosticCode)] || null) : null);'''
+          if old_diag_name in app:
+              app = app.replace(old_diag_name, new_diag_name, 1)
+
+          old_diag_message = '''const diagnosticMessage = billingErr.nativeMessage || diagnostics.debugMessage || diagnostics.message || null;'''
+          new_diag_message = '''const diagnosticMessage =
+          billingErr.nativeMessage ||
+          diagnostics.debugMessage ||
+          diagnostics.nativeMessage ||
+          diagnostics.message ||
+          null;'''
+          if old_diag_message in app:
+              app = app.replace(old_diag_message, new_diag_message, 1)
+
+          old_billing_message = '''const billingMessage = String(
+          billingErr.message ||
+          diagnosticMessage ||
+          (result?.pending
+            ? "Google Play returned a pending purchase"
+            : "Google Play did not complete the purchase"),
+        );'''
+          new_billing_message = '''const billingMessage = String(
+          diagnosticMessage ||
+          billingErr.message ||
+          (result?.pending
+            ? "Google Play returned a pending purchase"
+            : "Google Play did not complete the purchase"),
+        );'''
+          if old_billing_message in app:
+              app = app.replace(old_billing_message, new_billing_message, 1)
+
+          old_diag_obj = '''              responseName: diagnosticName,
+              nativeMessage: diagnosticMessage,'''
+          new_diag_obj = '''              responseCode: diagnosticCode,
+              responseName: diagnosticName,
+              nativeMessage: diagnosticMessage,'''
+          if old_diag_obj in app and '              responseCode: diagnosticCode,\n              responseName: diagnosticName,' not in app:
+              app = app.replace(old_diag_obj, new_diag_obj, 1)
+
+          # Also harden the outer catch path so a bridge rejection cannot fall back to an opaque code.
+          old_catch = '''    } catch (e) {
+      const billingCode = String(
+        e?.code || e?.responseCode || e?.nativeCode || "billing_flow_failed",
+      );
+      const billingMessage = String(
+        e?.debugMessage ||
+          e?.nativeMessage ||
+          e?.message ||
+          "Google Play did not complete the purchase",
+      );'''
+          new_catch = '''    } catch (e) {
+      const catchDiagnostics =
+        typeof window !== "undefined"
+          ? window.__fiftyFitBillingDiagnostics || {}
+          : {};
+      const billingCode = String(
+        e?.responseCode ??
+          e?.code ??
+          e?.nativeCode ??
+          catchDiagnostics.responseCode ??
+          catchDiagnostics.nativeCode ??
+          catchDiagnostics.code ??
+          "billing_flow_failed",
+      );
+      const billingMessage = String(
+        e?.nativeMessage ||
+          e?.debugMessage ||
+          catchDiagnostics.nativeMessage ||
+          catchDiagnostics.debugMessage ||
+          e?.message ||
+          catchDiagnostics.message ||
+          "Google Play did not complete the purchase",
+      );'''
+          if old_catch in app:
+              app = app.replace(old_catch, new_catch, 1)
+
+          # Make the final source fail loudly if this exact observability contract is lost.
+          required_app = [
+              'const shouldUnlock = result?.success === true;',
+              'billingErr.nativeCode',
+              'diagnostics.nativeCode',
+              'diagnostics.code',
+              'diagnosticMessage ||',
+          ]
+          missing_app = [x for x in required_app if x not in app]
+          if missing_app:
+              raise SystemExit('App.jsx diagnostic hardening incomplete: ' + ', '.join(missing_app))
+
+          required_billing = [
+              'const rawMessage = String(',
+              'BillingResponseCode\\\\s*[=:]\\\\s*(-?\\\\d+)',
+              'err.responseCode = parsedResponseCode;',
+          ]
+          missing_billing = [x for x in required_billing if x not in billing]
+          if missing_billing:
+              raise SystemExit('billing.js diagnostic normalization incomplete: ' + ', '.join(missing_billing))
+
+          app_path.write_text(app, encoding='utf-8')
+          billing_path.write_text(billing, encoding='utf-8')
+
+          # Prevent the install-time transform from downgrading the source-level precedence later.
+          visible_script = Path('scripts/apply-billing-runtime-visible-diagnostics.py')
+          if visible_script.exists():
+              t = visible_script.read_text(encoding='utf-8')
+              t = t.replace('''          billingErr.message ||\n          diagnosticMessage ||''', '''          diagnosticMessage ||\n          billingErr.message ||''')
+              visible_script.write_text(t, encoding='utf-8')
+
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'add', 'src/App.jsx', 'src/billing.js', 'scripts/apply-billing-runtime-visible-diagnostics.py'], check=True)
+          subprocess.run(['git', 'rm', '-f', '.github/workflows/one-time-billing-diagnostics-v2.yml'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'fix: make Google Play billing diagnostics authoritative'], check=True)
+          subprocess.run(['git', 'push', 'origin', 'HEAD:fix/billing-diagnostics-authoritative-v2'], check=True)
+
+      - name: Validate source build after canonical patch
+        run: |
+          set -euo pipefail
+          node --check src/billing.js
+          npm ci
+          npm run build

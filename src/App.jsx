@@ -9247,6 +9247,121 @@ function PlanDetailScreen({ data, setData, back, planId, showToast }) {
 }
 
 /* ============================== PAYWALL ============================== */
+// Human-readable Google Play BillingResponseCode → Arabic / English.
+// Used so the toast never falls back to the generic "Google Play did not
+// complete the purchase" when a real response code is available.
+function friendlyBillingErrorMessage(code, responseName, debugMessage, ar) {
+  const c = String(code ?? "").trim();
+  const name = String(responseName || "").toUpperCase();
+  const debug = String(debugMessage || "").trim();
+
+  const byCode = {
+    "0": ar ? "تمت العملية بنجاح" : "OK",
+    "1": ar
+      ? "تم إلغاء الشراء من جهازك (USER_CANCELED)"
+      : "Purchase cancelled by user (USER_CANCELED)",
+    "2": ar
+      ? "خدمة Google Play غير متاحة مؤقتًا — تحقق من الإنترنت (SERVICE_UNAVAILABLE)"
+      : "Google Play service temporarily unavailable — check network (SERVICE_UNAVAILABLE)",
+    "3": ar
+      ? "الفوترة غير متاحة على هذا الجهاز أو الحساب (BILLING_UNAVAILABLE)"
+      : "Billing unavailable on this device/account (BILLING_UNAVAILABLE)",
+    "4": ar
+      ? "المنتج غير متاح في متجر Google Play (ITEM_UNAVAILABLE)"
+      : "Product not available in Google Play (ITEM_UNAVAILABLE)",
+    "5": ar
+      ? "خطأ في إعداد المنتج أو الـ offer token (DEVELOPER_ERROR)"
+      : "Invalid product setup or offer token (DEVELOPER_ERROR)",
+    "6": ar
+      ? "خطأ عام من Google Play أثناء الدفع (ERROR)"
+      : "Fatal error during Google Play billing (ERROR)",
+    "7": ar
+      ? "الاشتراك مملوك بالفعل — استخدم استعادة المشتريات (ITEM_ALREADY_OWNED)"
+      : "Item already owned — use Restore Purchases (ITEM_ALREADY_OWNED)",
+    "8": ar
+      ? "المنتج غير مملوك حاليًا (ITEM_NOT_OWNED)"
+      : "Item not owned (ITEM_NOT_OWNED)",
+    "-1": ar
+      ? "انقطع الاتصال بخدمة الفوترة (SERVICE_DISCONNECTED)"
+      : "Billing service disconnected (SERVICE_DISCONNECTED)",
+    "-2": ar
+      ? "الميزة غير مدعومة على هذا الجهاز (FEATURE_NOT_SUPPORTED)"
+      : "Feature not supported on this device (FEATURE_NOT_SUPPORTED)",
+    billing_flow_failed: ar
+      ? "فشل تدفق الدفع من Google Play"
+      : "Google Play billing flow failed",
+    billing_connection_failed: ar
+      ? "تعذر الاتصال بخدمة Google Play Billing"
+      : "Could not connect to Google Play Billing",
+    offer_token_missing: ar
+      ? "لا يوجد عرض اشتراك صالح لهذا المنتج في Google Play"
+      : "No eligible subscription offer for this product",
+    purchase_pending: ar
+      ? "عملية الشراء معلّقة — انتظر التأكيد من Google Play"
+      : "Purchase is pending — waiting for Google Play confirmation",
+    purchase_not_completed: ar
+      ? "تم فتح نافذة الدفع لكن لم يكتمل الشراء (لا يوجد purchase token)"
+      : "Billing sheet closed without a completed purchase (no purchase token)",
+  };
+
+  // Prefer exact code, then response name, then debug text, never the generic fallback alone.
+  if (byCode[c]) return byCode[c];
+  if (name && byCode[name]) return byCode[name];
+  // Map common name strings that may arrive instead of numeric codes
+  const nameMap = {
+    USER_CANCELED: byCode["1"],
+    SERVICE_UNAVAILABLE: byCode["2"],
+    BILLING_UNAVAILABLE: byCode["3"],
+    ITEM_UNAVAILABLE: byCode["4"],
+    DEVELOPER_ERROR: byCode["5"],
+    ERROR: byCode["6"],
+    ITEM_ALREADY_OWNED: byCode["7"],
+    ITEM_NOT_OWNED: byCode["8"],
+    SERVICE_DISCONNECTED: byCode["-1"],
+    FEATURE_NOT_SUPPORTED: byCode["-2"],
+  };
+  if (name && nameMap[name]) return nameMap[name];
+
+  if (debug && !/google play did not complete the purchase/i.test(debug)) {
+    return debug;
+  }
+  if (c && c !== "billing_flow_failed") {
+    return ar
+      ? `فشل الدفع — كود: ${c}${name ? ` (${name})` : ""}`
+      : `Purchase failed — code: ${c}${name ? ` (${name})` : ""}`;
+  }
+  return ar
+    ? "فشل الدفع من Google Play — تفاصيل غير معروفة"
+    : "Google Play purchase failed — unknown details";
+}
+
+function formatBillingFailureToast({
+  ar,
+  code,
+  responseCode,
+  responseName,
+  debugMessage,
+  stage,
+}) {
+  const visibleCode =
+    responseCode != null && String(responseCode) !== ""
+      ? String(responseCode)
+      : code != null
+        ? String(code)
+        : "unknown";
+  const visibleName = responseName ? ` (${responseName})` : "";
+  const friendly = friendlyBillingErrorMessage(
+    responseCode ?? code,
+    responseName,
+    debugMessage,
+    ar,
+  );
+  const stagePart = stage ? (ar ? ` — مرحلة: ${stage}` : ` — stage: ${stage}`) : "";
+  return ar
+    ? `فشل الدفع — كود Google Play: ${visibleCode}${visibleName} — ${friendly}${stagePart}`
+    : `Purchase failed — Google Play code: ${visibleCode}${visibleName} — ${friendly}${stagePart}`;
+}
+
 // params.focus === "ai" opens the paywall pre-selected on the AI Coach
 // Pro plan (from the AI Coach drawer upgrade card via go("paywall", { focus: "ai" })).
 function PaywallScreen({ data, setData, back, showToast, params = {} }) {
@@ -9339,29 +9454,48 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       //      and we allow a simulated unlock so the flow can be tested.
       const result = await billingPurchase(planId, durationId);
 
-      // Only unlock after the native bridge returns an acknowledged purchase.
-      const shouldUnlock = result?.success === true;
-      if (!shouldUnlock) {
+      // Native success means Google Play returned a purchase token.
+      // Server verification (and acknowledgement) happens next.
+      // billing.js intentionally returns verified:false because acknowledgement
+      // is deferred to the backend. Requiring verified===true turned every
+      // successful native purchase into the generic failure toast.
+      if (!result?.success) {
         const billingErr = result?.error || {};
+        const diagnostics =
+          (typeof window !== "undefined" &&
+            window.__fiftyFitBillingDiagnostics) ||
+          {};
         const billingCode = String(
           billingErr.code ||
-          (result?.pending ? "purchase_pending" : "billing_flow_failed"),
+            billingErr.responseCode ||
+            billingErr.nativeCode ||
+            diagnostics.code ||
+            (result?.pending ? "purchase_pending" : "billing_flow_failed"),
         );
-        const diagnostics =
-          typeof window !== "undefined"
-            ? window.__fiftyFitBillingDiagnostics || {}
-            : {};
-        const diagnosticCode = billingErr.responseCode ?? diagnostics.responseCode ?? null;
-        const diagnosticName = diagnostics.responseName || billingErr.billingResponseCodeName || null;
-        const diagnosticMessage = billingErr.nativeMessage || diagnostics.debugMessage || diagnostics.message || null;
+        const responseCode =
+          billingErr.responseCode ??
+          diagnostics.responseCode ??
+          null;
+        const responseName =
+          billingErr.billingResponseCodeName ||
+          diagnostics.responseName ||
+          null;
         const billingMessage = String(
-          billingErr.message ||
-          diagnosticMessage ||
-          (result?.pending
-            ? "Google Play returned a pending purchase"
-            : "Google Play did not complete the purchase"),
+          billingErr.debugMessage ||
+            billingErr.nativeMessage ||
+            billingErr.message ||
+            diagnostics.debugMessage ||
+            diagnostics.message ||
+            (result?.pending
+              ? "Google Play returned a pending purchase"
+              : ""),
         );
-        const billingProduct = result?.productId || "unknown_product";
+        const billingProduct =
+          result?.productId ||
+          billingErr.productId ||
+          selectedProductId ||
+          "unknown_product";
+        const stage = diagnostics.stage || null;
 
         if (typeof window !== "undefined") {
           try {
@@ -9369,9 +9503,18 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
               code: billingCode,
               message: billingMessage,
               productId: billingProduct,
+              responseCode,
+              responseName,
+              nativeCode: billingErr.nativeCode ?? null,
+              nativeMessage: billingErr.nativeMessage ?? null,
+              basePlanId: billingErr.basePlanId ?? null,
+              offerId: billingErr.offerId ?? null,
+              subResponseCode: billingErr.subResponseCode || null,
               pending: !!result?.pending,
               cancelled: !!result?.cancelled,
-              subResponseCode: billingErr.subResponseCode || null,
+              alreadyOwned: !!result?.alreadyOwned,
+              stage,
+              diagnostics,
               updatedAt: new Date().toISOString(),
             };
           } catch (_) {
@@ -9379,14 +9522,16 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
           }
         }
 
-        const visibleCode = diagnosticCode ?? billingCode;
-        const visibleName = diagnosticName ? ` (${diagnosticName})` : "";
-        const visibleStage = diagnostics.stage ? ` — stage: ${diagnostics.stage}` : "";
         showToast(
-          ar
-            ? `فشل الدفع — كود Google Play: ${visibleCode}${visibleName} — ${billingMessage}${visibleStage}`
-            : `Purchase failed — Google Play code: ${visibleCode}${visibleName} — ${billingMessage}${visibleStage}`,
-          10000,
+          formatBillingFailureToast({
+            ar,
+            code: billingCode,
+            responseCode,
+            responseName,
+            debugMessage: billingMessage,
+            stage,
+          }),
+          12000,
         );
         return;
       }
@@ -9512,26 +9657,51 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       // 4) Trigger in-app review after a successful unlock.
       maybeRequestReview("purchase").catch(() => {});
     } catch (e) {
+      const diagnostics =
+        (typeof window !== "undefined" &&
+          window.__fiftyFitBillingDiagnostics) ||
+        {};
       const billingCode = String(
-        e?.code || e?.responseCode || e?.nativeCode || "billing_flow_failed",
+        e?.code ||
+          e?.responseCode ||
+          e?.nativeCode ||
+          diagnostics.code ||
+          "billing_flow_failed",
       );
+      const responseCode = e?.responseCode ?? diagnostics.responseCode ?? null;
+      const responseName =
+        e?.billingResponseCodeName || diagnostics.responseName || null;
       const billingMessage = String(
-        e?.debugMessage || e?.nativeMessage || e?.message || "Google Play did not complete the purchase",
+        e?.debugMessage ||
+          e?.nativeMessage ||
+          e?.message ||
+          diagnostics.debugMessage ||
+          diagnostics.message ||
+          "",
       );
+      const stage = diagnostics.stage || null;
       try {
         window.__fiftyFitLastBillingError = {
           ...(window.__fiftyFitLastBillingError || {}),
           code: billingCode,
           message: billingMessage,
-          responseCode: e?.responseCode ?? null,
+          responseCode,
+          responseName,
+          stage,
+          diagnostics,
           updatedAt: new Date().toISOString(),
         };
       } catch (_) {}
       showToast(
-        ar
-          ? `فشل الدفع — كود Google Play: ${billingCode} — ${billingMessage}`
-          : `Purchase failed — Google Play code: ${billingCode} — ${billingMessage}`,
-        8000,
+        formatBillingFailureToast({
+          ar,
+          code: billingCode,
+          responseCode,
+          responseName,
+          debugMessage: billingMessage,
+          stage,
+        }),
+        12000,
       );
     } finally {
       setBusy(false);

@@ -40,6 +40,12 @@ jobs:
       - name: Install dependencies without source-mutating postinstall
         run: npm ci --ignore-scripts
 
+      - name: Restore native sharp binary disabled by --ignore-scripts
+        run: |
+          set -euo pipefail
+          npm rebuild sharp --foreground-scripts
+          node -e "require('sharp'); console.log('sharp native runtime OK')"
+
       - name: Apply required native billing patches only
         run: |
           set -euo pipefail

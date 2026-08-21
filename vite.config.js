@@ -87,7 +87,10 @@ function fiftyFitReleaseCompatibility() {
 
 `;
           const marker = "function billingResponseName(code) {";
-          if (out.includes(marker)) out = out.replace(marker, helper + marker, 1);
+          if (!out.includes(marker)) {
+            throw new Error("Fifty Fit Billing normalization: billingResponseName anchor not found in src/billing.js");
+          }
+          out = out.replace(marker, helper + marker, 1);
         }
 
         const oldBlock = `  const err = new Error(message);
@@ -113,13 +116,20 @@ function fiftyFitReleaseCompatibility() {
   err.code = String(code);
   err.responseCode = resolvedResponseCode;
   err.nativeCode = resolvedResponseCode ?? source?.code ?? e?.nativeCode ?? null;`;
-        if (out.includes(oldBlock)) out = out.replace(oldBlock, newBlock, 1);
+        if (!out.includes(oldBlock)) {
+          throw new Error("Fifty Fit Billing normalization: billingError response-code block not found; refusing to ship an unnormalized Billing bridge");
+        }
+        out = out.replace(oldBlock, newBlock, 1);
 
         // Always carry the normalized response code and raw native text into
         // the diagnostics object used by the Paywall toast.
+        const nameLine = 'err.billingResponseCodeName = billingResponseName(err.responseCode ?? err.code);';
+        if (!out.includes(nameLine)) {
+          throw new Error("Fifty Fit Billing normalization: billingResponseCodeName anchor not found");
+        }
         out = out.replace(
-          'err.billingResponseCodeName = billingResponseName(err.responseCode ?? err.code);',
-          'err.billingResponseCodeName = billingResponseName(err.responseCode ?? err.code);\n  err.debugMessage = err.nativeMessage || message;\n  try { writeBillingDiagnostics({ stage: "error_normalized", responseCode: err.responseCode, responseName: err.billingResponseCodeName, debugMessage: err.debugMessage, nativeCode: err.nativeCode }); } catch (_) {}',
+          nameLine,
+          nameLine + '\n  err.debugMessage = err.nativeMessage || message;\n  try { writeBillingDiagnostics({ stage: "error_normalized", responseCode: err.responseCode, responseName: err.billingResponseCodeName, debugMessage: err.debugMessage, nativeCode: err.nativeCode }); } catch (_) {}',
         );
 
         return { code: out, map: null };

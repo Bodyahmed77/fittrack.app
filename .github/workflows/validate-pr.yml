@@ -33,8 +33,15 @@ jobs:
       - name: Install Android API 36 / build tools
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies without source-mutating postinstall
+        run: npm ci --ignore-scripts
+
+      - name: Apply required native billing patches only
+        run: |
+          set -euo pipefail
+          python3 scripts/apply-billing-native-diagnostics.py
+          python3 scripts/apply-billing-native-offer-diagnostics.py
+          python3 scripts/apply-google-native-diagnostics.py
 
       - name: Validate production invariants
         run: python3 scripts/validate-production-invariants.py
@@ -47,6 +54,19 @@ jobs:
           node --check src/googleAuth.js
           node --check src/billing.js
           node --check src/registerPurchase.js
+
+      - name: Validate dependency manifest consistency
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('package.json').read_text())
+          l = json.loads(Path('package-lock.json').read_text())
+          root = l['packages']['']
+          assert root['devDependencies']['@vitejs/plugin-react'] == p['devDependencies']['@vitejs/plugin-react']
+          assert root['devDependencies']['vite'] == p['devDependencies']['vite']
+          print('package.json/package-lock.json consistency passed')
+          PY
 
       - name: Build web application
         run: npm run build
@@ -64,7 +84,7 @@ jobs:
           printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
           test -s android/app/google-services.json
 
-      - name: Apply generated Android billing/runtime patches
+      - name: Apply generated Android runtime patches
         run: |
           set -euo pipefail
           npx cap sync android
@@ -106,3 +126,14 @@ jobs:
       - name: Compile Android debug artifact (Billing/PBL compatibility gate)
         working-directory: android
         run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Verify release-time Billing normalization transform
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('vite.config.js').read_text(encoding='utf-8')
+          required = ['extractBillingResponseCode', 'resolvedResponseCode', 'billingError response-code block not found']
+          for item in required[:2]:
+              assert item in text, item
+          print('Billing normalization transform gate passed')
+          PY

@@ -84,8 +84,14 @@ jobs:
       - name: Build web application
         run: npm run build
 
-      - name: Add Android platform
-        run: npx cap add android
+      - name: Ensure Android platform exists
+        run: |
+          set -euo pipefail
+          if [ ! -d android ]; then
+            npx cap add android
+          else
+            echo 'Android platform already present; using tracked project.'
+          fi
 
       - name: Inject google-services.json and validate OAuth
         env:
@@ -93,6 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${GS_B64:-}" || { echo 'GOOGLE_SERVICES_JSON_BASE64 secret is missing'; exit 1; }
+          mkdir -p android/app
           printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
           python3 - <<'PY'
           import json
@@ -125,9 +132,9 @@ jobs:
           if 'play-services-auth' not in text:
               text = text.replace('dependencies {', "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
           if 'com.google.gms.google-services' not in text:
-              text += '\napply plugin: \'com.google.gms.google-services\'\n'
+              text += "\napply plugin: 'com.google.gms.google-services'\n"
           if 'enableSplit = false' not in text:
-              text += '\nandroid { bundle { language { enableSplit = false } } }\n'
+              text += "\nandroid { bundle { language { enableSplit = false } } }\n"
           app.write_text(text, encoding='utf-8')
 
           text = vars_file.read_text(encoding='utf-8')
@@ -162,7 +169,23 @@ jobs:
           python3 scripts/inject-tiktok-webview.py
           python3 scripts/inject-android-system-ui.py
 
-      - name: Release signing keystore
+      - name: Verify native Billing bridge after Capacitor sync
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          candidates = list(Path('android').rglob('BillingPlugin.java'))
+          assert candidates, 'No generated capacitor-billing BillingPlugin.java found after cap sync'
+          matches = []
+          for p in candidates:
+              text = p.read_text(encoding='utf-8', errors='replace')
+              if 'FIFTYFIT_BILLING_ERROR' in text and 'PendingPurchasesParams' in text and 'QueryProductDetailsResult' in text:
+                  matches.append(p)
+          assert matches, 'Patched PBL9 BillingPlugin did not reach the Android project after cap sync'
+          print('Patched native billing bridge present in Android project:', matches[0])
+          PY
+
+      - name: Decode release signing keystore
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |

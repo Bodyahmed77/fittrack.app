@@ -9459,7 +9459,8 @@ function PaywallScreen({ data, setData, back, showToast, params = {} }) {
       // billing.js intentionally returns verified:false because acknowledgement
       // is deferred to the backend. Requiring verified===true turned every
       // successful native purchase into the generic failure toast.
-      if (!result?.success) {
+      const shouldUnlock = result?.success === true;
+      if (!shouldUnlock) {
         const billingErr = result?.error || {};
         const diagnostics =
           (typeof window !== "undefined" &&

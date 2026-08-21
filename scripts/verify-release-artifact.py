@@ -13,6 +13,10 @@ MARKERS = (
     "launchBillingFlow_result",
     "__fiftyFitBillingDiagnostics",
 )
+UI_MARKERS = (
+    "formatBillingFailureToast",
+    "Google Play code:",
+)
 
 
 def fail(message: str) -> None:
@@ -32,10 +36,13 @@ def read_text(path: Path) -> str:
 
 def verify_source_and_native() -> None:
     src_billing = read_text(ROOT / "src/billing.js")
+    src_app = read_text(ROOT / "src/App.jsx")
     require("responseCode" in src_billing and "responseName" in src_billing, "source does not retain BillingResponseCode diagnostics")
     require("offerToken" in src_billing, "source does not forward the subscription offer token")
     for marker in MARKERS[:3]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
+    for marker in UI_MARKERS:
+        require(marker in src_app, f"src/App.jsx has no billing error UI marker: {marker}")
 
     native_plugin = ROOT / "node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java"
     native_text = read_text(native_plugin)
@@ -61,6 +68,8 @@ def verify_prebuild() -> None:
     dist_text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in dist_js)
     for marker in MARKERS:
         require(marker in dist_text, f"dist is missing runtime billing marker: {marker}")
+    for marker in UI_MARKERS:
+        require(marker in dist_text, f"dist is missing billing error UI marker: {marker}")
 
     android_public = ROOT / "android/app/src/main/assets/public"
     require(android_public.is_dir(), "Capacitor Android public assets directory missing")
@@ -69,9 +78,12 @@ def verify_prebuild() -> None:
     public_text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in public_js)
     for marker in MARKERS:
         require(marker in public_text, f"Android public assets are missing runtime billing marker: {marker}")
+    for marker in UI_MARKERS:
+        require(marker in public_text, f"Android public assets are missing billing error UI marker: {marker}")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
     print("Billing diagnostics confirmed in source, dist and Android public assets")
+    print("Billing error UI diagnostics confirmed in source, dist and Android public assets")
     print("PBL9 native bridge and deterministic FIFTYFIT_BILLING_ERROR marker confirmed")
 
 
@@ -91,6 +103,8 @@ def verify_final_artifacts() -> None:
         packaged_js = b"\n".join(z.read(n) for n in js_entries)
         for marker in MARKERS:
             require(marker.encode() in packaged_js, f"AAB web assets are missing runtime billing marker: {marker}")
+        for marker in UI_MARKERS:
+            require(marker.encode() in packaged_js, f"AAB web assets are missing billing error UI marker: {marker}")
 
         dex_entries = [n for n in names if n.endswith("classes.dex")]
         require(dex_entries, "AAB contains no classes.dex")
@@ -107,6 +121,8 @@ def verify_final_artifacts() -> None:
         apk_js = b"\n".join(z.read(n) for n in z.namelist() if n.endswith(".js"))
         for marker in MARKERS:
             require(marker.encode() in apk_js, f"APK web assets are missing runtime billing marker: {marker}")
+        for marker in UI_MARKERS:
+            require(marker.encode() in apk_js, f"APK web assets are missing billing error UI marker: {marker}")
 
     require(aab_index_hash == apk_index_hash, f"APK/AAB web index mismatch: {aab_index_hash} != {apk_index_hash}")
 
@@ -115,6 +131,7 @@ def verify_final_artifacts() -> None:
     print(f"APK: {apk.stat().st_size} bytes")
     print(f"APK/AAB index sha256: {aab_index_hash}")
     print("Billing diagnostics present in source, dist, Android assets, APK and AAB")
+    print("Billing error UI diagnostics present in source, dist, Android assets, APK and AAB")
     print("Native FIFTYFIT_BILLING_ERROR marker present in source and AAB dex")
 
 

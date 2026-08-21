@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import zipfile
 from pathlib import Path
@@ -37,15 +38,35 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def verify_dependency_consistency() -> None:
+    package = json.loads(read_text(ROOT / "package.json"))
+    lock = json.loads(read_text(ROOT / "package-lock.json"))
+    root_lock = lock.get("packages", {}).get("", {})
+    package_dev = package.get("devDependencies", {})
+    lock_dev = root_lock.get("devDependencies", {})
+    require(
+        lock_dev.get("@vitejs/plugin-react") == package_dev.get("@vitejs/plugin-react"),
+        "package.json and package-lock.json disagree on @vitejs/plugin-react",
+    )
+    require(
+        lock_dev.get("vite") == package_dev.get("vite"),
+        "package.json and package-lock.json disagree on Vite",
+    )
+
+
 def verify_source_and_native() -> None:
+    verify_dependency_consistency()
     src_billing = read_text(ROOT / "src/billing.js")
     src_app = read_text(ROOT / "src/App.jsx")
+    vite = read_text(ROOT / "vite.config.js")
     require("responseCode" in src_billing and "responseName" in src_billing, "source does not retain BillingResponseCode diagnostics")
     require("offerToken" in src_billing, "source does not forward the subscription offer token")
     for marker in MARKERS[:3]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
     for marker in UI_MARKERS:
         require(marker in src_app, f"src/App.jsx has no billing error UI marker: {marker}")
+    for marker in TRANSFORM_MARKERS:
+        require(marker in vite, f"vite.config.js is missing billing normalization transform: {marker}")
 
     native_plugin = ROOT / "node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java"
     native_text = read_text(native_plugin)
@@ -89,9 +110,7 @@ def verify_prebuild() -> None:
         require(marker in public_text, f"Android public assets are missing billing error normalization transform: {marker}")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
-    print("Billing diagnostics confirmed in source, dist and Android public assets")
-    print("Billing error UI diagnostics confirmed in source, dist and Android public assets")
-    print("Billing error normalization transform confirmed in dist and Android public assets")
+    print("Dependency, Billing diagnostics, and error normalization confirmed in source, dist and Android public assets")
     print("PBL9 native bridge and deterministic FIFTYFIT_BILLING_ERROR marker confirmed")
 
 
@@ -142,9 +161,7 @@ def verify_final_artifacts() -> None:
     print(f"AAB: {aab.stat().st_size} bytes")
     print(f"APK: {apk.stat().st_size} bytes")
     print(f"APK/AAB index sha256: {aab_index_hash}")
-    print("Billing diagnostics present in source, dist, Android assets, APK and AAB")
-    print("Billing error UI diagnostics present in source, dist, Android assets, APK and AAB")
-    print("Billing error normalization transform present in dist, Android assets, APK and AAB")
+    print("Billing diagnostics and error normalization present in source, dist, Android assets, APK and AAB")
     print("Native FIFTYFIT_BILLING_ERROR marker present in source and AAB dex")
 
 

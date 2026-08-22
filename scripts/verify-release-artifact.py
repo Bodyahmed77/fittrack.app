@@ -8,17 +8,19 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# Only require markers that have runtime behavior and therefore survive minification.
+# Build-time constants such as `const FIFTYFIT_BILLING_RESULT_V5 = true` may be
+# tree-shaken when unused and must never be required in a production bundle.
 MARKERS = (
     "before_launchBillingFlow",
     "launchBillingFlow_exception",
     "launchBillingFlow_result",
     "__fiftyFitBillingDiagnostics",
-    "FIFTYFIT_BILLING_RESULT_V5",
     "error_normalized_v5",
 )
 UI_MARKERS = (
     "Google Play code:",
-    "FIFTYFIT_BILLING_UI_V5",
+    "NATIVE_RESPONSE_CODE_NOT_RETURNED",
 )
 TRANSFORM_MARKERS = (
     "BillingResponseCode",
@@ -66,8 +68,8 @@ def verify_source_and_native() -> None:
     require("responseCode" in src_billing and "responseName" in src_billing, "source does not retain BillingResponseCode diagnostics")
     require("offerToken" in src_billing, "source does not forward the subscription offer token")
     require("formatBillingFailureToast" in src_app, "source does not contain billing error UI")
-    require("FIFTYFIT_BILLING_RESULT_V5" in vite, "vite.config.js is missing Billing diagnostics V5 result marker")
-    require("FIFTYFIT_BILLING_UI_V5" in vite, "vite.config.js is missing Billing diagnostics V5 UI marker")
+    require("error_normalized_v5" in vite, "vite.config.js is missing runtime Billing normalization marker")
+    require("NATIVE_RESPONSE_CODE_NOT_RETURNED" in vite, "vite.config.js is missing explicit native-response fallback")
     require("extractBillingResponseCode" in vite, "vite.config.js is missing canonical billing response-code extraction")
     for marker in MARKERS[:4]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
@@ -114,7 +116,7 @@ def verify_prebuild() -> None:
     verify_web_bundle(public_text, "Android public assets")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
-    print("Dependency, native bridge, recursive BillingResult extraction, and V5 UI diagnostics confirmed")
+    print("Dependency, native bridge, recursive BillingResult extraction, and runtime V5 diagnostics confirmed")
 
 
 def verify_final_artifacts() -> None:
@@ -155,7 +157,7 @@ def verify_final_artifacts() -> None:
     print(f"AAB: {aab.stat().st_size} bytes")
     print(f"APK: {apk.stat().st_size} bytes")
     print(f"APK/AAB index sha256: {aab_index_hash}")
-    print("Billing diagnostics V5 present in source-transform output and final APK/AAB")
+    print("Billing diagnostics and recursive response-code extraction present in final APK/AAB")
     print("Native FIFTYFIT_BILLING_ERROR marker and Billing response-code handling present in AAB dex")
 
 

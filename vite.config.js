@@ -113,7 +113,11 @@ function fiftyFitReleaseCompatibility() {
       message,
     );
   const err = new Error(message);
-  err.code = String(code);
+  // The UI historically read error.code. Make that field the canonical numeric
+  // Google Play response code when one exists, while preserving the original
+  // fallback/operation code separately for diagnostics.
+  err.code = String(resolvedResponseCode ?? code);
+  err.operationCode = String(code);
   err.responseCode = resolvedResponseCode;
   err.nativeCode = resolvedResponseCode ?? source?.code ?? e?.nativeCode ?? null;`;
         if (!out.includes(oldBlock)) {
@@ -129,7 +133,7 @@ function fiftyFitReleaseCompatibility() {
         }
         out = out.replace(
           nameLine,
-          nameLine + '\n  err.debugMessage = err.nativeMessage || message;\n  try { writeBillingDiagnostics({ stage: "error_normalized", responseCode: err.responseCode, responseName: err.billingResponseCodeName, debugMessage: err.debugMessage, nativeCode: err.nativeCode }); } catch (_) {}',
+          nameLine + '\n  err.debugMessage = err.nativeMessage || message;\n  try { writeBillingDiagnostics({ stage: "error_normalized", responseCode: err.responseCode, responseName: err.billingResponseCodeName, debugMessage: err.debugMessage, nativeCode: err.nativeCode, operationCode: err.operationCode }); } catch (_) {}',
         );
 
         return { code: out, map: null };

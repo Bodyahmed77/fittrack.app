@@ -20,6 +20,16 @@ if "import com.getcapacitor.JSObject;" not in text:
         raise SystemExit("BillingPlugin package declaration not found")
     text = text.replace(marker, marker + "\nimport com.getcapacitor.JSObject;\n", 1)
 
+launch_failure_block = '''JSObject launchFailure = new JSObject();
+                        launchFailure.put("success", false);
+                        launchFailure.put("responseCode", billingResult2.getResponseCode());
+                        launchFailure.put("billingResponseCode", billingResult2.getResponseCode());
+                        launchFailure.put("code", billingResult2.getResponseCode());
+                        launchFailure.put("debugMessage", billingResult2.getDebugMessage());
+                        launchFailure.put("message", "FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage());
+                        call.resolve(launchFailure);
+                        return;'''
+
 replacements = [
     (
         'call.reject("Error retrieving product details: " + suffix);',
@@ -43,15 +53,15 @@ replacements = [
     ),
     (
         'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());',
-        '''JSObject launchFailure = new JSObject();
-                        launchFailure.put("success", false);
-                        launchFailure.put("responseCode", billingResult2.getResponseCode());
-                        launchFailure.put("billingResponseCode", billingResult2.getResponseCode());
-                        launchFailure.put("code", billingResult2.getResponseCode());
-                        launchFailure.put("debugMessage", billingResult2.getDebugMessage());
-                        launchFailure.put("message", "FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage());
-                        call.resolve(launchFailure);
-                        return;''',
+        launch_failure_block,
+    ),
+    (
+        'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        launch_failure_block,
+    ),
+    (
+        'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        launch_failure_block,
     ),
     (
         'call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage());',
@@ -90,7 +100,6 @@ if 'ret.put("subscription_offer_count"' not in text:
 required = [
     "import com.getcapacitor.JSObject;",
     'String.valueOf(code)',
-    'String.valueOf(billingResult2.getResponseCode())' if 'String.valueOf(billingResult2.getResponseCode())' in text else 'launchFailure.put("responseCode", billingResult2.getResponseCode());',
     'call.resolve(launchFailure);',
     'String requestedOfferToken = call.getString("offerToken", null);',
     'ret.put("subscription_offer_count"',

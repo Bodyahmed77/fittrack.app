@@ -8,9 +8,6 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-# Only require markers that have runtime behavior and therefore survive minification.
-# Build-time helper/function names may be mangled by Vite/Rollup and must never be
-# required verbatim in a production bundle.
 MARKERS = (
     "before_launchBillingFlow",
     "launchBillingFlow_exception",
@@ -49,14 +46,8 @@ def verify_dependency_consistency() -> None:
     root_lock = lock.get("packages", {}).get("", {})
     package_dev = package.get("devDependencies", {})
     lock_dev = root_lock.get("devDependencies", {})
-    require(
-        lock_dev.get("@vitejs/plugin-react") == package_dev.get("@vitejs/plugin-react"),
-        "package.json and package-lock.json disagree on @vitejs/plugin-react",
-    )
-    require(
-        lock_dev.get("vite") == package_dev.get("vite"),
-        "package.json and package-lock.json disagree on Vite",
-    )
+    require(lock_dev.get("@vitejs/plugin-react") == package_dev.get("@vitejs/plugin-react"), "package.json and package-lock.json disagree on @vitejs/plugin-react")
+    require(lock_dev.get("vite") == package_dev.get("vite"), "package.json and package-lock.json disagree on Vite")
 
 
 def verify_source_and_native() -> None:
@@ -83,7 +74,9 @@ def verify_source_and_native() -> None:
         ("QueryProductDetailsResult", "PBL9 product-details callback"),
         ("enableAutoServiceReconnection()", "automatic billing service reconnection"),
         ("FIFTYFIT_BILLING_ERROR", "native billing diagnostic marker"),
-        ("String.valueOf(billingResult2.getResponseCode())", "native launch response-code propagation"),
+        ("billingResult2.getResponseCode()", "native launch response-code access"),
+        ("launchFailure.put(\"responseCode\"", "structured launch response-code field"),
+        ("call.resolve(launchFailure);", "structured launch response propagation"),
     ):
         require(needle in native_text, f"missing {label}")
 
@@ -99,7 +92,6 @@ def verify_web_bundle(text: str, label: str) -> None:
 
 def verify_prebuild() -> None:
     verify_source_and_native()
-
     dist = ROOT / "dist"
     require(dist.is_dir(), "dist directory does not exist")
     dist_js = list(dist.rglob("*.js"))
@@ -115,12 +107,11 @@ def verify_prebuild() -> None:
     verify_web_bundle(public_text, "Android public assets")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
-    print("Dependency, native bridge, recursive BillingResult extraction, and runtime V5 diagnostics confirmed")
+    print("Dependency, native bridge, structured BillingResult propagation, and runtime V5 diagnostics confirmed")
 
 
 def verify_final_artifacts() -> None:
     verify_source_and_native()
-
     artifact_dir = ROOT / "android/release-artifacts"
     aab = artifact_dir / "fifty-fit-release.aab"
     apk = artifact_dir / "fifty-fit-release.apk"
@@ -133,13 +124,11 @@ def verify_final_artifacts() -> None:
         require(js_entries, "AAB contains no packaged web JavaScript assets")
         packaged_js = b"\n".join(z.read(n) for n in js_entries).decode("utf-8", errors="replace")
         verify_web_bundle(packaged_js, "AAB web assets")
-
         dex_entries = [n for n in names if n.endswith("classes.dex")]
         require(dex_entries, "AAB contains no classes.dex")
         dex_bytes = b"\n".join(z.read(n) for n in dex_entries)
         require(b"FIFTYFIT_BILLING_ERROR" in dex_bytes, "AAB native dex does not contain FIFTYFIT_BILLING_ERROR")
         require(b"ResponseCode" in dex_bytes, "AAB native dex does not contain Billing response-code handling")
-
         module_indexes = [n for n in names if n.endswith("/assets/public/index.html")]
         require(module_indexes, "AAB contains no packaged web index.html")
         aab_index_hash = hashlib.sha256(z.read(module_indexes[0])).hexdigest()
@@ -151,12 +140,11 @@ def verify_final_artifacts() -> None:
         verify_web_bundle(apk_js, "APK web assets")
 
     require(aab_index_hash == apk_index_hash, f"APK/AAB web index mismatch: {aab_index_hash} != {apk_index_hash}")
-
     print("FINAL RELEASE ARTIFACT VERIFICATION PASSED")
     print(f"AAB: {aab.stat().st_size} bytes")
     print(f"APK: {apk.stat().st_size} bytes")
     print(f"APK/AAB index sha256: {aab_index_hash}")
-    print("Billing diagnostics and recursive response-code extraction present in final APK/AAB")
+    print("Billing diagnostics and structured native response-code propagation present in final APK/AAB")
     print("Native FIFTYFIT_BILLING_ERROR marker and Billing response-code handling present in AAB dex")
 
 

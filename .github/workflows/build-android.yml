@@ -1,5 +1,5 @@
 # Single source of truth for the deterministic Android release build.
-# Every AAB is required to pass the final Billing diagnostics verification before upload.
+# Every AAB is required to pass final Billing diagnostics verification before upload.
 name: Build Fifty Fit Android Release
 
 on:
@@ -46,14 +46,14 @@ jobs:
           npm rebuild sharp --foreground-scripts
           node -e "require('sharp'); console.log('sharp native runtime OK')"
 
-      - name: Apply required native billing patches only
+      - name: Apply required native patches only
         run: |
           set -euo pipefail
           python3 scripts/apply-billing-native-diagnostics.py
           python3 scripts/apply-billing-native-offer-diagnostics.py
           python3 scripts/apply-google-native-diagnostics.py
 
-      - name: Verify canonical billing source before build
+      - name: Verify canonical source before build
         run: |
           set -euo pipefail
           test -s src/App.jsx
@@ -65,21 +65,9 @@ jobs:
           from pathlib import Path
           app = Path('src/App.jsx').read_text(encoding='utf-8')
           billing = Path('src/billing.js').read_text(encoding='utf-8')
-          required_app = [
-              'const shouldUnlock = result?.success === true;',
-              'formatBillingFailureToast',
-              'Google Play code:',
-          ]
-          required_billing = [
-              'launchBillingFlow',
-              'launchBillingFlow_result',
-              'responseCode',
-              'debugMessage',
-              'offerToken',
-          ]
-          for needle in required_app:
+          for needle in ['const shouldUnlock = result?.success === true;', 'formatBillingFailureToast', 'Google Play code:']:
               assert needle in app, f'App.jsx missing canonical billing source: {needle}'
-          for needle in required_billing:
+          for needle in ['launchBillingFlow', 'launchBillingFlow_result', 'responseCode', 'debugMessage', 'offerToken']:
               assert needle in billing, f'billing.js missing canonical diagnostic: {needle}'
           print('Canonical billing source gate passed')
           PY
@@ -95,11 +83,7 @@ jobs:
       - name: Ensure Android platform exists
         run: |
           set -euo pipefail
-          if [ ! -d android ]; then
-            npx cap add android
-          else
-            echo 'Android platform already present; using tracked project.'
-          fi
+          if [ ! -d android ]; then npx cap add android; else echo 'Android platform already present.'; fi
 
       - name: Inject google-services.json and validate OAuth
         env:
@@ -112,8 +96,7 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          p = Path('android/app/google-services.json')
-          d = json.loads(p.read_text(encoding='utf-8'))
+          d = json.loads(Path('android/app/google-services.json').read_text(encoding='utf-8'))
           assert d.get('project_info', {}).get('project_id') == 'fittrack-698fa'
           clients = [c for c in (d.get('client') or []) if ((c.get('client_info') or {}).get('android_client_info') or {}).get('package_name') == 'com.bodyahmed77.fiftyfit']
           assert clients, 'No matching Android OAuth client for com.bodyahmed77.fiftyfit'
@@ -127,15 +110,11 @@ jobs:
           from pathlib import Path
           import re
           root = Path('android')
-          top = root / 'build.gradle'
-          app = root / 'app' / 'build.gradle'
-          vars_file = root / 'variables.gradle'
-
+          top, app, vars_file = root/'build.gradle', root/'app'/'build.gradle', root/'variables.gradle'
           text = top.read_text(encoding='utf-8')
           if 'com.google.gms:google-services' not in text:
               text = text.replace('dependencies {', "dependencies {\n    classpath 'com.google.gms:google-services:4.4.0'", 1)
           top.write_text(text, encoding='utf-8')
-
           text = app.read_text(encoding='utf-8')
           if 'play-services-auth' not in text:
               text = text.replace('dependencies {', "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
@@ -144,7 +123,6 @@ jobs:
           if 'enableSplit = false' not in text:
               text += "\nandroid { bundle { language { enableSplit = false } } }\n"
           app.write_text(text, encoding='utf-8')
-
           text = vars_file.read_text(encoding='utf-8')
           text = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', text)
           text = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', text)
@@ -182,16 +160,26 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          candidates = list(Path('android').rglob('BillingPlugin.java'))
-          assert candidates, 'No generated capacitor-billing BillingPlugin.java found after cap sync'
+          roots = [Path('android'), Path('node_modules/capacitor-billing/android')]
+          candidates = []
+          for root in roots:
+              if root.exists(): candidates.extend(root.rglob('BillingPlugin.java'))
+          assert candidates, 'No capacitor-billing BillingPlugin.java found in generated Android project or installed plugin source'
           matches = []
           for p in candidates:
               text = p.read_text(encoding='utf-8', errors='replace')
               if 'FIFTYFIT_BILLING_ERROR' in text and 'PendingPurchasesParams' in text and 'QueryProductDetailsResult' in text:
                   matches.append(p)
-          assert matches, 'Patched PBL9 BillingPlugin did not reach the Android project after cap sync'
-          print('Patched native billing bridge present in Android project:', matches[0])
+          assert matches, 'Patched PBL9 BillingPlugin was not found after cap sync'
+          print('Patched native billing bridge verified:', matches[0])
           PY
+
+      - name: Verify Capacitor Billing Android module
+        run: |
+          set -euo pipefail
+          test -d node_modules/capacitor-billing/android
+          test -f node_modules/capacitor-billing/android/build.gradle
+          echo 'capacitor-billing Android module present.'
 
       - name: Decode release signing keystore
         env:

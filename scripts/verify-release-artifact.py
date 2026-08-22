@@ -13,17 +13,17 @@ MARKERS = (
     "launchBillingFlow_exception",
     "launchBillingFlow_result",
     "__fiftyFitBillingDiagnostics",
+    "FIFTYFIT_BILLING_RESULT_V5",
+    "error_normalized_v5",
 )
-# Do not require JavaScript function names after Vite: production transforms/minification
-# are allowed to rename or inline functions. Verify stable runtime/user-visible strings instead.
 UI_MARKERS = (
     "Google Play code:",
+    "FIFTYFIT_BILLING_UI_V5",
 )
-# The transform is verified at source level; its output is verified through stable
-# response-code diagnostics that survive minification.
 TRANSFORM_MARKERS = (
     "BillingResponseCode",
     "debugMessage",
+    "extractBillingResponseCode",
 )
 
 
@@ -65,11 +65,12 @@ def verify_source_and_native() -> None:
     vite = read_text(ROOT / "vite.config.js")
     require("responseCode" in src_billing and "responseName" in src_billing, "source does not retain BillingResponseCode diagnostics")
     require("offerToken" in src_billing, "source does not forward the subscription offer token")
-    for marker in MARKERS[:3]:
+    require("extractBillingResponseCode" in src_billing, "src/billing.js is missing canonical response-code extraction")
+    require("FIFTYFIT_BILLING_RESULT_V5" in src_billing, "src/billing.js is missing Billing diagnostics V5 marker")
+    require("FIFTYFIT_BILLING_UI_V5" in src_app, "src/App.jsx is missing Billing diagnostics V5 marker")
+    require("extractBillingResponseCode" in vite, "vite.config.js is missing billing compatibility transform")
+    for marker in MARKERS[:4]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
-    for marker in UI_MARKERS:
-        require(marker in src_app, f"src/App.jsx has no stable billing error UI marker: {marker}")
-    require("extractBillingResponseCode" in vite, "vite.config.js is missing billing normalization transform")
 
     native_plugin = ROOT / "node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java"
     native_text = read_text(native_plugin)
@@ -81,6 +82,7 @@ def verify_source_and_native() -> None:
         ("QueryProductDetailsResult", "PBL9 product-details callback"),
         ("enableAutoServiceReconnection()", "automatic billing service reconnection"),
         ("FIFTYFIT_BILLING_ERROR", "native billing diagnostic marker"),
+        ("String.valueOf(billingResult2.getResponseCode())", "native launch response-code propagation"),
     ):
         require(needle in native_text, f"missing {label}")
 
@@ -112,8 +114,7 @@ def verify_prebuild() -> None:
     verify_web_bundle(public_text, "Android public assets")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
-    print("Dependency, Billing diagnostics, and error normalization confirmed in source, dist and Android public assets")
-    print("PBL9 native bridge and deterministic FIFTYFIT_BILLING_ERROR marker confirmed")
+    print("Dependency, native bridge, BillingResult extraction, and V5 UI diagnostics confirmed")
 
 
 def verify_final_artifacts() -> None:
@@ -136,6 +137,7 @@ def verify_final_artifacts() -> None:
         require(dex_entries, "AAB contains no classes.dex")
         dex_bytes = b"\n".join(z.read(n) for n in dex_entries)
         require(b"FIFTYFIT_BILLING_ERROR" in dex_bytes, "AAB native dex does not contain FIFTYFIT_BILLING_ERROR")
+        require(b"ResponseCode" in dex_bytes, "AAB native dex does not contain Billing response-code handling")
 
         module_indexes = [n for n in names if n.endswith("/assets/public/index.html")]
         require(module_indexes, "AAB contains no packaged web index.html")
@@ -153,8 +155,8 @@ def verify_final_artifacts() -> None:
     print(f"AAB: {aab.stat().st_size} bytes")
     print(f"APK: {apk.stat().st_size} bytes")
     print(f"APK/AAB index sha256: {aab_index_hash}")
-    print("Billing diagnostics and error normalization present in source, dist, Android assets, APK and AAB")
-    print("Native FIFTYFIT_BILLING_ERROR marker present in source and AAB dex")
+    print("Billing diagnostics V5 present in source, dist, Android assets, APK and AAB")
+    print("Native FIFTYFIT_BILLING_ERROR marker and Billing response-code handling present in AAB dex")
 
 
 if __name__ == "__main__":

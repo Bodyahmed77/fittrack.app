@@ -9,14 +9,17 @@ function fiftyFitReleaseCompatibility() {
       let out = code;
 
       if (id.endsWith("/src/App.jsx")) {
+        // Keep legacy goal selections mapped to real built-in plan IDs.
         out = out.replace(/planId:\s*"fatloss"/g, 'planId: "four_day"');
         out = out.replace(/planId:\s*"hypertrophy"/g, 'planId: "five_day"');
 
+        // A custom nutrition plan assigned by Admin is not a Play Billing entitlement.
         out = out.replace(
           '{pro ? (\n          <Card\n            onClick={() => go("nutritionPlan")}',
           '{pro && customNutritionPlan ? (\n          <Card\n            onClick={() => go("nutritionPlan")}',
         );
 
+        // Free users keep current-month body-weight history; Pro keeps full history.
         out = out.replace(
           'const bw = normalizeBodyWeightEntries(data.bodyWeight);',
           'const bw = normalizeBodyWeightEntries(data.bodyWeight).filter((w) =>\n    data.entitlements.trainingPro || monthKey(w.date) === monthKey(today),\n  );',
@@ -26,18 +29,21 @@ function fiftyFitReleaseCompatibility() {
           '() => normalizeBodyWeightEntries(data.bodyWeight).filter((w) =>\n      pro || monthKey(w.date) === monthKey(dateKey(0)),\n    ),\n    [data.bodyWeight, pro],',
         );
 
+        // Workout day strip: rolling 7-day window, centered around today.
         out = out.replace(
           'const iso = addDays(mondayOf(dateKey(0)), i);',
           'const iso = addDays(dateKey(0), i - 3);',
         );
         out = out.replace('const isToday = offset === 0;', 'const isToday = iso === today;');
 
+        // Food picker: Capacitor Keyboard.resize=native already resizes the WebView.
         out = out.replace(
           'style={{ paddingBottom: selected ? "calc(200px + var(--ff-keyboard-height, 0px))" : 0 }}',
           'style={{ paddingBottom: selected ? 20 : 0 }}',
         );
         out = out.replace('bottom: "var(--ff-keyboard-height, 0px)",', 'bottom: 0,');
 
+        // TikTok: keep the user inside Fifty Fit.
         if (!out.includes('import { openTikTokWebView } from "./tiktokWebView";')) {
           const marker = 'import { deleteAccountServerData } from "./deleteAccount";';
           if (out.includes(marker)) {
@@ -49,56 +55,62 @@ function fiftyFitReleaseCompatibility() {
           'const handleWatch = async () => {\n    if (isTikTok) {\n      try {\n        await openTikTokWebView(String(videoId));\n      } catch (error) {\n        console.error("[TikTok] in-app player failed", error);\n      }\n      return;\n    }\n    setOpen(true);\n  };',
         );
 
+        // Never turn real Billing failures into preview purchases.
         out = out.replace(
           /const result = await billingPurchase\(planId, durationId\)\.catch\(\(\) => \(\{\n\s*success: false,\n\s*preview: true,\n\s*\}\)\);/,
           'const result = await billingPurchase(planId, durationId);',
         );
 
-        const uiHelperAnchor = '/* ============================== PAYWALL ============================== */';
-        const uiHelper = `function __fiftyFitExtractBillingCode(value) {\n  if (value == null) return null;\n  if (typeof value === "number" && Number.isFinite(value)) return value;\n  const text = String(value);\n  if (/^-?\\d+$/.test(text.trim())) return Number(text.trim());\n  const match = text.match(/BillingResponseCode\\s*[=:]\\s*(-?\\d+)/i);\n  return match ? Number(match[1]) : null;\n}\n\nconst FIFTYFIT_BILLING_UI_V3 = true;\n\n`;
-        if (!out.includes('const FIFTYFIT_BILLING_UI_V3 = true;')) {
-          if (!out.includes(uiHelperAnchor)) throw new Error("Fifty Fit Billing UI hardening: PAYWALL anchor not found in App.jsx");
-          out = out.replace(uiHelperAnchor, uiHelperAnchor + '\n' + uiHelper, 1);
+        // Canonical UI diagnostics. Google Play's numeric response code always wins over
+        // the internal operation code such as "billing_flow_failed".
+        const uiMarker = 'const FIFTYFIT_BILLING_UI_V5 = true;';
+        const uiAnchor = '/* ============================== PAYWALL ============================== */';
+        if (!out.includes(uiMarker)) {
+          const helper = `function __fiftyFitExtractBillingCodeV5(value, depth = 0, seen = new Set()) {\n  if (value == null || depth > 5) return null;\n  if (typeof value === "number" && Number.isFinite(value)) return value;\n  if (typeof value === "string") {\n    const text = value.trim();\n    if (/^-?\\d+$/.test(text)) return Number(text);\n    const match = text.match(/BillingResponseCode\\s*[=:]\\s*(-?\\d+)/i);\n    if (match) return Number(match[1]);\n    return null;\n  }\n  if (typeof value !== "object") return null;\n  if (seen.has(value)) return null;\n  seen.add(value);\n  for (const key of ["responseCode", "billingResponseCode", "subResponseCode", "code"]) {\n    const n = __fiftyFitExtractBillingCodeV5(value[key], depth + 1, seen);\n    if (n != null) return n;\n  }\n  for (const key of ["error", "response", "result", "raw"]) {\n    const n = __fiftyFitExtractBillingCodeV5(value[key], depth + 1, seen);\n    if (n != null) return n;\n  }\n  for (const key of ["debugMessage", "nativeMessage", "message"]) {\n    const n = __fiftyFitExtractBillingCodeV5(value[key], depth + 1, seen);\n    if (n != null) return n;\n  }\n  return null;\n}\n\n${uiMarker}\n`;
+          if (!out.includes(uiAnchor)) throw new Error("Fifty Fit Billing UI hardening: PAYWALL anchor not found in App.jsx");
+          out = out.replace(uiAnchor, uiAnchor + '\n' + helper, 1);
         }
 
-        const billingAssignments = /const billingCode = String\(([\s\S]*?)\);/g;
-        let assignmentCount = 0;
-        out = out.replace(billingAssignments, (full) => {
-          if (!full.includes("billingErr.code") && !full.includes("e?.code")) return full;
-          assignmentCount += 1;
-          if (full.includes("billingErr.code")) {
-            return `const billingCode = String(\n          billingErr.responseCode ??\n          billingErr.nativeCode ??\n          __fiftyFitExtractBillingCode(billingErr.debugMessage || billingErr.nativeMessage || billingErr.message) ??\n          diagnostics.responseCode ??\n          __fiftyFitExtractBillingCode(diagnostics.debugMessage || diagnostics.message || diagnostics.raw) ??\n          billingErr.code ??\n          diagnostics.code ??\n          (result?.pending ? "purchase_pending" : "billing_flow_failed")\n        );`;
-          }
-          return `const billingCode = String(\n        e?.responseCode ??\n        e?.nativeCode ??\n        __fiftyFitExtractBillingCode(e?.debugMessage || e?.nativeMessage || e?.message) ??\n        diagnostics.responseCode ??\n        __fiftyFitExtractBillingCode(diagnostics.debugMessage || diagnostics.message || diagnostics.raw) ??\n        e?.code ??\n        diagnostics.code ??\n        "billing_flow_failed"\n      );`;
-        });
-        if (assignmentCount < 2) {
-          throw new Error(`Fifty Fit Billing UI hardening: expected 2 billingCode assignments, patched ${assignmentCount}`);
+        const catchBlocks = /const billingErr = result\?\.error \|\| \{\};[\s\S]*?const billingCode = String\([\s\S]*?\);/g;
+        const catchReplacement = `const billingErr = result?.error || {};\n        const diagnostics =\n          (typeof window !== "undefined" && window.__fiftyFitBillingDiagnostics) || {};\n        const resolvedBillingCode =\n          __fiftyFitExtractBillingCodeV5(\n            billingErr.responseCode ??\n            billingErr.nativeCode ??\n            billingErr.debugMessage ??\n            billingErr.nativeMessage ??\n            billingErr.message ??\n            diagnostics,\n          );\n        const billingCode = String(\n          resolvedBillingCode ??\n          billingErr.responseCode ??\n          diagnostics.responseCode ??\n          (result?.pending ? "purchase_pending" : "billing_flow_failed"),\n        );`;
+        if (catchBlocks.test(out)) {
+          out = out.replace(catchBlocks, catchReplacement);
         }
+
+        const errorCatchBlocks = /const diagnostics =\n\s*\(typeof window !== "undefined" &&\n\s*window\.__fiftyFitBillingDiagnostics\) \|\|\n\s*\{\};\n\s*const billingCode = String\([\s\S]*?\);/g;
+        const errorCatchReplacement = `const diagnostics =\n        (typeof window !== "undefined" && window.__fiftyFitBillingDiagnostics) || {};\n      const resolvedBillingCode =\n        __fiftyFitExtractBillingCodeV5(\n          e?.responseCode ??\n          e?.nativeCode ??\n          e?.debugMessage ??\n          e?.nativeMessage ??\n          e?.message ??\n          diagnostics,\n        );\n      const billingCode = String(\n        resolvedBillingCode ??\n        e?.responseCode ??\n        diagnostics.responseCode ??\n        "billing_flow_failed",\n      );`;
+        out = out.replace(errorCatchBlocks, errorCatchReplacement);
 
         return { code: out, map: null };
       }
 
+      // Canonical Billing normalization. Keep the numeric Google Play response code
+      // separate from the operation/fallback code and extract it recursively from any
+      // native Capacitor error shape before it reaches the UI.
       if (id.endsWith("/src/billing.js")) {
-        if (!out.includes("function extractBillingResponseCode(value) {")) {
-          const helper = `function extractBillingResponseCode(value) {\n  if (value == null) return null;\n  if (typeof value === "number" && Number.isFinite(value)) return value;\n  const text = String(value);\n  if (/^-?\\d+$/.test(text.trim())) return Number(text.trim());\n  const match = text.match(/BillingResponseCode\\s*[=:]\\s*(-?\\d+)/i);\n  return match ? Number(match[1]) : null;\n}\n\n`;
-          const marker = "function billingResponseName(code) {";
-          if (!out.includes(marker)) throw new Error("Fifty Fit Billing normalization: billingResponseName anchor not found in src/billing.js");
+        const helperMarker = 'const FIFTYFIT_BILLING_RESULT_V5 = true;';
+        const helper = `function extractBillingResponseCode(value, depth = 0, seen = new Set()) {\n  if (value == null || depth > 5) return null;\n  if (typeof value === "number" && Number.isFinite(value)) return value;\n  if (typeof value === "string") {\n    const text = value.trim();\n    if (/^-?\\d+$/.test(text)) return Number(text);\n    const match = text.match(/BillingResponseCode\\s*[=:]\\s*(-?\\d+)/i);\n    if (match) return Number(match[1]);\n    return null;\n  }\n  if (typeof value !== "object") return null;\n  if (seen.has(value)) return null;\n  seen.add(value);\n  for (const key of ["responseCode", "billingResponseCode", "subResponseCode", "code"]) {\n    const n = extractBillingResponseCode(value[key], depth + 1, seen);\n    if (n != null) return n;\n  }\n  for (const key of ["error", "response", "result", "raw"]) {\n    const n = extractBillingResponseCode(value[key], depth + 1, seen);\n    if (n != null) return n;\n  }\n  for (const key of ["debugMessage", "nativeMessage", "message"]) {\n    const n = extractBillingResponseCode(value[key], depth + 1, seen);\n    if (n != null) return n;\n  }\n  return null;\n}\n\n${helperMarker}\n`;
+        if (!out.includes(helperMarker)) {
+          const marker = "function billingError(e, fallbackCode = \"billing_error\") {";
+          if (!out.includes(marker)) throw new Error("Fifty Fit Billing: billingError anchor not found");
           out = out.replace(marker, helper + marker, 1);
         }
 
-        const oldBlock = `  const err = new Error(message);\n  err.code = String(code);\n  err.responseCode =\n    source?.responseCode ?? source?.billingResponseCode ?? e?.responseCode ?? null;\n  err.nativeCode =\n    source?.code ??\n    source?.responseCode ??\n    source?.billingResponseCode ??\n    e?.nativeCode ??\n    null;`;
-        const newBlock = `  const resolvedResponseCode =\n    extractBillingResponseCode(\n      source?.responseCode ??\n      source?.billingResponseCode ??\n      source?.error?.responseCode ??\n      source?.error?.billingResponseCode ??\n      source?.error?.code ??\n      source?.code ??\n      e?.responseCode ??\n      e?.nativeCode ??\n      e?.error?.responseCode ??\n      e?.error?.billingResponseCode ??\n      e?.error?.code ??\n      message,\n    );\n  const err = new Error(message);\n  err.code = String(resolvedResponseCode ?? code);\n  err.operationCode = String(code);\n  err.responseCode = resolvedResponseCode;\n  err.nativeCode = resolvedResponseCode ?? source?.code ?? e?.nativeCode ?? null;`;
-        if (!out.includes(oldBlock)) throw new Error("Fifty Fit Billing normalization: billingError response-code block not found");
-        out = out.replace(oldBlock, newBlock, 1);
+        const oldBillingError = /function billingError\(e, fallbackCode = "billing_error"\) \{[\s\S]*?\n\}\n\nfunction normalizeSkuDetails/;
+        const newBillingError = `function billingError(e, fallbackCode = "billing_error") {\n  const source = e?.error || e?.response || e;\n  const resolvedResponseCode = extractBillingResponseCode(e);\n  const rawMessage =\n    source?.debugMessage ||\n    source?.message ||\n    e?.debugMessage ||\n    e?.nativeMessage ||\n    e?.message ||\n    "Google Play Billing could not complete the operation";\n  const codeFallback =\n    source?.code ?? source?.operationCode ?? e?.operationCode ?? fallbackCode;\n  const err = new Error(String(rawMessage));\n  err.code = String(resolvedResponseCode ?? codeFallback);\n  err.operationCode = String(codeFallback);\n  err.responseCode = resolvedResponseCode;\n  err.nativeCode = resolvedResponseCode ?? source?.code ?? e?.nativeCode ?? null;\n  err.nativeMessage = String(rawMessage);\n  err.debugMessage = String(rawMessage);\n  err.billingResponseCodeName = billingResponseName(resolvedResponseCode);\n  if (source?.subResponseCode != null) err.subResponseCode = String(source.subResponseCode);\n  err.raw = e;\n  try {\n    writeBillingDiagnostics({\n      stage: "error_normalized_v5",\n      code: err.code,\n      operationCode: err.operationCode,\n      responseCode: err.responseCode,\n      responseName: err.billingResponseCodeName,\n      debugMessage: err.debugMessage,\n      subResponseCode: err.subResponseCode || null,\n    });\n  } catch (_) {}\n  return err;\n}\n\nfunction normalizeSkuDetails`;
+        if (!oldBillingError.test(out)) throw new Error("Fifty Fit Billing: canonical billingError block not found");
+        out = out.replace(oldBillingError, newBillingError);
 
-        const oldResult = `const responseCode =\n      result?.responseCode ??\n      result?.billingResponseCode ??\n      result?.response?.responseCode;`;
-        const newResult = `const responseCode =\n      extractBillingResponseCode(\n        result?.responseCode ??\n        result?.billingResponseCode ??\n        result?.code ??\n        result?.error?.responseCode ??\n        result?.error?.billingResponseCode ??\n        result?.error?.code ??\n        result?.response?.responseCode ??\n        result?.response?.code,\n      );`;
-        if (!out.includes(oldResult)) throw new Error("Fifty Fit Billing result normalization: launchBillingFlow response-code block not found");
-        out = out.replace(oldResult, newResult, 1);
+        out = out.replace(
+          /const responseCode =\n\s*result\?\.responseCode \|\|[\s\S]*?result\?\.response\?\.responseCode;/,
+          'const responseCode = extractBillingResponseCode(result);',
+        );
+        out = out.replace(
+          /const responseName = billingResponseName\(responseCode\);/,
+          'const responseName = responseCode == null ? "UNKNOWN" : billingResponseName(responseCode);',
+        );
+        out = out.replace('const FIFTYFIT_BILLING_RESULT_V5 = true;', helperMarker);
 
-        if (!out.includes('const FIFTYFIT_BILLING_RESULT_V3 = true;')) {
-          out = 'const FIFTYFIT_BILLING_RESULT_V3 = true;\n' + out;
-        }
         return { code: out, map: null };
       }
 

@@ -9,8 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 # Only require markers that have runtime behavior and therefore survive minification.
-# Build-time constants such as `const FIFTYFIT_BILLING_RESULT_V5 = true` may be
-# tree-shaken when unused and must never be required in a production bundle.
+# Build-time helper/function names may be mangled by Vite/Rollup and must never be
+# required verbatim in a production bundle.
 MARKERS = (
     "before_launchBillingFlow",
     "launchBillingFlow_exception",
@@ -25,7 +25,6 @@ UI_MARKERS = (
 TRANSFORM_MARKERS = (
     "BillingResponseCode",
     "debugMessage",
-    "extractBillingResponseCode",
 )
 
 

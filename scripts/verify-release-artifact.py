@@ -14,12 +14,16 @@ MARKERS = (
     "launchBillingFlow_result",
     "__fiftyFitBillingDiagnostics",
 )
+# Do not require JavaScript function names after Vite: production transforms/minification
+# are allowed to rename or inline functions. Verify stable runtime/user-visible strings instead.
 UI_MARKERS = (
-    "formatBillingFailureToast",
     "Google Play code:",
 )
+# The transform is verified at source level; its output is verified through stable
+# response-code diagnostics that survive minification.
 TRANSFORM_MARKERS = (
-    "extractBillingResponseCode",
+    "BillingResponseCode",
+    "debugMessage",
 )
 
 
@@ -64,9 +68,8 @@ def verify_source_and_native() -> None:
     for marker in MARKERS[:3]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
     for marker in UI_MARKERS:
-        require(marker in src_app, f"src/App.jsx has no billing error UI marker: {marker}")
-    for marker in TRANSFORM_MARKERS:
-        require(marker in vite, f"vite.config.js is missing billing normalization transform: {marker}")
+        require(marker in src_app, f"src/App.jsx has no stable billing error UI marker: {marker}")
+    require("extractBillingResponseCode" in vite, "vite.config.js is missing billing normalization transform")
 
     native_plugin = ROOT / "node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java"
     native_text = read_text(native_plugin)
@@ -82,6 +85,15 @@ def verify_source_and_native() -> None:
         require(needle in native_text, f"missing {label}")
 
 
+def verify_web_bundle(text: str, label: str) -> None:
+    for marker in MARKERS:
+        require(marker in text, f"{label} is missing runtime billing marker: {marker}")
+    for marker in UI_MARKERS:
+        require(marker in text, f"{label} is missing billing error UI marker: {marker}")
+    for marker in TRANSFORM_MARKERS:
+        require(marker in text, f"{label} is missing stable BillingResult diagnostic marker: {marker}")
+
+
 def verify_prebuild() -> None:
     verify_source_and_native()
 
@@ -90,24 +102,14 @@ def verify_prebuild() -> None:
     dist_js = list(dist.rglob("*.js"))
     require(dist_js, "no JavaScript was emitted into dist")
     dist_text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in dist_js)
-    for marker in MARKERS:
-        require(marker in dist_text, f"dist is missing runtime billing marker: {marker}")
-    for marker in UI_MARKERS:
-        require(marker in dist_text, f"dist is missing billing error UI marker: {marker}")
-    for marker in TRANSFORM_MARKERS:
-        require(marker in dist_text, f"dist is missing billing error normalization transform: {marker}")
+    verify_web_bundle(dist_text, "dist")
 
     android_public = ROOT / "android/app/src/main/assets/public"
     require(android_public.is_dir(), "Capacitor Android public assets directory missing")
     public_js = list(android_public.rglob("*.js"))
     require(public_js, "no JavaScript was copied into Android public assets")
     public_text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in public_js)
-    for marker in MARKERS:
-        require(marker in public_text, f"Android public assets are missing runtime billing marker: {marker}")
-    for marker in UI_MARKERS:
-        require(marker in public_text, f"Android public assets are missing billing error UI marker: {marker}")
-    for marker in TRANSFORM_MARKERS:
-        require(marker in public_text, f"Android public assets are missing billing error normalization transform: {marker}")
+    verify_web_bundle(public_text, "Android public assets")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
     print("Dependency, Billing diagnostics, and error normalization confirmed in source, dist and Android public assets")
@@ -127,13 +129,8 @@ def verify_final_artifacts() -> None:
         names = z.namelist()
         js_entries = [n for n in names if n.endswith(".js") and "/assets/public/" in n]
         require(js_entries, "AAB contains no packaged web JavaScript assets")
-        packaged_js = b"\n".join(z.read(n) for n in js_entries)
-        for marker in MARKERS:
-            require(marker.encode() in packaged_js, f"AAB web assets are missing runtime billing marker: {marker}")
-        for marker in UI_MARKERS:
-            require(marker.encode() in packaged_js, f"AAB web assets are missing billing error UI marker: {marker}")
-        for marker in TRANSFORM_MARKERS:
-            require(marker.encode() in packaged_js, f"AAB web assets are missing billing error normalization transform: {marker}")
+        packaged_js = b"\n".join(z.read(n) for n in js_entries).decode("utf-8", errors="replace")
+        verify_web_bundle(packaged_js, "AAB web assets")
 
         dex_entries = [n for n in names if n.endswith("classes.dex")]
         require(dex_entries, "AAB contains no classes.dex")
@@ -147,13 +144,8 @@ def verify_final_artifacts() -> None:
     with zipfile.ZipFile(apk) as z:
         require("assets/public/index.html" in z.namelist(), "APK contains no packaged web index.html")
         apk_index_hash = hashlib.sha256(z.read("assets/public/index.html")).hexdigest()
-        apk_js = b"\n".join(z.read(n) for n in z.namelist() if n.endswith(".js"))
-        for marker in MARKERS:
-            require(marker.encode() in apk_js, f"APK web assets are missing runtime billing marker: {marker}")
-        for marker in UI_MARKERS:
-            require(marker.encode() in apk_js, f"APK web assets are missing billing error UI marker: {marker}")
-        for marker in TRANSFORM_MARKERS:
-            require(marker.encode() in apk_js, f"APK web assets are missing billing error normalization transform: {marker}")
+        apk_js = b"\n".join(z.read(n) for n in z.namelist() if n.endswith(".js")).decode("utf-8", errors="replace")
+        verify_web_bundle(apk_js, "APK web assets")
 
     require(aab_index_hash == apk_index_hash, f"APK/AAB web index mismatch: {aab_index_hash} != {apk_index_hash}")
 

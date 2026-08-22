@@ -65,10 +65,10 @@ def verify_source_and_native() -> None:
     vite = read_text(ROOT / "vite.config.js")
     require("responseCode" in src_billing and "responseName" in src_billing, "source does not retain BillingResponseCode diagnostics")
     require("offerToken" in src_billing, "source does not forward the subscription offer token")
-    require("extractBillingResponseCode" in src_billing, "src/billing.js is missing canonical response-code extraction")
-    require("FIFTYFIT_BILLING_RESULT_V5" in src_billing, "src/billing.js is missing Billing diagnostics V5 marker")
-    require("FIFTYFIT_BILLING_UI_V5" in src_app, "src/App.jsx is missing Billing diagnostics V5 marker")
-    require("extractBillingResponseCode" in vite, "vite.config.js is missing billing compatibility transform")
+    require("formatBillingFailureToast" in src_app, "source does not contain billing error UI")
+    require("FIFTYFIT_BILLING_RESULT_V5" in vite, "vite.config.js is missing Billing diagnostics V5 result marker")
+    require("FIFTYFIT_BILLING_UI_V5" in vite, "vite.config.js is missing Billing diagnostics V5 UI marker")
+    require("extractBillingResponseCode" in vite, "vite.config.js is missing canonical billing response-code extraction")
     for marker in MARKERS[:4]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
 
@@ -114,7 +114,7 @@ def verify_prebuild() -> None:
     verify_web_bundle(public_text, "Android public assets")
 
     print("PRE-BUILD RELEASE CONTENT GATE PASSED")
-    print("Dependency, native bridge, BillingResult extraction, and V5 UI diagnostics confirmed")
+    print("Dependency, native bridge, recursive BillingResult extraction, and V5 UI diagnostics confirmed")
 
 
 def verify_final_artifacts() -> None:
@@ -155,7 +155,7 @@ def verify_final_artifacts() -> None:
     print(f"AAB: {aab.stat().st_size} bytes")
     print(f"APK: {apk.stat().st_size} bytes")
     print(f"APK/AAB index sha256: {aab_index_hash}")
-    print("Billing diagnostics V5 present in source, dist, Android assets, APK and AAB")
+    print("Billing diagnostics V5 present in source-transform output and final APK/AAB")
     print("Native FIFTYFIT_BILLING_ERROR marker and Billing response-code handling present in AAB dex")
 
 

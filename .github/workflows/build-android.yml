@@ -50,7 +50,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/apply-billing-native-diagnostics.py
-          python3 scripts/apply-billing-native-offer-diagnostics.py
           python3 scripts/apply-google-native-diagnostics.py
 
       - name: Verify canonical source before build

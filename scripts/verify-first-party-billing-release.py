@@ -45,6 +45,8 @@ def source_checks() -> None:
     require('registerPlugin("FiftyFitBilling")' in js, "JS first-party Billing plugin registration missing")
     require("FIFTYFIT_NATIVE_BILLING_V6" in js, "JS first-party Billing marker missing")
     require("fiftyFitBillingEntry" in release_cfg and "capacitor-billing" in release_cfg, "release Vite config does not alias capacitor-billing to first-party bridge")
+    require("forceFirstPartyBillingImport" in release_cfg, "release Vite config is missing the first-party import hardening plugin")
+    require('await import("./fiftyFitBilling.js")' in release_cfg, "release Vite config does not force the local billing entrypoint")
     require("responseCode" in billing and "launchBillingFlow" in billing, "billing.js does not retain Billing response diagnostics")
     require("formatBillingFailureToast" in app and "Google Play code:" in app, "Paywall billing diagnostics UI missing")
 
@@ -83,11 +85,14 @@ def verify_prebuild() -> None:
     dist = bundled_js()
     for marker in WEB_MARKERS:
         require(marker in dist, f"dist missing first-party billing marker: {marker}")
+    require("capacitor-billing" not in dist, "dist still contains the legacy capacitor-billing runtime reference")
+    require("FiftyFitBilling" in dist, "dist does not contain the first-party FiftyFitBilling registration")
     public = ROOT / "android/app/src/main/assets/public"
     require(public.is_dir(), "Android public assets directory missing")
     public_js = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in public.rglob("*.js"))
     for marker in WEB_MARKERS:
         require(marker in public_js, f"Android public assets missing first-party billing marker: {marker}")
+    require("capacitor-billing" not in public_js, "Android public assets still contain the legacy capacitor-billing runtime reference")
     print("FIRST-PARTY BILLING PREBUILD CHECK PASSED")
 
 
@@ -107,6 +112,8 @@ def verify_final() -> None:
             js = b"\n".join(z.read(n) for n in all_js).decode("utf-8", errors="replace")
             for marker in WEB_MARKERS:
                 require(marker in js, f"{label} JavaScript missing marker: {marker}")
+            require("capacitor-billing" not in js, f"{label} JavaScript still references the legacy capacitor-billing runtime")
+            require("FiftyFitBilling" in js, f"{label} JavaScript is missing first-party FiftyFitBilling")
             dex = [n for n in names if n.endswith("classes.dex")]
             require(dex, f"{label} has no classes.dex")
             dex_bytes = b"\n".join(z.read(n) for n in dex)

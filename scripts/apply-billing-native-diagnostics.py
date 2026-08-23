@@ -66,6 +66,17 @@ if count == 2:
 elif text.count("billingClient.queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) ->") != 2:
     raise SystemExit(f"Expected exactly 2 PBL9 query callbacks, found {count}")
 
+launch_failure_block = '''JSObject launchFailure = new JSObject();
+                                launchFailure.put("success", false);
+                                launchFailure.put("responseCode", billingResult2.getResponseCode());
+                                launchFailure.put("billingResponseCode", billingResult2.getResponseCode());
+                                launchFailure.put("code", billingResult2.getResponseCode());
+                                launchFailure.put("debugMessage", billingResult2.getDebugMessage());
+                                launchFailure.put("message", "FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage());
+                                launchFailure.put("productId", productId);
+                                call.resolve(launchFailure);
+                                return;'''
+
 replacements = [
     (
         'call.reject("Error retrieving product details: " + suffix);',
@@ -89,7 +100,15 @@ replacements = [
     ),
     (
         'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage());',
+        launch_failure_block,
+    ),
+    (
+        'call.reject("Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        launch_failure_block,
+    ),
+    (
         'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult2.getResponseCode() + "] Error launching billing flow: " + billingResult2.getDebugMessage(), String.valueOf(billingResult2.getResponseCode()));',
+        launch_failure_block,
     ),
     (
         'call.reject("Error acknowledging purchase: " + billingResult1.getDebugMessage());',
@@ -127,19 +146,6 @@ launch_offer_new = (
 if launch_offer_old in text:
     text = text.replace(launch_offer_old, launch_offer_new, 1)
 
-if 'launchDiagnostics.put("responseCode"' not in text:
-    launch_marker = 'if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {'
-    launch_replacement = (
-        'JSObject launchDiagnostics = new JSObject();\n'
-        '                                launchDiagnostics.put("responseCode", billingResult2.getResponseCode());\n'
-        '                                launchDiagnostics.put("debugMessage", billingResult2.getDebugMessage());\n'
-        '                                launchDiagnostics.put("subResponseCode", billingResult2.getOnPurchasesUpdatedSubResponseCode());\n'
-        '                                if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {'
-    )
-    if text.count(launch_marker) < 2:
-        raise SystemExit("Expected two synchronous launchBillingFlow response checks")
-    text = text.replace(launch_marker, launch_replacement, 2)
-
 required = [
     "import com.android.billingclient.api.PendingPurchasesParams;",
     "import com.android.billingclient.api.QueryProductDetailsResult;",
@@ -153,11 +159,12 @@ required = [
     "String.valueOf(billingResult2.getResponseCode())",
     'ret.put("subscriptionOfferDetails"',
     'String requestedOfferToken = call.getString("offerToken", null);',
-    'launchDiagnostics.put("responseCode", billingResult2.getResponseCode());',
+    'launchFailure.put("responseCode", billingResult2.getResponseCode());',
+    'call.resolve(launchFailure);',
 ]
 missing = [x for x in required if x not in text]
 if missing:
-    raise SystemExit("Billing native PBL9 diagnostics/offer hardening incomplete: " + ", ".join(missing))
+    raise SystemExit("Billing native PBL9 hardening incomplete: " + ", ".join(missing))
 
 if ".enablePendingPurchases()" in text:
     raise SystemExit("PBL7 no-arg enablePendingPurchases() still present after migration")
@@ -174,6 +181,6 @@ if gradle_text != original_gradle:
     PLUGIN_GRADLE.write_text(gradle_text, encoding="utf-8")
 
 if text == original and gradle_text == original_gradle:
-    print("Billing native PBL9 compatibility + diagnostics + selected offer support already applied")
+    print("Billing native PBL9 compatibility + diagnostics + structured launch-result propagation already applied")
 else:
-    print("Applied capacitor-billing 8.1.0 native PBL9 compatibility, diagnostics, all subscription offers, and selected offerToken support")
+    print("Applied capacitor-billing 8.1.0 native PBL9 compatibility, diagnostics, all subscription offers, selected offerToken support, and structured launch-result propagation")

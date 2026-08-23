@@ -100,11 +100,8 @@ for old, new in replacements:
     if old in text:
         text = text.replace(old, new)
 
-# Native plugin 8.1.0 historically returns only the first subscription offer to JS and
-# ignores the offerToken supplied by the host app. That breaks apps using multiple base
-# plans/offers. Export every eligible offer and honor the host-selected offerToken.
 offer_anchor = 'ProductDetails.SubscriptionOfferDetails subscriptionOfferDetails = productDetails.getSubscriptionOfferDetails().get(0);\n'
-if 'ret.put("subscription_offers"' not in text:
+if 'ret.put("subscriptionOfferDetails"' not in text:
     offer_block = (
         'JSONArray subscriptionOffers = new JSONArray();\n'
         '                                for (ProductDetails.SubscriptionOfferDetails offer : productDetails.getSubscriptionOfferDetails()) {\n'
@@ -114,14 +111,12 @@ if 'ret.put("subscription_offers"' not in text:
         '                                    offerJson.put("offerId", offer.getOfferId());\n'
         '                                    subscriptionOffers.put(offerJson);\n'
         '                                }\n'
-        '                                ret.put("subscription_offers", subscriptionOffers);\n'
+        '                                ret.put("subscriptionOfferDetails", subscriptionOffers);\n'
     )
-    # Query details path has this exact anchor in the current upstream source.
     if offer_anchor not in text:
         raise SystemExit("Subscription offer export insertion point not found")
     text = text.replace(offer_anchor, offer_anchor + offer_block, 1)
 
-# In launchBillingFlow(), use the offerToken selected by the web layer when present.
 launch_offer_old = 'String offerToken = subscriptionOfferDetails.getOfferToken();'
 launch_offer_new = (
     'String requestedOfferToken = call.getString("offerToken", null);\n'
@@ -132,8 +127,7 @@ launch_offer_new = (
 if launch_offer_old in text:
     text = text.replace(launch_offer_old, launch_offer_new, 1)
 
-# Return the actual native launch diagnostics even when Play returns a synchronous failure.
-if 'ret.put("launch_response_code"' not in text:
+if 'launchDiagnostics.put("responseCode"' not in text:
     launch_marker = 'if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {'
     launch_replacement = (
         'JSObject launchDiagnostics = new JSObject();\n'
@@ -144,7 +138,6 @@ if 'ret.put("launch_response_code"' not in text:
     )
     if text.count(launch_marker) < 2:
         raise SystemExit("Expected two synchronous launchBillingFlow response checks")
-    # Replace both occurrences safely.
     text = text.replace(launch_marker, launch_replacement, 2)
 
 required = [
@@ -158,7 +151,7 @@ required = [
     "BillingResponseCode=",
     "getOnPurchasesUpdatedSubResponseCode()",
     "String.valueOf(billingResult2.getResponseCode())",
-    'ret.put("subscription_offers"',
+    'ret.put("subscriptionOfferDetails"',
     'String requestedOfferToken = call.getString("offerToken", null);',
     'launchDiagnostics.put("responseCode", billingResult2.getResponseCode());',
 ]

@@ -17,7 +17,6 @@ MARKERS = (
 )
 UI_MARKERS = (
     "Google Play code:",
-    "NATIVE_RESPONSE_CODE_NOT_RETURNED",
 )
 TRANSFORM_MARKERS = (
     "BillingResponseCode",
@@ -59,8 +58,8 @@ def verify_source_and_native() -> None:
     require("offerToken" in src_billing, "source does not forward the subscription offer token")
     require("formatBillingFailureToast" in src_app, "source does not contain billing error UI")
     require("error_normalized_v5" in vite, "vite.config.js is missing runtime Billing normalization marker")
-    require("NATIVE_RESPONSE_CODE_NOT_RETURNED" in vite, "vite.config.js is missing explicit native-response fallback")
     require("extractBillingResponseCode" in vite, "vite.config.js is missing canonical billing response-code extraction")
+    require("fallbackOperationCode" in vite and "resolvedBillingCode" in vite, "vite.config.js is missing canonical Billing fallback/normalization flow")
     for marker in MARKERS[:4]:
         require(marker in src_billing, f"src/billing.js has no runtime billing marker: {marker}")
 

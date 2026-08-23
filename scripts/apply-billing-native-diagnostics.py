@@ -156,7 +156,7 @@ required = [
     "FIFTYFIT_BILLING_ERROR",
     "BillingResponseCode=",
     "getOnPurchasesUpdatedSubResponseCode()",
-    "String.valueOf(billingResult2.getResponseCode())",
+    "billingResult2.getResponseCode()",
     'ret.put("subscriptionOfferDetails"',
     'String requestedOfferToken = call.getString("offerToken", null);',
     'launchFailure.put("responseCode", billingResult2.getResponseCode());',

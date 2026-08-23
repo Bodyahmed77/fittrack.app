@@ -1,84 +1,74 @@
 # Google Play Billing — Error Scenarios & Expected Toasts
 
-This document lists every billing failure path the Paywall surfaces after the
-`friendlyBillingErrorMessage` / `formatBillingFailureToast` change.
+The Android release uses the first-party `FiftyFitBilling` Capacitor bridge and Google Play Billing 9.1.0. Google Play is the source of purchase state; server verification happens before entitlement acknowledgement.
 
-**Toast format (Arabic):**
+**Arabic toast:**
 `فشل الدفع — كود Google Play: {code} ({NAME}) — {friendly explanation} — stage: {stage}`
 
-**Toast format (English):**
+**English toast:**
 `Purchase failed — Google Play code: {code} ({NAME}) — {friendly explanation} — stage: {stage}`
 
-Duration: **12 seconds**. Diagnostics are also written to:
+Diagnostics are also written to:
 - `window.__fiftyFitBillingDiagnostics`
 - `window.__fiftyFitLastBillingError`
 
----
+## Native BillingResponseCode
 
-## A) Google Play BillingResponseCode (native)
+| Code | Name | Meaning |
+|---|---|---|
+| 0 | `OK` | Successful BillingResult |
+| 1 | `USER_CANCELED` | User cancelled the Google Play sheet |
+| 2 | `SERVICE_UNAVAILABLE` | Google Play service temporarily unavailable |
+| 3 | `BILLING_UNAVAILABLE` | Billing unavailable for this device/account |
+| 4 | `ITEM_UNAVAILABLE` | Product not available for this account/country |
+| 5 | `DEVELOPER_ERROR` | Product/package/offer configuration problem |
+| 6 | `ERROR` | General Google Play Billing error |
+| 7 | `ITEM_ALREADY_OWNED` | Active subscription already belongs to the tester |
+| 8 | `ITEM_NOT_OWNED` | Item is not owned |
+| -1 | `SERVICE_DISCONNECTED` | Billing service disconnected |
+| -2 | `FEATURE_NOT_SUPPORTED` | Requested feature is not supported |
 
-| Code | Name | How to reproduce | Expected Arabic explanation | Expected English explanation |
-|------|------|------------------|-----------------------------|------------------------------|
-| 0 | OK | Successful purchase | تمت العملية بنجاح | OK |
-| 1 | USER_CANCELED | Open paywall → Buy → press Back / Cancel in Play sheet | تم إلغاء الشراء من جهازك (USER_CANCELED) | Purchase cancelled by user (USER_CANCELED) |
-| 2 | SERVICE_UNAVAILABLE | Airplane mode / no network while launching billing | خدمة Google Play غير متاحة مؤقتًا — تحقق من الإنترنت (SERVICE_UNAVAILABLE) | Google Play service temporarily unavailable — check network (SERVICE_UNAVAILABLE) |
-| 3 | BILLING_UNAVAILABLE | Device without Play Store / restricted account / missing Billing Library | الفوترة غير متاحة على هذا الجهاز أو الحساب (BILLING_UNAVAILABLE) | Billing unavailable on this device/account (BILLING_UNAVAILABLE) |
-| 4 | ITEM_UNAVAILABLE | Product ID not published / not available in country | المنتج غير متاح في متجر Google Play (ITEM_UNAVAILABLE) | Product not available in Google Play (ITEM_UNAVAILABLE) |
-| 5 | DEVELOPER_ERROR | Wrong package name, bad offerToken, SKU misconfigured in Play Console | خطأ في إعداد المنتج أو الـ offer token (DEVELOPER_ERROR) | Invalid product setup or offer token (DEVELOPER_ERROR) |
-| 6 | ERROR | Fatal internal Play Billing error | خطأ عام من Google Play أثناء الدفع (ERROR) | Fatal error during Google Play billing (ERROR) |
-| 7 | ITEM_ALREADY_OWNED | Buy an active subscription again without restore | الاشتراك مملوك بالفعل — استخدم استعادة المشتريات (ITEM_ALREADY_OWNED) | Item already owned — use Restore Purchases (ITEM_ALREADY_OWNED) |
-| 8 | ITEM_NOT_OWNED | Consume/acknowledge path on non-owned item (rare for SUBS) | المنتج غير مملوك حاليًا (ITEM_NOT_OWNED) | Item not owned (ITEM_NOT_OWNED) |
-| -1 | SERVICE_DISCONNECTED | Kill Play Store process mid-flow / BillingClient disconnected | انقطع الاتصال بخدمة الفوترة (SERVICE_DISCONNECTED) | Billing service disconnected (SERVICE_DISCONNECTED) |
-| -2 | FEATURE_NOT_SUPPORTED | Old Play Store / device missing required feature | الميزة غير مدعومة على هذا الجهاز (FEATURE_NOT_SUPPORTED) | Feature not supported on this device (FEATURE_NOT_SUPPORTED) |
+## App/bridge failures
 
----
+These are internal operation labels, not Google response codes:
 
-## B) App-level / bridge codes
+- `billing_connection_failed`
+- `billing_flow_failed`
+- `offer_token_missing`
+- `purchase_pending`
+- `purchase_not_completed`
+- `billing_query_failed`
 
-| Code | Stage (typical) | How to reproduce | Expected Arabic | Expected English |
-|------|-----------------|------------------|-----------------|------------------|
-| `billing_connection_failed` | `billing_connection_failed` | Plugin `startConnection` fails | تعذر الاتصال بخدمة Google Play Billing | Could not connect to Google Play Billing |
-| `billing_flow_failed` | `launchBillingFlow_exception` / `purchase_exception` | `launchBillingFlow` throws or non-OK response without mapped code | فشل تدفق الدفع من Google Play | Google Play billing flow failed |
-| `offer_token_missing` | before launch | Product has no matching base-plan offer for selected duration | لا يوجد عرض اشتراك صالح لهذا المنتج في Google Play | No eligible subscription offer for this product |
-| `purchase_pending` | `purchase_pending` | Cash / pending payment methods; Play returns pending | عملية الشراء معلّقة — انتظر التأكيد من Google Play | Purchase is pending — waiting for Google Play confirmation |
-| `purchase_not_completed` | `purchase_token_missing` | Flow closed without token and not marked pending | لم تكتمل عملية الشراء — لم يُرجع Google Play رمز شراء | Purchase did not complete — no purchase token from Google Play |
-| `billing_query_failed` | product query | `queryProductDetails` fails | (falls through to generic + debug if any) | (falls through to generic + debug if any) |
-| `billing_restore_failed` | restore | Restore path exception | (restore uses separate toast) | (restore uses separate toast) |
+The app must never display one of these strings as the Google Play numeric code when Google returned a real `BillingResponseCode`.
 
----
+## Purchase flow
 
-## C) Server verification (after native success)
+1. Fetch the Google Play subscription by product ID.
+2. Export all subscription offers with `basePlanId`, `offerId`, and `offerToken`.
+3. Select the requested offer in JavaScript.
+4. Pass that exact `offerToken` into the first-party Android `FiftyFitBilling` bridge.
+5. Call `launchBillingFlow()` directly against Google Play Billing 9.1.0.
+6. Return the native `responseCode`, `debugMessage`, and sub-response code to JavaScript as structured data.
+7. On a successful purchase, return the purchase token to `registerPurchase.js` for server-side Google verification.
 
-These appear **after** a successful native purchase when `registerServerEntitlement` fails.
-They use a dedicated long toast (not the Google Play code toast):
+## Manual QA
 
-| Server code | Meaning | User-facing message (AR / EN) |
-|-------------|---------|--------------------------------|
-| `purchase_not_found` | Google API cannot find token | تم استلام عملية الشراء ولكن لم يتم تفعيل الاشتراك بعد… / Purchase received but the subscription was not activated… |
-| `product_mismatch` | Token product ≠ expected SKU | same support message |
-| `purchase_not_active` | Subscription expired / cancelled at Google | same support message |
-| `purchase_already_claimed` | Token already bound to another account | same support message |
+- Cancel the Play sheet: expect `1 (USER_CANCELED)`.
+- Test an already-owned subscription: expect `7 (ITEM_ALREADY_OWNED)`.
+- Disable network: expect `2 (SERVICE_UNAVAILABLE)` or a connection-stage diagnostic.
+- Test a deliberately invalid offer in a non-release build: expect `5 (DEVELOPER_ERROR)`.
+- For any failure, inspect:
 
----
+```js
+window.__fiftyFitLastBillingError
+window.__fiftyFitBillingDiagnostics
+```
 
-## D) Manual QA checklist (device)
+The diagnostic object must contain the native response code when Google returned one.
 
-1. **USER_CANCELED (1)** — Cancel the Play sheet → toast shows code `1 (USER_CANCELED)`.
-2. **ITEM_ALREADY_OWNED (7)** — Purchase while already subscribed → code `7` + restore hint.
-3. **Network (2)** — Airplane mode → Buy → `SERVICE_UNAVAILABLE` or connection failed.
-4. **Bad offer (5)** — Temporarily force wrong `offerToken` in debug build → `DEVELOPER_ERROR`.
-5. **Pending** — Use a test account with pending payment method if available → `purchase_pending`.
-6. **Diagnostics** — After any failure, in Chrome remote debug:
-   ```js
-   window.__fiftyFitLastBillingError
-   window.__fiftyFitBillingDiagnostics
-   ```
-   Confirm `responseCode`, `responseName`, `stage`, `debugMessage` match the toast.
+## Release files
 
----
-
-## E) Files changed in this fix
-
-- `src/App.jsx` — `friendlyBillingErrorMessage`, `formatBillingFailureToast`, Paywall `purchase` success:false + catch paths.
-- `src/billing.js` — stop using generic string when `responseCode` exists; attach `debugMessage` on flow errors.
-- `docs/billing-error-scenarios.md` — this file.
+- `src/billing.js` — product/offer selection and server purchase handoff.
+- `src/fiftyFitBilling.js` — JavaScript registration for the first-party native bridge.
+- `scripts/inject-fiftyfit-billing-v2.py` — generates the Android Billing 9.1.0 bridge and registers it in `MainActivity`.
+- `scripts/verify-first-party-billing-release.py` — validates the final AAB/APK.

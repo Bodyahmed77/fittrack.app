@@ -51,6 +51,7 @@ jobs:
           set -euo pipefail
           python3 scripts/apply-billing-native-diagnostics.py
           python3 scripts/apply-google-native-diagnostics.py
+          python3 scripts/apply-billing-structured-results.py
 
       - name: Verify canonical source before build
         run: |
@@ -171,6 +172,26 @@ jobs:
                   matches.append(p)
           assert matches, 'Patched PBL9 BillingPlugin was not found after cap sync'
           print('Patched native billing bridge verified:', matches[0])
+          PY
+
+      - name: Verify structured BillingResult bridge
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java')
+          text = p.read_text(encoding='utf-8', errors='replace')
+          required = [
+              'private void resolveBillingFailure',
+              'failure.put("responseCode", code);',
+              'failure.put("billingResponseCode", code);',
+              'failure.put("operationCode", stage);',
+              'resolveBillingFailure(call, billingResult2, "launchBillingFlow_result");',
+              'resolveBillingFailure(call, billingResult, "purchase_update_failed");',
+          ]
+          missing = [x for x in required if x not in text]
+          assert not missing, 'Structured BillingResult bridge missing: ' + ', '.join(missing)
+          print('Structured BillingResult bridge verified')
           PY
 
       - name: Verify Capacitor Billing Android module

@@ -18,9 +18,6 @@ original = text
 gradle_text = PLUGIN_GRADLE.read_text(encoding="utf-8")
 original_gradle = gradle_text
 
-# The upstream capacitor-billing 8.1.0 Android module still declares PBL 7.1.0
-# directly. Pinning billing only in the app module does not change the plugin
-# module's own compile classpath, so upgrade the plugin module dependency here.
 if "com.android.billingclient:billing:7.1.0" in gradle_text:
     gradle_text = gradle_text.replace(
         "com.android.billingclient:billing:7.1.0",
@@ -37,7 +34,6 @@ elif "com.android.billingclient:billing:9.1.0" not in gradle_text:
         1,
     )
 
-# PBL 9 compatibility migration for the upstream capacitor-billing 8.1.0 native bridge.
 imports = [
     "import com.android.billingclient.api.PendingPurchasesParams;",
     "import com.android.billingclient.api.QueryProductDetailsResult;",
@@ -49,6 +45,12 @@ for imp in imports:
             raise SystemExit("BillingPlugin import insertion point not found")
         text = text.replace(marker, marker + imp + "\n", 1)
 
+if "import org.json.JSONArray;" not in text:
+    marker = "import org.json.JSONException;\n"
+    if marker not in text:
+        raise SystemExit("BillingPlugin JSON import anchor not found")
+    text = text.replace(marker, marker + "import org.json.JSONArray;\n", 1)
+
 old_builder = ".enablePendingPurchases()\n                .build();"
 new_builder = ".enablePendingPurchases(\n                        PendingPurchasesParams.newBuilder()\n                                .enableOneTimeProducts()\n                                .build())\n                .enableAutoServiceReconnection()\n                .build();"
 if old_builder in text:
@@ -59,9 +61,10 @@ elif ".enablePendingPurchases()" in text:
 old_callback = "billingClient.queryProductDetailsAsync(params, (billingResult1, productDetailsList) -> {"
 new_callback = "billingClient.queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) -> {\n                        List<ProductDetails> productDetailsList = queryProductDetailsResult == null\n                                ? new ArrayList<>()\n                                : queryProductDetailsResult.getProductDetailsList();"
 count = text.count(old_callback)
-if count != 2:
-    raise SystemExit(f"Expected exactly 2 PBL7 query callbacks, found {count}")
-text = text.replace(old_callback, new_callback)
+if count == 2:
+    text = text.replace(old_callback, new_callback)
+elif text.count("billingClient.queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) ->") != 2:
+    raise SystemExit(f"Expected exactly 2 PBL9 query callbacks, found {count}")
 
 replacements = [
     (
@@ -93,27 +96,61 @@ replacements = [
         'call.reject("FIFTYFIT_BILLING_ERROR [BillingResponseCode=" + billingResult1.getResponseCode() + "] Error acknowledging purchase: " + billingResult1.getDebugMessage(), String.valueOf(billingResult1.getResponseCode()));',
     ),
 ]
-
 for old, new in replacements:
     if old in text:
         text = text.replace(old, new)
 
-needle = 'ProductDetails.SubscriptionOfferDetails subscriptionOfferDetails = productDetails.getSubscriptionOfferDetails().get(0);\n'
-insert = (
-    'ProductDetails.SubscriptionOfferDetails subscriptionOfferDetails = productDetails.getSubscriptionOfferDetails().get(0);\n'
-    '                                ret.put("subscription_offer_count", productDetails.getSubscriptionOfferDetails().size());\n'
-    '                                ret.put("base_plan_id", subscriptionOfferDetails.getBasePlanId());\n'
-    '                                ret.put("offer_id", subscriptionOfferDetails.getOfferId());\n'
-    '                                ret.put("offer_token", subscriptionOfferDetails.getOfferToken());\n'
+# Native plugin 8.1.0 historically returns only the first subscription offer to JS and
+# ignores the offerToken supplied by the host app. That breaks apps using multiple base
+# plans/offers. Export every eligible offer and honor the host-selected offerToken.
+offer_anchor = 'ProductDetails.SubscriptionOfferDetails subscriptionOfferDetails = productDetails.getSubscriptionOfferDetails().get(0);\n'
+if 'ret.put("subscription_offers"' not in text:
+    offer_block = (
+        'JSONArray subscriptionOffers = new JSONArray();\n'
+        '                                for (ProductDetails.SubscriptionOfferDetails offer : productDetails.getSubscriptionOfferDetails()) {\n'
+        '                                    JSObject offerJson = new JSObject();\n'
+        '                                    offerJson.put("offerToken", offer.getOfferToken());\n'
+        '                                    offerJson.put("basePlanId", offer.getBasePlanId());\n'
+        '                                    offerJson.put("offerId", offer.getOfferId());\n'
+        '                                    subscriptionOffers.put(offerJson);\n'
+        '                                }\n'
+        '                                ret.put("subscription_offers", subscriptionOffers);\n'
+    )
+    # Query details path has this exact anchor in the current upstream source.
+    if offer_anchor not in text:
+        raise SystemExit("Subscription offer export insertion point not found")
+    text = text.replace(offer_anchor, offer_anchor + offer_block, 1)
+
+# In launchBillingFlow(), use the offerToken selected by the web layer when present.
+launch_offer_old = 'String offerToken = subscriptionOfferDetails.getOfferToken();'
+launch_offer_new = (
+    'String requestedOfferToken = call.getString("offerToken", null);\n'
+    '                                String offerToken = requestedOfferToken != null && !requestedOfferToken.trim().isEmpty()\n'
+    '                                        ? requestedOfferToken\n'
+    '                                        : subscriptionOfferDetails.getOfferToken();'
 )
-if 'ret.put("subscription_offer_count"' not in text:
-    if needle not in text:
-        raise SystemExit("Subscription offer diagnostics insertion point not found")
-    text = text.replace(needle, insert, 1)
+if launch_offer_old in text:
+    text = text.replace(launch_offer_old, launch_offer_new, 1)
+
+# Return the actual native launch diagnostics even when Play returns a synchronous failure.
+if 'ret.put("launch_response_code"' not in text:
+    launch_marker = 'if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {'
+    launch_replacement = (
+        'JSObject launchDiagnostics = new JSObject();\n'
+        '                                launchDiagnostics.put("responseCode", billingResult2.getResponseCode());\n'
+        '                                launchDiagnostics.put("debugMessage", billingResult2.getDebugMessage());\n'
+        '                                launchDiagnostics.put("subResponseCode", billingResult2.getOnPurchasesUpdatedSubResponseCode());\n'
+        '                                if (billingResult2.getResponseCode() != BillingClient.BillingResponseCode.OK) {'
+    )
+    if text.count(launch_marker) < 2:
+        raise SystemExit("Expected two synchronous launchBillingFlow response checks")
+    # Replace both occurrences safely.
+    text = text.replace(launch_marker, launch_replacement, 2)
 
 required = [
     "import com.android.billingclient.api.PendingPurchasesParams;",
     "import com.android.billingclient.api.QueryProductDetailsResult;",
+    "import org.json.JSONArray;",
     ".enablePendingPurchases(\n                        PendingPurchasesParams.newBuilder()",
     ".enableAutoServiceReconnection()",
     "queryProductDetailsResult.getProductDetailsList()",
@@ -121,19 +158,18 @@ required = [
     "BillingResponseCode=",
     "getOnPurchasesUpdatedSubResponseCode()",
     "String.valueOf(billingResult2.getResponseCode())",
-    'ret.put("subscription_offer_count"',
-    'ret.put("base_plan_id"',
-    'ret.put("offer_id"',
-    'ret.put("offer_token"',
+    'ret.put("subscription_offers"',
+    'String requestedOfferToken = call.getString("offerToken", null);',
+    'launchDiagnostics.put("responseCode", billingResult2.getResponseCode());',
 ]
 missing = [x for x in required if x not in text]
 if missing:
-    raise SystemExit("Billing native PBL9 diagnostics incomplete: " + ", ".join(missing))
+    raise SystemExit("Billing native PBL9 diagnostics/offer hardening incomplete: " + ", ".join(missing))
 
 if ".enablePendingPurchases()" in text:
     raise SystemExit("PBL7 no-arg enablePendingPurchases() still present after migration")
-if text.count("queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) ->") != 2:
-    raise SystemExit("PBL9 queryProductDetailsAsync migration did not produce exactly two migrated callbacks")
+if text.count("billingClient.queryProductDetailsAsync(params, (billingResult1, queryProductDetailsResult) ->") != 2:
+    raise SystemExit("PBL9 queryProductDetailsAsync migration did not produce exactly two callbacks")
 if "com.android.billingclient:billing:7.1.0" in gradle_text:
     raise SystemExit("PBL7 billing dependency still present in capacitor-billing build.gradle")
 if "com.android.billingclient:billing:9.1.0" not in gradle_text:
@@ -145,6 +181,6 @@ if gradle_text != original_gradle:
     PLUGIN_GRADLE.write_text(gradle_text, encoding="utf-8")
 
 if text == original and gradle_text == original_gradle:
-    print("Billing native PBL9 compatibility + diagnostics already applied")
+    print("Billing native PBL9 compatibility + diagnostics + selected offer support already applied")
 else:
-    print("Applied capacitor-billing 8.1.0 native PBL9 compatibility, dependency pin, and diagnostics")
+    print("Applied capacitor-billing 8.1.0 native PBL9 compatibility, diagnostics, all subscription offers, and selected offerToken support")

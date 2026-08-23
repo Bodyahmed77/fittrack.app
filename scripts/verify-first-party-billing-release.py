@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MARKERS = (
+WEB_MARKERS = (
     "FIFTYFIT_NATIVE_BILLING_V6",
     "FiftyFitBilling",
     "responseCode",
@@ -42,9 +42,9 @@ def source_checks() -> None:
     billing = text(ROOT / "src/billing.js")
     app = text(ROOT / "src/App.jsx")
 
-    require("registerPlugin(\"FiftyFitBilling\")" in js, "JS first-party Billing plugin registration missing")
+    require('registerPlugin("FiftyFitBilling")' in js, "JS first-party Billing plugin registration missing")
     require("FIFTYFIT_NATIVE_BILLING_V6" in js, "JS first-party Billing marker missing")
-    require("capacitor-billing" in release_cfg and "fiftyFitBillingEntry" in release_cfg, "release Vite config does not alias capacitor-billing to first-party bridge")
+    require("fiftyFitBillingEntry" in release_cfg and "capacitor-billing" in release_cfg, "release Vite config does not alias capacitor-billing to first-party bridge")
     require("responseCode" in billing and "launchBillingFlow" in billing, "billing.js does not retain Billing response diagnostics")
     require("formatBillingFailureToast" in app and "Google Play code:" in app, "Paywall billing diagnostics UI missing")
 
@@ -81,12 +81,12 @@ def bundled_js() -> str:
 def verify_prebuild() -> None:
     source_checks()
     dist = bundled_js()
-    for marker in MARKERS:
+    for marker in WEB_MARKERS:
         require(marker in dist, f"dist missing first-party billing marker: {marker}")
     public = ROOT / "android/app/src/main/assets/public"
     require(public.is_dir(), "Android public assets directory missing")
     public_js = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in public.rglob("*.js"))
-    for marker in MARKERS:
+    for marker in WEB_MARKERS:
         require(marker in public_js, f"Android public assets missing first-party billing marker: {marker}")
     print("FIRST-PARTY BILLING PREBUILD CHECK PASSED")
 
@@ -105,12 +105,12 @@ def verify_final() -> None:
             all_js = [n for n in names if n.endswith(".js")]
             require(all_js, f"{label} has no packaged JavaScript")
             js = b"\n".join(z.read(n) for n in all_js).decode("utf-8", errors="replace")
-            for marker in MARKERS:
+            for marker in WEB_MARKERS:
                 require(marker in js, f"{label} JavaScript missing marker: {marker}")
             dex = [n for n in names if n.endswith("classes.dex")]
             require(dex, f"{label} has no classes.dex")
             dex_bytes = b"\n".join(z.read(n) for n in dex)
-            for marker in (b"FiftyFitBilling", b"FIFTYFIT_NATIVE_BILLING_V6", b"FIFTYFIT_BILLING_ERROR"):
+            for marker in (b"FiftyFitBilling", b"FIFTYFIT_BILLING_ERROR", b"ResponseCode"):
                 require(marker in dex_bytes, f"{label} native dex missing marker: {marker.decode()}")
 
     print("FINAL FIRST-PARTY BILLING AAB/APK CHECK PASSED")

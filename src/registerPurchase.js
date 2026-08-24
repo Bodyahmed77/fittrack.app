@@ -4,13 +4,13 @@
 //
 // The backend independently verifies the purchase with Google Play,
 // grants the entitlement atomically, and acknowledges the subscription
-// server-side. The Android client does not acknowledge purchases itself;
-// this keeps the purchase state transition centralized and resilient to
-// a user leaving the app immediately after checkout.
+// server-side. The Android client does not acknowledge purchases itself.
 // ============================================================
 
 import { VERIFY_PURCHASE_ENDPOINT } from "./config";
 import { auth } from "./firebase";
+
+const VERIFY_TIMEOUT_MS = 20000;
 
 function extractToken(purchaseResult) {
   if (!purchaseResult || typeof purchaseResult !== "object") return null;
@@ -26,17 +26,31 @@ function extractToken(purchaseResult) {
 }
 
 async function postPurchase(endpoint, idToken, productId, purchaseToken) {
-  return fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    },
-    body: JSON.stringify({
-      productId,
-      purchaseToken,
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
+  try {
+    return await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ productId, purchaseToken }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeout = new Error(
+        "Google Play purchase verification timed out after 20 seconds",
+      );
+      timeout.code = "PURCHASE_VERIFICATION_TIMEOUT";
+      timeout.operationCode = "server_verification_timeout";
+      throw timeout;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function registerServerEntitlement(
@@ -46,17 +60,23 @@ export async function registerServerEntitlement(
 ) {
   const endpoint = VERIFY_PURCHASE_ENDPOINT;
   if (!endpoint) {
-    throw new Error("verify-purchase endpoint not configured");
+    throw Object.assign(new Error("verify-purchase endpoint not configured"), {
+      code: "verify_endpoint_missing",
+    });
   }
 
   const user = auth.currentUser;
   if (!user) {
-    throw new Error("sign-in required");
+    throw Object.assign(new Error("sign-in required"), {
+      code: "sign_in_required",
+    });
   }
 
   const purchaseToken = extractToken(purchaseResult);
   if (!purchaseToken) {
-    throw new Error("no purchase token in billing result");
+    throw Object.assign(new Error("no purchase token in billing result"), {
+      code: "purchase_token_missing",
+    });
   }
 
   const serverProductId = reportedProductId || productId;

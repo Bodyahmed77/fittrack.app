@@ -65,7 +65,7 @@ jobs:
           billing = Path('src/billing.js').read_text(encoding='utf-8')
           native_js = Path('src/fiftyFitBilling.js').read_text(encoding='utf-8')
           assert 'from "./fiftyFitBilling"' in billing
-          assert 'FIFTYFIT_NATIVE_BILLING_V6' in native_js
+          assert 'FIFTYFIT_NATIVE_BILLING_V7' in native_js
           assert 'NATIVE_BILLING_CONNECTION_TIMEOUT' in native_js
           assert 'NATIVE_PRODUCT_QUERY_TIMEOUT' in native_js
           assert 'NATIVE_PURCHASE_QUERY_TIMEOUT' in native_js
@@ -171,7 +171,7 @@ jobs:
           main_files = list(Path('android/app/src/main/java').rglob('MainActivity.java'))
           assert plugin.is_file(), 'FiftyFitBillingPlugin.java missing'
           text = plugin.read_text(encoding='utf-8')
-          assert 'FIFTYFIT_NATIVE_BILLING_V6' in text
+          assert 'FIFTYFIT_NATIVE_BILLING_V7' in text
           assert 'FIFTYFIT_BILLING_MAIN_THREAD_V1' in text
           assert 'runOnUiThread' in text
           assert 'com.android.billingclient:billing:9.1.0' in gradle.read_text(encoding='utf-8')

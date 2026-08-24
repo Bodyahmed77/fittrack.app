@@ -32,7 +32,7 @@ import java.util.List;
 
 @CapacitorPlugin(name = "FiftyFitBilling")
 public final class FiftyFitBillingPlugin extends Plugin {
-    public static final String MARKER = "FIFTYFIT_NATIVE_BILLING_V6";
+    public static final String MARKER = "FIFTYFIT_NATIVE_BILLING_V7";
     private PluginCall activePurchaseCall;
     private BillingClient activePurchaseClient;
 
@@ -188,12 +188,16 @@ public final class FiftyFitBillingPlugin extends Plugin {
                                         .setOfferToken(token)
                                         .build()))
                         .build();
-                BillingResult launch = client.launchBillingFlow(getActivity(), flow);
-                if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    activePurchaseCall = null;
-                    activePurchaseClient = null;
-                    fail(call, launch, "launchBillingFlow_result", client);
-                }
+                final BillingClient launchClient = client;
+                final BillingFlowParams launchParams = flow;
+                getActivity().runOnUiThread(() -> {
+                    BillingResult launch = launchClient.launchBillingFlow(getActivity(), launchParams);
+                    if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) {
+                        activePurchaseCall = null;
+                        activePurchaseClient = null;
+                        fail(call, launch, "launchBillingFlow_result", launchClient);
+                    }
+                });
             } catch (JSONException e) {
                 activePurchaseCall = null;
                 activePurchaseClient = null;
@@ -307,20 +311,14 @@ public final class FiftyFitBillingPlugin extends Plugin {
         }
         String requestedOfferToken = call.getString("offerToken", null);
         final BillingClient[] holder = new BillingClient[1];
-        holder[0] = newClient(call);
-        BillingClient client = holder[0];
-        // Replace the client's callback by creating a dedicated client whose listener captures the stable reference.
-        client.endConnection();
         holder[0] = BillingClient.newBuilder(getActivity())
                 .setListener((result, purchases) -> onPurchasesUpdated(holder[0], call, result, purchases))
-                .enablePendingPurchases(
-                        PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
+                .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
                 .enableAutoServiceReconnection()
                 .build();
-        client = holder[0];
         activePurchaseCall = call;
-        activePurchaseClient = client;
-        final BillingClient finalClient = client;
+        activePurchaseClient = holder[0];
+        final BillingClient finalClient = holder[0];
         connect(finalClient, call, () -> querySingleProduct(call, finalClient, productId, true, requestedOfferToken));
     }
 
@@ -376,20 +374,39 @@ if imp not in text:
     if not pkg:
         raise SystemExit("MainActivity package declaration missing")
     text = text[:pkg.end()] + "\n\n" + imp + text[pkg.end():]
-if "registerPlugin(FiftyFitBillingPlugin.class);" not in text:
-    oncreate = re.search(r"protected void onCreate\s*\(\s*Bundle\s+savedInstanceState\s*\)\s*\{", text)
-    if oncreate:
-        text = text[:oncreate.end()] + "\n        registerPlugin(FiftyFitBillingPlugin.class);" + text[oncreate.end():]
+
+# Capacitor requires custom plugin registration before BridgeActivity.onCreate
+# initializes the bridge. Registering after super.onCreate can produce the exact
+# runtime error: "plugin is not implemented on android" even though compilation
+# and static verification succeed.
+register_line = "        registerPlugin(FiftyFitBillingPlugin.class);"
+oncreate = re.search(r"protected void onCreate\s*\(\s*Bundle\s+savedInstanceState\s*\)\s*\{(?P<body>.*?)\n\s*\}", text, re.MULTILINE | re.DOTALL)
+if oncreate:
+    body = oncreate.group("body")
+    body = re.sub(r"\n\s*registerPlugin\(FiftyFitBillingPlugin\.class\);", "", body)
+    if "super.onCreate(savedInstanceState);" in body:
+        body = "\n" + register_line + "\n        super.onCreate(savedInstanceState);" + re.sub(r"^\s*super\.onCreate\(savedInstanceState\);", "", body, count=1)
     else:
-        if "import android.os.Bundle;" not in text:
-            text = text.replace(imp, "import android.os.Bundle;\n" + imp, 1)
-        body = "\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        registerPlugin(FiftyFitBillingPlugin.class);\n    }\n"
-        text = text.rstrip()
-        if not text.endswith("}"):
-            raise SystemExit("MainActivity class body malformed")
-        text = text[:-1] + body + "}\n"
+        body = "\n" + register_line + body
+    replacement = "protected void onCreate(Bundle savedInstanceState) {" + body + "\n    }"
+    text = text[:oncreate.start()] + replacement + text[oncreate.end():]
+else:
+    if "import android.os.Bundle;" not in text:
+        text = text.replace(imp, "import android.os.Bundle;\n" + imp, 1)
+    body = "\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {\n        registerPlugin(FiftyFitBillingPlugin.class);\n        super.onCreate(savedInstanceState);\n    }\n"
+    text = text.rstrip()
+    if not text.endswith("}"):
+        raise SystemExit("MainActivity class body malformed")
+    text = text[:-1] + body + "}\n"
 main.write_text(text, encoding="utf-8")
 
-print("Fifty Fit first-party Billing v2 injected")
+# Refuse silently-dangerous ordering mistakes.
+check = main.read_text(encoding="utf-8")
+pos_reg = check.find("registerPlugin(FiftyFitBillingPlugin.class);")
+pos_super = check.find("super.onCreate(savedInstanceState);")
+if pos_reg < 0 or pos_super < 0 or pos_reg > pos_super:
+    raise SystemExit("Billing plugin registration must occur before BridgeActivity.onCreate")
+
+print("Fifty Fit first-party Billing v2 injected with pre-super registration")
 print(PLUGIN)
 print(main)

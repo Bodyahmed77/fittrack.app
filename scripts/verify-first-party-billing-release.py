@@ -52,7 +52,7 @@ def source_checks() -> None:
     app = text(ROOT / "src/App.jsx")
 
     require('registerPlugin("FiftyFitBilling")' in js, "JS first-party Billing plugin registration missing")
-    require("FIFTYFIT_NATIVE_BILLING_V6" in js or "FIFTYFIT_NATIVE_BILLING_V7" in js, "JS first-party Billing marker missing")
+    require("FIFTYFIT_NATIVE_BILLING_V7" in js, "JS current first-party Billing V7 marker missing")
     require("capacitor-billing" not in release_cfg, "release Vite config still references legacy capacitor-billing runtime")
     require("fiftyFitBillingEntry" not in release_cfg, "release Vite config contains obsolete first-party alias machinery")
     require("forceFirstPartyBillingImport" not in release_cfg, "release Vite config contains obsolete import rewrite machinery")
@@ -79,6 +79,7 @@ def source_checks() -> None:
         "runOnUiThread",
     ):
         require(marker in native_text, f"native bridge missing marker: {marker}")
+    require("FIFTYFIT_NATIVE_BILLING_V7" in native_text, "native bridge current V7 marker missing")
     require("com.android.billingclient:billing:9.1.0" in gradle, "app does not compile against Google Play Billing 9.1.0")
     require("FiftyFitBillingPlugin" in main and "registerPlugin(FiftyFitBillingPlugin.class)" in main, "first-party Billing plugin is not registered in MainActivity")
     reg_pos = main.find("registerPlugin(FiftyFitBillingPlugin.class);")

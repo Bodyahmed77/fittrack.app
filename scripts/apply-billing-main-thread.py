@@ -38,10 +38,13 @@ if "getActivity().runOnUiThread" not in text:
 if "getActivity().runOnUiThread" not in text:
     raise SystemExit("Billing launch is not marshalled onto Android main thread")
 
-marker = 'public static final String MARKER = "FIFTYFIT_NATIVE_BILLING_V6";'
+# The current generated bridge uses V7. Keep compatibility with older V6
+# generated bridges so this script is safe across the transition.
+marker_match = re.search(r'public static final String MARKER = "FIFTYFIT_NATIVE_BILLING_V(?:6|7)";', text)
 if 'FIFTYFIT_BILLING_MAIN_THREAD_V1' not in text:
-    if marker not in text:
+    if not marker_match:
         raise SystemExit("Billing marker declaration not found")
+    marker = marker_match.group(0)
     text = text.replace(
         marker,
         marker + '\n    public static final String MAIN_THREAD_MARKER = "FIFTYFIT_BILLING_MAIN_THREAD_V1";',

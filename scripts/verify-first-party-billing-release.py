@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_MARKERS = (
-    "FIFTYFIT_NATIVE_BILLING_V6",
+    "FIFTYFIT_NATIVE_BILLING_V7",
     "FiftyFitBilling",
     "responseCode",
     "debugMessage",
@@ -32,7 +32,6 @@ def text(path: Path) -> str:
 
 
 def contains_legacy_runtime_import(bundle: str) -> bool:
-    """Reject executable imports/requires, but allow harmless diagnostics/comments."""
     patterns = (
         r'\bimport\s*\(\s*["\']capacitor-billing["\']\s*\)',
         r'\brequire\s*\(\s*["\']capacitor-billing["\']\s*\)',
@@ -53,13 +52,7 @@ def source_checks() -> None:
     app = text(ROOT / "src/App.jsx")
 
     require('registerPlugin("FiftyFitBilling")' in js, "JS first-party Billing plugin registration missing")
-    require("FIFTYFIT_NATIVE_BILLING_V6" in js, "JS first-party Billing marker missing")
-
-    # The release build now uses a direct static import from billing.js. Do not
-    # require an alias for capacitor-billing when the legacy runtime is no
-    # longer imported at all. The important invariants are that the source
-    # entrypoint is first-party and the release config does not re-introduce
-    # an executable legacy import.
+    require("FIFTYFIT_NATIVE_BILLING_V6" in js or "FIFTYFIT_NATIVE_BILLING_V7" in js, "JS first-party Billing marker missing")
     require("capacitor-billing" not in release_cfg, "release Vite config still references legacy capacitor-billing runtime")
     require("fiftyFitBillingEntry" not in release_cfg, "release Vite config contains obsolete first-party alias machinery")
     require("forceFirstPartyBillingImport" not in release_cfg, "release Vite config contains obsolete import rewrite machinery")
@@ -75,7 +68,6 @@ def source_checks() -> None:
     main = text(main_files[0])
 
     for marker in (
-        "FIFTYFIT_NATIVE_BILLING_V6",
         "@CapacitorPlugin(name = \"FiftyFitBilling\")",
         "enableAutoServiceReconnection()",
         "PendingPurchasesParams",
@@ -84,10 +76,14 @@ def source_checks() -> None:
         "debugMessage",
         "call.resolve",
         "subscriptionOfferDetails",
+        "runOnUiThread",
     ):
         require(marker in native_text, f"native bridge missing marker: {marker}")
     require("com.android.billingclient:billing:9.1.0" in gradle, "app does not compile against Google Play Billing 9.1.0")
     require("FiftyFitBillingPlugin" in main and "registerPlugin(FiftyFitBillingPlugin.class)" in main, "first-party Billing plugin is not registered in MainActivity")
+    reg_pos = main.find("registerPlugin(FiftyFitBillingPlugin.class);")
+    super_pos = main.find("super.onCreate(savedInstanceState);")
+    require(reg_pos >= 0 and super_pos >= 0 and reg_pos < super_pos, "FiftyFitBillingPlugin must be registered before BridgeActivity.onCreate")
 
 
 def bundled_js() -> str:

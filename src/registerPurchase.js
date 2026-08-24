@@ -12,6 +12,10 @@ import { auth } from "./firebase";
 
 const VERIFY_TIMEOUT_MS = 20000;
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function extractToken(purchaseResult) {
   if (!purchaseResult || typeof purchaseResult !== "object") return null;
   const direct =
@@ -19,21 +23,37 @@ function extractToken(purchaseResult) {
     purchaseResult.token ||
     purchaseResult.purchase?.purchaseToken ||
     purchaseResult.product?.purchaseToken;
-  if (typeof direct === "string" && direct) return direct;
+  if (isNonEmptyString(direct)) return direct.trim();
   const nested = purchaseResult.result;
   if (nested && typeof nested === "object") return extractToken(nested);
+  return null;
+}
+
+function extractProductId(purchaseResult) {
+  if (!purchaseResult || typeof purchaseResult !== "object") return null;
+  const direct =
+    purchaseResult.productId ||
+    purchaseResult.product ||
+    purchaseResult.sku ||
+    (Array.isArray(purchaseResult.products) ? purchaseResult.products[0] : null) ||
+    (Array.isArray(purchaseResult.productIds) ? purchaseResult.productIds[0] : null);
+  if (isNonEmptyString(direct)) return direct.trim();
+  const nested = purchaseResult.result;
+  if (nested && typeof nested === "object") return extractProductId(nested);
   return null;
 }
 
 async function postPurchase(endpoint, idToken, productId, purchaseToken) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
+  const requestId = globalThis.crypto?.randomUUID?.() || `ff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     return await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
+        "X-FiftyFit-Purchase-Request": requestId,
       },
       body: JSON.stringify({ productId, purchaseToken }),
       signal: controller.signal,
@@ -45,8 +65,10 @@ async function postPurchase(endpoint, idToken, productId, purchaseToken) {
       );
       timeout.code = "PURCHASE_VERIFICATION_TIMEOUT";
       timeout.operationCode = "server_verification_timeout";
+      timeout.requestId = requestId;
       throw timeout;
     }
+    error.requestId = requestId;
     throw error;
   } finally {
     clearTimeout(timer);
@@ -79,7 +101,20 @@ export async function registerServerEntitlement(
     });
   }
 
-  const serverProductId = reportedProductId || productId;
+  // Never allow an object such as BILLING_PRODUCTS.training to become the
+  // productId sent to the backend. Prefer the actual product returned by
+  // Google Play, then the explicitly reported id, then the caller fallback.
+  const serverProductId =
+    extractProductId(purchaseResult) ||
+    (isNonEmptyString(reportedProductId) ? reportedProductId.trim() : null) ||
+    (isNonEmptyString(productId) ? productId.trim() : null);
+
+  if (!serverProductId) {
+    throw Object.assign(new Error("no Google Play product id in billing result"), {
+      code: "purchase_product_id_missing",
+    });
+  }
+
   let idToken = await user.getIdToken(false);
   let res = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
 
@@ -97,7 +132,13 @@ export async function registerServerEntitlement(
     err.code = data?.error || "backend_error";
     err.httpStatus = res.status;
     err.backend = data;
+    err.productId = serverProductId;
     throw err;
   }
-  return data;
+
+  return {
+    ...data,
+    verified: data?.ok === true,
+    productId: data?.productId || serverProductId,
+  };
 }

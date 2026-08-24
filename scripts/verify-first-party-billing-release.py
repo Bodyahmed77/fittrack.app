@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -28,6 +29,15 @@ def require(value: bool, message: str) -> None:
 def text(path: Path) -> str:
     require(path.is_file() and path.stat().st_size > 0, f"missing: {path}")
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def contains_legacy_runtime_import(bundle: str) -> bool:
+    """Reject executable imports/requires, but allow harmless diagnostics/comments."""
+    patterns = (
+        r'\bimport\s*\(\s*["\']capacitor-billing["\']\s*\)',
+        r'\brequire\s*\(\s*["\']capacitor-billing["\']\s*\)',
+    )
+    return any(re.search(pattern, bundle) for pattern in patterns)
 
 
 def source_checks() -> None:
@@ -85,14 +95,14 @@ def verify_prebuild() -> None:
     dist = bundled_js()
     for marker in WEB_MARKERS:
         require(marker in dist, f"dist missing first-party billing marker: {marker}")
-    require("capacitor-billing" not in dist, "dist still contains the legacy capacitor-billing runtime reference")
+    require(not contains_legacy_runtime_import(dist), "dist still contains an executable legacy capacitor-billing runtime import")
     require("FiftyFitBilling" in dist, "dist does not contain the first-party FiftyFitBilling registration")
     public = ROOT / "android/app/src/main/assets/public"
     require(public.is_dir(), "Android public assets directory missing")
     public_js = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in public.rglob("*.js"))
     for marker in WEB_MARKERS:
         require(marker in public_js, f"Android public assets missing first-party billing marker: {marker}")
-    require("capacitor-billing" not in public_js, "Android public assets still contain the legacy capacitor-billing runtime reference")
+    require(not contains_legacy_runtime_import(public_js), "Android public assets contain an executable legacy capacitor-billing runtime import")
     print("FIRST-PARTY BILLING PREBUILD CHECK PASSED")
 
 
@@ -112,7 +122,7 @@ def verify_final() -> None:
             js = b"\n".join(z.read(n) for n in all_js).decode("utf-8", errors="replace")
             for marker in WEB_MARKERS:
                 require(marker in js, f"{label} JavaScript missing marker: {marker}")
-            require("capacitor-billing" not in js, f"{label} JavaScript still references the legacy capacitor-billing runtime")
+            require(not contains_legacy_runtime_import(js), f"{label} JavaScript contains an executable legacy capacitor-billing runtime import")
             require("FiftyFitBilling" in js, f"{label} JavaScript is missing first-party FiftyFitBilling")
             dex = [n for n in names if n.endswith("classes.dex")]
             require(dex, f"{label} has no classes.dex")

@@ -62,12 +62,16 @@ jobs:
           node --check src/fiftyFitBilling.js
           python3 - <<'PY'
           from pathlib import Path
-          js = Path('src/fiftyFitBilling.js').read_text(encoding='utf-8')
-          cfg = Path('vite.release.config.js').read_text(encoding='utf-8')
-          assert 'registerPlugin("FiftyFitBilling")' in js
-          assert 'FIFTYFIT_NATIVE_BILLING_V6' in js
-          assert 'fiftyFitBillingEntry' in cfg and 'capacitor-billing' in cfg
-          print('First-party Billing JS entrypoint validated')
+          billing = Path('src/billing.js').read_text(encoding='utf-8')
+          native_js = Path('src/fiftyFitBilling.js').read_text(encoding='utf-8')
+          assert 'from "./fiftyFitBilling"' in billing
+          assert 'FIFTYFIT_NATIVE_BILLING_V6' in native_js
+          assert 'NATIVE_BILLING_CONNECTION_TIMEOUT' in native_js
+          assert 'NATIVE_PRODUCT_QUERY_TIMEOUT' in native_js
+          assert 'NATIVE_PURCHASE_QUERY_TIMEOUT' in native_js
+          assert 'NATIVE_PURCHASE_FLOW_TIMEOUT' in native_js
+          assert 'PURCHASE_FLOW_TIMEOUT' in billing
+          print('First-party Billing static entrypoint and timeout guards validated')
           PY
 
       - name: Build web application
@@ -165,8 +169,8 @@ jobs:
           plugin = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java')
           gradle = Path('android/app/build.gradle')
           main_files = list(Path('android/app/src/main/java').rglob('MainActivity.java'))
-          text = plugin.read_text(encoding='utf-8')
           assert plugin.is_file(), 'FiftyFitBillingPlugin.java missing'
+          text = plugin.read_text(encoding='utf-8')
           assert 'FIFTYFIT_NATIVE_BILLING_V6' in text
           assert 'FIFTYFIT_BILLING_MAIN_THREAD_V1' in text
           assert 'runOnUiThread' in text
@@ -241,7 +245,7 @@ jobs:
           cp "$APK" release-artifacts/fifty-fit-release.apk
           sha256sum release-artifacts/*
 
-      - name: Verify final first-party AAB/APK
+      - name: Verify final AAB and APK contents
         run: python3 scripts/verify-first-party-billing-release.py
 
       - name: Upload verified AAB

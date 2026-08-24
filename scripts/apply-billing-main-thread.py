@@ -1,17 +1,25 @@
 from pathlib import Path
+import re
 
 PLUGIN = Path("android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java")
 if not PLUGIN.exists():
-    raise SystemExit(f"Missing generated FiftyFit billing plugin: {PLUGIN}")
+    raise SystemExit(f"Missing generated Fifty Fit billing plugin: {PLUGIN}")
 
 text = PLUGIN.read_text(encoding="utf-8")
-old = '''                BillingResult launch = client.launchBillingFlow(getActivity(), flow);
-                if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) {
-                    activePurchaseCall = null;
-                    activePurchaseClient = null;
-                    fail(call, launch, "launchBillingFlow_result", client);
-                }'''
-new = '''                final BillingClient launchClient = client;
+
+# The generated bridge may already contain the main-thread wrapper. Make this
+# patch idempotent so a later release cannot fail merely because the desired
+# state is already present.
+if "getActivity().runOnUiThread" not in text:
+    pattern = re.compile(
+        r'(?ms)^\s*BillingResult launch = client\.launchBillingFlow\(getActivity\(\), flow\);\s*'
+        r'if \(launch\.getResponseCode\(\) != BillingClient\.BillingResponseCode\.OK\) \{\s*'
+        r'activePurchaseCall = null;\s*'
+        r'activePurchaseClient = null;\s*'
+        r'fail\(call, launch, "launchBillingFlow_result", client\);\s*'
+        r'\}'
+    )
+    replacement = '''                final BillingClient launchClient = client;
                 final BillingFlowParams launchParams = flow;
                 getActivity().runOnUiThread(() -> {
                     BillingResult launch = launchClient.launchBillingFlow(getActivity(), launchParams);
@@ -21,13 +29,24 @@ new = '''                final BillingClient launchClient = client;
                         fail(call, launch, "launchBillingFlow_result", launchClient);
                     }
                 });'''
-if old not in text:
-    raise SystemExit("Expected Billing launch block not found; refusing unsafe patch")
-text = text.replace(old, new, 1)
+    updated, count = pattern.subn(replacement, text, count=1)
+    if count != 1:
+        raise SystemExit("Expected unwrapped Billing launch block not found; refusing unsafe patch")
+    text = updated
+
+# Hard verification: the actual launch call must execute inside runOnUiThread.
+if "getActivity().runOnUiThread" not in text:
+    raise SystemExit("Billing launch is not marshalled onto Android main thread")
 
 marker = 'public static final String MARKER = "FIFTYFIT_NATIVE_BILLING_V6";'
 if 'FIFTYFIT_BILLING_MAIN_THREAD_V1' not in text:
-    text = text.replace(marker, marker + '\n    public static final String MAIN_THREAD_MARKER = "FIFTYFIT_BILLING_MAIN_THREAD_V1";', 1)
+    if marker not in text:
+        raise SystemExit("Billing marker declaration not found")
+    text = text.replace(
+        marker,
+        marker + '\n    public static final String MAIN_THREAD_MARKER = "FIFTYFIT_BILLING_MAIN_THREAD_V1";',
+        1,
+    )
 
 PLUGIN.write_text(text, encoding="utf-8")
-print("Billing launch is now explicitly marshalled onto Android main thread")
+print("Billing main-thread launch verified/applied")

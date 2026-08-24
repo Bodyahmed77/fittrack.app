@@ -128,6 +128,10 @@ export const BillingPlugin = new Proxy(NativeBillingPlugin, {
   },
 });
 
+// V6 is kept for compatibility with existing source checks; V7 is the
+// current native/release verification marker.
 BillingPlugin.FIFTYFIT_NATIVE_BILLING_V6 = true;
+BillingPlugin.FIFTYFIT_NATIVE_BILLING_V7 = true;
 export default BillingPlugin;
 export const FIFTYFIT_NATIVE_BILLING_V6 = true;
+export const FIFTYFIT_NATIVE_BILLING_V7 = true;

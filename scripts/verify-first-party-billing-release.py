@@ -54,9 +54,16 @@ def source_checks() -> None:
 
     require('registerPlugin("FiftyFitBilling")' in js, "JS first-party Billing plugin registration missing")
     require("FIFTYFIT_NATIVE_BILLING_V6" in js, "JS first-party Billing marker missing")
-    require("fiftyFitBillingEntry" in release_cfg and "capacitor-billing" in release_cfg, "release Vite config does not alias capacitor-billing to first-party bridge")
-    require("forceFirstPartyBillingImport" in release_cfg, "release Vite config is missing the first-party import hardening plugin")
-    require('await import("./fiftyFitBilling.js")' in release_cfg, "release Vite config does not force the local billing entrypoint")
+
+    # The release build now uses a direct static import from billing.js. Do not
+    # require an alias for capacitor-billing when the legacy runtime is no
+    # longer imported at all. The important invariants are that the source
+    # entrypoint is first-party and the release config does not re-introduce
+    # an executable legacy import.
+    require("capacitor-billing" not in release_cfg, "release Vite config still references legacy capacitor-billing runtime")
+    require("fiftyFitBillingEntry" not in release_cfg, "release Vite config contains obsolete first-party alias machinery")
+    require("forceFirstPartyBillingImport" not in release_cfg, "release Vite config contains obsolete import rewrite machinery")
+    require('from "./fiftyFitBilling"' in billing or "from './fiftyFitBilling'" in billing, "billing.js does not statically import first-party FiftyFitBilling")
     require("responseCode" in billing and "launchBillingFlow" in billing, "billing.js does not retain Billing response diagnostics")
     require("formatBillingFailureToast" in app and "Google Play code:" in app, "Paywall billing diagnostics UI missing")
 

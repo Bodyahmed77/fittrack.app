@@ -7,11 +7,13 @@
 // server-side. The Android client does not acknowledge purchases itself.
 // ============================================================
 
+import { onAuthStateChanged } from "firebase/auth";
 import { VERIFY_PURCHASE_ENDPOINT } from "./config";
 import { auth } from "./firebase";
 
 const VERIFY_TIMEOUT_MS = 20000;
-const SERVER_RETRY_DELAYS_MS = [800, 1800];
+const SERVER_RETRY_DELAYS_MS = [800, 1800, 3500];
+const AUTH_WAIT_MS = 12000;
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -26,6 +28,56 @@ function writeServerDiagnostics(patch) {
       updatedAt: new Date().toISOString(),
     };
   } catch (_) {}
+}
+
+async function waitForFirebaseUser(timeoutMs = AUTH_WAIT_MS) {
+  if (auth.currentUser) return auth.currentUser;
+
+  writeServerDiagnostics({
+    stage: "server_verification_waiting_for_auth",
+    serverVerification: "waiting_for_auth",
+  });
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let unsubscribe = null;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      if (unsubscribe) unsubscribe();
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      writeServerDiagnostics({
+        stage: "server_verification_auth_timeout",
+        serverVerification: "failed",
+      });
+      finish(
+        reject,
+        Object.assign(
+          new Error("Firebase authentication was not ready when the purchase completed"),
+          { code: "sign_in_required", operationCode: "server_auth_not_ready" },
+        ),
+      );
+    }, timeoutMs);
+
+    try {
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        // Keep waiting on the initial null callback; Capacitor/Firebase may
+        // still be restoring the persisted session. Resolve only when a user
+        // is actually available or the bounded timeout is reached.
+        if (!user) return;
+        writeServerDiagnostics({
+          stage: "server_verification_auth_ready",
+          serverVerification: "auth_ready",
+        });
+        finish(resolve, user);
+      });
+    } catch (error) {
+      finish(reject, error);
+    }
+  });
 }
 
 function extractToken(purchaseResult) {
@@ -56,7 +108,7 @@ function extractProductId(purchaseResult) {
 }
 
 function isRetryableServerStatus(status) {
-  return status === 429 || status === 502 || status === 503 || status === 504;
+  return status === 408 || status === 429 || status === 502 || status === 503 || status === 504;
 }
 
 function sleep(ms) {
@@ -66,22 +118,26 @@ function sleep(ms) {
 async function postPurchase(endpoint, idToken, productId, purchaseToken) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), VERIFY_TIMEOUT_MS);
-  const requestId = globalThis.crypto?.randomUUID?.() || `ff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ||
+    `ff-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
   writeServerDiagnostics({
     stage: "server_verification_request_started",
+    serverVerification: "request_started",
     productId,
     requestId,
     purchaseTokenPresent: !!purchaseToken,
   });
+
   try {
     return await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
-        "X-FiftyFit-Purchase-Request": requestId,
       },
-      body: JSON.stringify({ productId, purchaseToken }),
+      body: JSON.stringify({ productId, purchaseToken, requestId }),
       signal: controller.signal,
     });
   } catch (error) {
@@ -94,6 +150,7 @@ async function postPurchase(endpoint, idToken, productId, purchaseToken) {
       timeout.requestId = requestId;
       writeServerDiagnostics({
         stage: "server_verification_timeout",
+        serverVerification: "failed",
         productId,
         requestId,
         code: timeout.code,
@@ -104,10 +161,10 @@ async function postPurchase(endpoint, idToken, productId, purchaseToken) {
     error.requestId = requestId;
     writeServerDiagnostics({
       stage: "server_verification_network_error",
+      serverVerification: "failed",
       productId,
       requestId,
       code: error?.code || "network_error",
-      nativeCode: error?.nativeCode || null,
       message: error?.message || String(error),
     });
     throw error;
@@ -125,23 +182,13 @@ export async function registerServerEntitlement(
   if (!endpoint) {
     writeServerDiagnostics({
       stage: "server_verification_failed",
+      serverVerification: "failed",
       code: "verify_endpoint_missing",
       message: "verify-purchase endpoint not configured",
     });
     throw Object.assign(new Error("verify-purchase endpoint not configured"), {
       code: "verify_endpoint_missing",
-    });
-  }
-
-  const user = auth.currentUser;
-  if (!user) {
-    writeServerDiagnostics({
-      stage: "server_verification_failed",
-      code: "sign_in_required",
-      message: "Firebase auth.currentUser is missing during purchase registration",
-    });
-    throw Object.assign(new Error("sign-in required"), {
-      code: "sign_in_required",
+      operationCode: "server_endpoint_missing",
     });
   }
 
@@ -149,17 +196,16 @@ export async function registerServerEntitlement(
   if (!purchaseToken) {
     writeServerDiagnostics({
       stage: "server_verification_failed",
+      serverVerification: "failed",
       code: "purchase_token_missing",
       message: "No purchase token was available after Google Play reported success",
     });
     throw Object.assign(new Error("no purchase token in billing result"), {
       code: "purchase_token_missing",
+      operationCode: "server_purchase_token_missing",
     });
   }
 
-  // Never allow an object such as BILLING_PRODUCTS.training to become the
-  // productId sent to the backend. Prefer the actual product returned by
-  // Google Play, then the explicitly reported id, then the caller fallback.
   const serverProductId =
     extractProductId(purchaseResult) ||
     (isNonEmptyString(reportedProductId) ? reportedProductId.trim() : null) ||
@@ -168,53 +214,103 @@ export async function registerServerEntitlement(
   if (!serverProductId) {
     writeServerDiagnostics({
       stage: "server_verification_failed",
+      serverVerification: "failed",
       code: "purchase_product_id_missing",
       message: "No Google Play product id was available",
     });
     throw Object.assign(new Error("no Google Play product id in billing result"), {
       code: "purchase_product_id_missing",
+      operationCode: "server_product_id_missing",
     });
   }
+
+  let user = auth.currentUser;
+  if (!user) user = await waitForFirebaseUser();
+  if (!user) {
+    writeServerDiagnostics({
+      stage: "server_verification_failed",
+      serverVerification: "failed",
+      code: "sign_in_required",
+      message: "Firebase authentication is not available",
+    });
+    throw Object.assign(new Error("sign-in required"), {
+      code: "sign_in_required",
+      operationCode: "server_auth_not_ready",
+    });
+  }
+
+  writeServerDiagnostics({
+    stage: "server_verification_started",
+    serverVerification: "started",
+    productId: serverProductId,
+    purchaseTokenPresent: true,
+    authReady: true,
+  });
 
   let idToken = await user.getIdToken(false);
 
   const sendWithRecovery = async () => {
-    let response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
+    let response = null;
+    let lastError = null;
 
-    if (response.status === 401) {
-      idToken = await user.getIdToken(true);
-      writeServerDiagnostics({
-        stage: "server_verification_auth_refresh",
-        productId: serverProductId,
-        httpStatus: 401,
-      });
-      response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
-    }
-
-    for (
-      let attempt = 0;
-      attempt < SERVER_RETRY_DELAYS_MS.length && isRetryableServerStatus(response.status);
-      attempt += 1
-    ) {
-      await sleep(SERVER_RETRY_DELAYS_MS[attempt]);
-      response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
-      if (response.status === 401) {
-        idToken = await user.getIdToken(true);
-        writeServerDiagnostics({
-          stage: "server_verification_auth_refresh",
-          productId: serverProductId,
-          httpStatus: 401,
-          retryAttempt: attempt + 1,
-        });
+    for (let attempt = 0; attempt <= SERVER_RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
         response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
+        lastError = null;
+      } catch (error) {
+        lastError = error;
       }
+
+      if (!lastError) {
+        if (response.status === 401) {
+          idToken = await user.getIdToken(true);
+          writeServerDiagnostics({
+            stage: "server_verification_auth_refresh",
+            serverVerification: "refreshing_auth",
+            productId: serverProductId,
+            httpStatus: 401,
+            attempt: attempt + 1,
+          });
+          if (attempt < SERVER_RETRY_DELAYS_MS.length) continue;
+        }
+        if (!isRetryableServerStatus(response.status) || attempt >= SERVER_RETRY_DELAYS_MS.length) break;
+      } else if (attempt >= SERVER_RETRY_DELAYS_MS.length) {
+        break;
+      }
+
+      await sleep(SERVER_RETRY_DELAYS_MS[attempt]);
     }
 
+    if (lastError) throw lastError;
     return response;
   };
 
-  const res = await sendWithRecovery();
+  let res;
+  try {
+    res = await sendWithRecovery();
+  } catch (error) {
+    writeServerDiagnostics({
+      stage: "server_verification_failed",
+      serverVerification: "failed",
+      productId: serverProductId,
+      code: error?.code || "network_error",
+      operationCode: error?.operationCode || "server_request_failed",
+      message: error?.message || String(error),
+      requestId: error?.requestId || null,
+    });
+    throw error;
+  }
+
   const data = await res.json().catch(() => null);
+  writeServerDiagnostics({
+    stage: res.ok ? "server_verification_response_ok" : "server_verification_response_error",
+    serverVerification: res.ok ? "response_ok" : "response_error",
+    productId: serverProductId,
+    httpStatus: res.status,
+    backendCode: data?.error || null,
+    backendRequestId: data?.requestId || null,
+  });
+
   if (!res.ok) {
     const err = new Error(data?.message || data?.error || `HTTP ${res.status}`);
     err.code = data?.error || "backend_error";
@@ -224,24 +320,22 @@ export async function registerServerEntitlement(
     err.requestId = data?.requestId || null;
     writeServerDiagnostics({
       stage: "server_verification_failed",
+      serverVerification: "failed",
       productId: serverProductId,
       code: err.code,
-      httpStatus: err.httpStatus,
+      httpStatus: res.status,
       requestId: err.requestId,
       message: err.message,
-      backendError: data?.error || null,
-      backendMessage: data?.message || null,
     });
     throw err;
   }
 
   writeServerDiagnostics({
     stage: "server_verification_succeeded",
+    serverVerification: "verified_and_registered",
     productId: data?.productId || serverProductId,
     verified: data?.ok === true,
-    backendStatus: data?.status || null,
-    backendState: data?.purchaseState || data?.subscriptionState || null,
-    requestId: data?.requestId || null,
+    backendRequestId: data?.requestId || null,
   });
 
   return {

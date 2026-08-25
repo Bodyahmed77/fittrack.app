@@ -11,6 +11,7 @@ import { VERIFY_PURCHASE_ENDPOINT } from "./config";
 import { auth } from "./firebase";
 
 const VERIFY_TIMEOUT_MS = 20000;
+const SERVER_RETRY_DELAYS_MS = [800, 1800];
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -41,6 +42,14 @@ function extractProductId(purchaseResult) {
   const nested = purchaseResult.result;
   if (nested && typeof nested === "object") return extractProductId(nested);
   return null;
+}
+
+function isRetryableServerStatus(status) {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function postPurchase(endpoint, idToken, productId, purchaseToken) {
@@ -116,16 +125,28 @@ export async function registerServerEntitlement(
   }
 
   let idToken = await user.getIdToken(false);
-  let res = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
 
-  // Firebase ID tokens are short-lived. A long-running checkout flow can
-  // cross an expiration boundary, so retry exactly once with a refreshed
-  // token when the backend explicitly reports authentication failure.
-  if (res.status === 401) {
-    idToken = await user.getIdToken(true);
-    res = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
-  }
+  const sendWithRecovery = async () => {
+    let response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
 
+    if (response.status === 401) {
+      idToken = await user.getIdToken(true);
+      response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
+    }
+
+    for (let attempt = 0; attempt < SERVER_RETRY_DELAYS_MS.length && isRetryableServerStatus(response.status); attempt += 1) {
+      await sleep(SERVER_RETRY_DELAYS_MS[attempt]);
+      response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
+      if (response.status === 401) {
+        idToken = await user.getIdToken(true);
+        response = await postPurchase(endpoint, idToken, serverProductId, purchaseToken);
+      }
+    }
+
+    return response;
+  };
+
+  const res = await sendWithRecovery();
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const err = new Error(data?.message || data?.error || `HTTP ${res.status}`);
@@ -133,6 +154,7 @@ export async function registerServerEntitlement(
     err.httpStatus = res.status;
     err.backend = data;
     err.productId = serverProductId;
+    err.requestId = data?.requestId || null;
     throw err;
   }
 

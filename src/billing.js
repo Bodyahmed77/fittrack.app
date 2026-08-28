@@ -337,7 +337,7 @@ export async function purchase(planId, durationId) {
   writeBillingDiagnostics({ stage: "purchase_started", productId, planId, durationId });
 
   try {
-    await withPurchaseTimeout((async () => {
+    const purchaseResult = await withPurchaseTimeout((async () => {
       await ensureBillingConnection(plugin);
       writeBillingDiagnostics({ stage: "purchase_connection_ready", productId, planId, durationId });
 
@@ -463,6 +463,7 @@ export async function purchase(planId, durationId) {
         result,
       };
     })());
+    return purchaseResult;
   } catch (e) {
     const error = billingError(e, "billing_flow_failed");
     writeBillingDiagnostics({

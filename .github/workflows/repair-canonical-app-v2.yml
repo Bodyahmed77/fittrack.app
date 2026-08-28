@@ -1,0 +1,123 @@
+name: Repair Fifty Fit Canonical Source
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Restore and repair canonical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          CANONICAL='6c9d2090f581d2ecc0e6a653379b81499361ad35'
+          app=Path('src/App.jsx')
+          current=app.read_text(encoding='utf-8') if app.exists() else ''
+          if len(current) < 100000 or 'function PaywallScreen' not in current or 'function App(' not in current:
+              current=subprocess.check_output(['git','show',f'{CANONICAL}:src/App.jsx'],text=True)
+              app.write_text(current,encoding='utf-8')
+              print('Restored canonical App.jsx')
+          text=app.read_text(encoding='utf-8')
+
+          text=text.replace('const lang = data.settings.language || localLang || "en";','const lang = localLang || data.settings.language || "en";',1)
+
+          if 'fiftyfit-language-change' not in text:
+              m=re.search(r'const \[localLang, setLocalLang\] = useState\(readStoredLanguage\);',text)
+              if not m: raise SystemExit('localLang declaration not found')
+              event_listener='''\n  useEffect(() => {\n    const onLanguageChange = (event) => {\n      const nextLang = event?.detail?.language;\n      if (nextLang !== "ar" && nextLang !== "en") return;\n      persistLanguage(nextLang);\n      setLocalLang(nextLang);\n    };\n    window.addEventListener("fiftyfit-language-change", onLanguageChange);\n    return () => window.removeEventListener("fiftyfit-language-change", onLanguageChange);\n  }, []);\n'''
+              text=text[:m.end()]+event_listener+text[m.end():]
+
+          s=text.find('function SettingsScreen(')
+          e=text.find('\nfunction ',s+20)
+          if s<0: raise SystemExit('SettingsScreen not found')
+          if e<0: e=len(text)
+          settings=text[s:e]
+          if 'fiftyfit-language-change' not in settings:
+              marker='    persistLanguage(l);'
+              if marker not in settings: raise SystemExit('Settings setLang persistence not found')
+              settings=settings.replace(marker, marker+'\n    window.dispatchEvent(new CustomEvent("fiftyfit-language-change", { detail: { language: l } }));',1)
+              text=text[:s]+settings+text[e:]
+
+          # Restore must always be available; local entitlement can be stale.
+          idx=text.find('onClick={restore}')
+          if idx<0: raise SystemExit('Restore handler not found')
+          st=text.rfind('{(data.entitlements.trainingPro ||',0,idx)
+          en=text.find('&& (',st)
+          if st>=0 and en>=0:
+              text=text[:st]+'{true && ('+text[en+4:]
+
+          # Correct 12-hour plan delivery copy.
+          replacements={
+            'خطة الأكل الخاصة بك أصبحت متاحة داخل التطبيق — هتلاقيها في تبويب الخطة الغذائية. احتجت مساعدة، كلمنا على واتساب في أي وقت.':'هنجهز لك خطتك المخصصة ونرسلها لك خلال 12 ساعة. هنبلغك أول ما تكون جاهزة.',
+            'Your meal plan is now available inside the app — find it in the Nutrition Plan tab. Need help anytime, chat with us on WhatsApp.':"Your personalized plan will be prepared and sent to you within 12 hours. We'll notify you when it's ready.",
+          }
+          for old,new in replacements.items():
+              text=text.replace(old,new,1)
+
+          if 'onClick={() => setSuccessModal(null)}' not in text:
+              anchor='              <button\n                type="button"\n                onClick={successModal.onCta}'
+              p=text.find(anchor)
+              if p<0: raise SystemExit('Success modal CTA not found')
+              end_btn=text.find('              </button>\n',p)
+              if end_btn<0: raise SystemExit('Success modal CTA end not found')
+              end_btn+=len('              </button>\n')
+              close='''              <button\n                type="button"\n                onClick={() => setSuccessModal(null)}\n                style={{\n                  width: "100%",\n                  padding: "10px 14px",\n                  marginTop: 8,\n                  borderRadius: 12,\n                  border: `1px solid ${C.border}`,\n                  background: "transparent",\n                  color: C.text,\n                  fontWeight: 700,\n                  fontSize: 13,\n                  cursor: "pointer",\n                }}\n              >\n                {ar ? "إغلاق" : "Close"}\n              </button>\n'''
+              text=text[:end_btn]+close+text[end_btn:]
+
+          if 'fiftyfit-theme-change' not in text:
+              anchor='  const ui = { C, lang };'
+              if anchor not in text: raise SystemExit('UI root anchor not found')
+              effect='''\n  useEffect(() => {\n    try {\n      document.documentElement.style.colorScheme = C.mode;\n      document.documentElement.dataset.fiftyFitTheme = C.mode;\n      window.dispatchEvent(new CustomEvent("fiftyfit-theme-change", { detail: { dark: C.mode === "dark" } }));\n    } catch (_) {}\n  }, [C.mode]);\n'''
+              text=text.replace(anchor,anchor+effect,1)
+
+          app.write_text(text,encoding='utf-8')
+
+          billing=Path('src/billing.js')
+          b=billing.read_text(encoding='utf-8')
+          if 'const purchaseResult = await withPurchaseTimeout((async () =>' not in b:
+              if '    await withPurchaseTimeout((async () => {' not in b:
+                  raise SystemExit('billing purchase wrapper not found')
+              b=b.replace('    await withPurchaseTimeout((async () => {','    const purchaseResult = await withPurchaseTimeout((async () => {',1)
+              if '    })());\n  } catch (e) {' not in b:
+                  raise SystemExit('billing purchase closure not found')
+              b=b.replace('    })());\n  } catch (e) {','    })());\n    return purchaseResult;\n  } catch (e) {',1)
+          billing.write_text(b,encoding='utf-8')
+
+          assert len(app.read_text(encoding='utf-8'))>100000
+          assert 'const lang = localLang || data.settings.language || "en";' in app.read_text(encoding='utf-8')
+          assert 'fiftyfit-language-change' in app.read_text(encoding='utf-8')
+          assert 'onClick={restore}' in app.read_text(encoding='utf-8')
+          assert 'const purchaseResult = await withPurchaseTimeout((async () =>' in billing.read_text(encoding='utf-8')
+          assert 'return purchaseResult;' in billing.read_text(encoding='utf-8')
+          print('Canonical App and Billing source repair verified')
+          PY
+
+      - name: Commit repaired source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx src/billing.js
+          if git diff --cached --quiet; then
+            echo 'No source changes needed.'
+            exit 0
+          fi
+          git commit -m "Repair canonical App and Billing source [skip ci]"
+          git push origin HEAD:main

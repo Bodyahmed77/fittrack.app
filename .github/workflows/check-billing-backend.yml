@@ -1,0 +1,31 @@
+name: Check Fifty Fit Billing Backend
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check verify-purchase backend configuration
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 \
+            https://zemqiedqcujevyewfpld.supabase.co/functions/v1/verify-purchase \
+            -o billing-backend-check.json
+          cat billing-backend-check.json
+          python3 - <<'PY'
+          import json
+          with open('billing-backend-check.json', encoding='utf-8') as f:
+              data = json.load(f)
+          assert data.get('ok') is True, data
+          configured = bool(data.get('serviceAccountConfigured'))
+          print(f'Google Play serviceAccountConfigured={configured}')
+          if not configured:
+              raise SystemExit('Google Play service-account credential is missing from Supabase Edge Function secrets')
+          PY

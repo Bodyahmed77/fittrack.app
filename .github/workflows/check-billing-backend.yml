@@ -12,11 +12,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Check verify-purchase backend configuration
+      - name: Check Google Play billing backend health
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time 20 \
-            https://zemqiedqcujevyewfpld.supabase.co/functions/v1/verify-purchase \
+          curl --fail --silent --show-error --max-time 30 \
+            https://zemqiedqcujevyewfpld.supabase.co/functions/v1/billing-health \
             -o billing-backend-check.json
           cat billing-backend-check.json
           python3 - <<'PY'
@@ -24,8 +24,9 @@ jobs:
           with open('billing-backend-check.json', encoding='utf-8') as f:
               data = json.load(f)
           assert data.get('ok') is True, data
-          configured = bool(data.get('serviceAccountConfigured'))
-          print(f'Google Play serviceAccountConfigured={configured}')
-          if not configured:
-              raise SystemExit('Google Play service-account credential is missing from Supabase Edge Function secrets')
+          assert data.get('secretPresent') is True, data
+          assert data.get('credentialParseable') is True, data
+          assert data.get('oauthExchange') is True, data
+          assert data.get('playApiReachable') is True, data
+          print('Google Play billing backend health: PASS')
           PY

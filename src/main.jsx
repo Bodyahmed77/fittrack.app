@@ -3,21 +3,29 @@ import { createRoot } from "react-dom/client";
 import logoSrc from "./assets/logo.png";
 import { Keyboard } from "@capacitor/keyboard";
 
-async function applySystemBarColors() {
+async function applySystemBarColors(dark = true) {
   try {
     const { Capacitor } = await import("@capacitor/core");
     if (!Capacitor.isNativePlatform()) return;
     const { StatusBar, Style } = await import("@capacitor/status-bar");
-    await StatusBar.setOverlaysWebView({ overlay: false });
-    await StatusBar.setBackgroundColor({ color: "#000000" });
-    await StatusBar.setStyle({ style: Style.Dark });
+    // The native activity keeps system bars hidden by default. Overlaying the
+    // webview lets transient bars reveal the actual app background instead of
+    // a platform-generated gray strip.
+    await StatusBar.setOverlaysWebView({ overlay: true });
+    await StatusBar.setStyle({ style: dark ? Style.Light : Style.Dark });
   } catch (e) {
-    console.warn("[SystemBars] status bar color apply failed", e);
+    console.warn("[SystemBars] status bar config failed", e);
   }
 }
-applySystemBarColors();
-setTimeout(applySystemBarColors, 400);
-setTimeout(applySystemBarColors, 1200);
+
+applySystemBarColors(true);
+setTimeout(() => applySystemBarColors(true), 400);
+setTimeout(() => applySystemBarColors(true), 1200);
+if (typeof window !== "undefined") {
+  window.addEventListener("fiftyfit-theme-change", (event) => {
+    applySystemBarColors(event?.detail?.dark !== false);
+  });
+}
 
 function setKeyboardHeight(height) {
   const px = Math.max(0, Number(height) || 0);
@@ -49,9 +57,6 @@ function keepFocusedFieldVisible() {
   const rect = el.getBoundingClientRect();
 
   if (rect.bottom > visibleBottom) {
-    // Never use smooth scrolling here. Android can emit several viewport/focus
-    // events during one keyboard transition; animated scrolling on every event
-    // causes the visible up/down glitch seen on some devices.
     el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
   }
 }
@@ -92,9 +97,6 @@ if (typeof window !== "undefined") {
 
   window.setTimeout(scheduleKeyboardSync, 0);
 
-  // This entry point is mounted once for the app lifetime. The handles are kept
-  // so hot-reload/dev environments can still clean them up if the module is
-  // re-executed.
   window.addEventListener("beforeunload", () => {
     window.clearTimeout(focusTimer);
     cancelAnimationFrame(syncFrame);
@@ -146,40 +148,14 @@ function StartupShell() {
             filter: "drop-shadow(0 0 18px rgba(255,255,255,.18))",
           }}
         />
-        <div
-          style={{
-            fontWeight: 900,
-            fontSize: 22,
-            letterSpacing: 1.2,
-            animation: "fiftyTextIn .85s ease-out .18s both",
-          }}
-        >
+        <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: 1.2, animation: "fiftyTextIn .85s ease-out .18s both" }}>
           Fifty Fit
         </div>
-        <div
-          style={{
-            marginTop: 7,
-            fontSize: 11,
-            color: "#8e8e8e",
-            letterSpacing: 0.6,
-            animation: "fiftyTextIn .75s ease-out .32s both",
-          }}
-        >
+        <div style={{ marginTop: 7, fontSize: 11, color: "#8e8e8e", letterSpacing: 0.6, animation: "fiftyTextIn .75s ease-out .32s both" }}>
           TRAIN • EAT • PROGRESS
         </div>
       </div>
-      <style>{`
-        @keyframes fiftyLogoIn {
-          0% { opacity: 0; transform: scale(.72) rotate(-7deg); }
-          45% { opacity: 1; transform: scale(1.08) rotate(2deg); }
-          72% { transform: scale(.98) rotate(0deg); }
-          100% { opacity: 1; transform: scale(1) rotate(0deg); }
-        }
-        @keyframes fiftyTextIn {
-          0% { opacity: 0; transform: translateY(10px); }
-          100% { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+      <style>{`@keyframes fiftyLogoIn{0%{opacity:0;transform:scale(.72) rotate(-7deg)}45%{opacity:1;transform:scale(1.08) rotate(2deg)}72%{transform:scale(.98) rotate(0deg)}100%{opacity:1;transform:scale(1) rotate(0deg)}}@keyframes fiftyTextIn{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:translateY(0)}}`}</style>
     </div>
   );
 }

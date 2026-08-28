@@ -8,19 +8,12 @@ MAIN = Path("android/app/src/main/java/com/bodyahmed77/fiftyfit/MainActivity.jav
 if not PLUGIN.exists():
     raise SystemExit(f"Missing generated Fifty Fit billing plugin: {PLUGIN}")
 
-# Generate the in-app TikTok player before touching MainActivity. The app's
-# React layer calls TikTokWebView, so the native plugin must exist in every
-# release build.
 tiktok_script = Path("scripts/inject-tiktok-webview.py")
 if not tiktok_script.is_file():
     raise SystemExit(f"Missing TikTok WebView injector: {tiktok_script}")
 subprocess.run(["python3", str(tiktok_script)], check=True)
 
 text = PLUGIN.read_text(encoding="utf-8")
-
-# The generated bridge may already contain the main-thread wrapper. Make this
-# patch idempotent so a later release cannot fail merely because the desired
-# state is already present.
 if "getActivity().runOnUiThread" not in text:
     pattern = re.compile(
         r'(?ms)^\s*BillingResult launch = client\.launchBillingFlow\(getActivity\(\), flow\);\s*'
@@ -53,19 +46,13 @@ if 'FIFTYFIT_BILLING_MAIN_THREAD_V1' not in text:
     if not marker_match:
         raise SystemExit("Billing marker declaration not found")
     marker = marker_match.group(0)
-    text = text.replace(
-        marker,
-        marker + '\n    public static final String MAIN_THREAD_MARKER = "FIFTYFIT_BILLING_MAIN_THREAD_V1";',
-        1,
-    )
+    text = text.replace(marker, marker + '\n    public static final String MAIN_THREAD_MARKER = "FIFTYFIT_BILLING_MAIN_THREAD_V1";', 1)
 
 PLUGIN.write_text(text, encoding="utf-8")
 
 if not MAIN.exists():
     raise SystemExit(f"Missing MainActivity: {MAIN}")
 main = MAIN.read_text(encoding="utf-8")
-
-# Ensure both custom plugins are registered before BridgeActivity.onCreate.
 imports = [
     "import com.bodyahmed77.fiftyfit.billing.FiftyFitBillingPlugin;",
     "import com.bodyahmed77.fiftyfit.TikTokWebViewPlugin;",
@@ -82,16 +69,11 @@ for imp in imports:
             raise SystemExit("MainActivity package declaration missing")
         main = main[:pkg.end()] + "\n\n" + imp + main[pkg.end():]
 
-# Replace the native activity implementation with a deterministic version if
-# it has not already been hardened. The custom plugins are registered before
-# super.onCreate; system bars are then made immersive and transient-on-swipe.
 if "configureFiftyFitSystemBars" not in main:
     class_match = re.search(r"public class MainActivity extends BridgeActivity\s*\{", main)
     if not class_match:
         raise SystemExit("MainActivity class declaration missing")
     prefix = main[:class_match.end()]
-    suffix = main[class_match.end():]
-    # Preserve package/imports but replace the class body.
     main = prefix + r'''
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -102,7 +84,7 @@ if "configureFiftyFitSystemBars" not in main:
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         configureFiftyFitSystemBars();
     }
@@ -122,7 +104,6 @@ if "configureFiftyFitSystemBars" not in main:
                 window.setStatusBarContrastEnforced(false);
                 window.setNavigationBarContrastEnforced(false);
             }
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 WindowInsetsController controller = window.getInsetsController();
                 if (controller != null) {
@@ -142,13 +123,11 @@ if "configureFiftyFitSystemBars" not in main:
                 );
             }
         } catch (Exception ignored) {
-            // Keep the app usable if a device OEM rejects one of the flags.
         }
     }
 }
 '''
 
-# Validate plugin registration order.
 pos_billing = main.find("registerPlugin(FiftyFitBillingPlugin.class);")
 pos_tiktok = main.find("registerPlugin(TikTokWebViewPlugin.class);")
 pos_super = main.find("super.onCreate(savedInstanceState);")
@@ -156,6 +135,5 @@ if min(pos_billing, pos_tiktok) < 0 or pos_super < 0 or pos_billing > pos_super 
     raise SystemExit("Custom plugin registration must occur before BridgeActivity.onCreate")
 if "BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE" not in main:
     raise SystemExit("Immersive transient-by-swipe system UI configuration missing")
-
 MAIN.write_text(main, encoding="utf-8")
 print("Billing main-thread patch + TikTok WebView injection + immersive system bars verified")

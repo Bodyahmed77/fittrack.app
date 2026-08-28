@@ -1,0 +1,139 @@
+name: Repair Fifty Fit App Source
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Restore canonical App.jsx and harden runtime paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          canonical = '6c9d2090f581d2ecc0e6a653379b81499361ad35'
+          app = Path('src/App.jsx')
+          current = app.read_text(encoding='utf-8') if app.exists() else ''
+          if len(current) < 100000 or 'function PaywallScreen' not in current or 'function App(' not in current:
+              current = subprocess.check_output(['git', 'show', f'{canonical}:src/App.jsx'], text=True)
+              if len(current) < 100000:
+                  raise SystemExit('canonical App.jsx unexpectedly incomplete')
+              app.write_text(current, encoding='utf-8')
+              print('Restored canonical App.jsx')
+
+          text = app.read_text(encoding='utf-8')
+
+          # Language switching: local selection must win immediately over stale
+          # Firestore state. localStorage alone is not reactive, so emit a small
+          # in-process event from SettingsScreen.
+          text = text.replace(
+              'const lang = data.settings.language || localLang || "en";',
+              'const lang = localLang || data.settings.language || "en";',
+              1,
+          )
+
+          if 'fiftyfit-language-change' not in text:
+              m = re.search(r'const \[localLang, setLocalLang\] = useState\((?:\(\) => )?readStoredLanguage\(\)\);', text)
+              if not m:
+                  raise SystemExit('localLang state declaration not found')
+              listener = '''\n  useEffect(() => {\n    const onLanguageChange = (event) => {\n      const nextLang = event?.detail?.language;\n      if (nextLang !== "ar" && nextLang !== "en") return;\n      persistLanguage(nextLang);\n      setLocalLang(nextLang);\n    };\n    window.addEventListener("fiftyfit-language-change", onLanguageChange);\n    return () => window.removeEventListener("fiftyfit-language-change", onLanguageChange);\n  }, []);\n'''
+              text = text[:m.end()] + listener + text[m.end():]
+
+          s = text.find('function SettingsScreen(')
+          e = text.find('\nfunction ', s + 20)
+          if s < 0: raise SystemExit('SettingsScreen not found')
+          if e < 0: e = len(text)
+          settings = text[s:e]
+          if 'fiftyfit-language-change' not in settings:
+              settings = settings.replace(
+                  '    persistLanguage(l);\n',
+                  '    persistLanguage(l);\n    window.dispatchEvent(new CustomEvent("fiftyfit-language-change", { detail: { language: l } }));\n',
+                  1,
+              )
+              text = text[:s] + settings + text[e:]
+
+          # Restore Purchases must remain reachable even when local entitlement
+          # is false, otherwise a paid-but-not-yet-synced user cannot recover.
+          marker = 'onClick={restore}'
+          idx = text.find(marker)
+          if idx < 0: raise SystemExit('restore handler not found')
+          st = text.rfind('{(data.entitlements.trainingPro ||', 0, idx)
+          en = text.find('&& (', st)
+          if st >= 0 and en >= 0:
+              text = text[:st] + '{true && (' + text[en+4:]
+
+          # Purchase source fix: the outer purchase() must return the async
+          # IIFE result; otherwise a real Google Play token is discarded before
+          # App.jsx can send it to verify-purchase.
+          if 'const purchaseResult = await withPurchaseTimeout((async () =>' not in text:
+              text = text.replace(
+                  '    await withPurchaseTimeout((async () => {',
+                  '    const purchaseResult = await withPurchaseTimeout((async () => {',
+                  1,
+              )
+              text = text.replace(
+                  '    })());\n  } catch (e) {',
+                  '    })());\n    return purchaseResult;\n  } catch (e) {',
+                  1,
+              )
+
+          # User-facing success copy and explicit Close button.
+          text = text.replace(
+              'خطة الأكل الخاصة بك أصبحت متاحة داخل التطبيق — هتلاقيها في تبويب الخطة الغذائية. احتجت مساعدة، كلمنا على واتساب في أي وقت.',
+              'هنجهز لك خطتك المخصصة ونرسلها لك خلال 12 ساعة. هنبلغك أول ما تكون جاهزة.',
+              1,
+          )
+          text = text.replace(
+              'Your meal plan is now available inside the app — find it in the Nutrition Plan tab. Need help anytime, chat with us on WhatsApp.',
+              "Your personalized plan will be prepared and sent to you within 12 hours. We'll notify you when it's ready.",
+              1,
+          )
+          if 'onClick={() => setSuccessModal(null)}' not in text:
+              anchor = '              <button\n                type="button"\n                onClick={successModal.onCta}'
+              p = text.find(anchor)
+              if p < 0: raise SystemExit('success modal CTA not found')
+              close_at = text.find('              </button>\n', p)
+              if close_at < 0: raise SystemExit('success CTA closing tag not found')
+              close_at += len('              </button>\n')
+              close_btn = '''              <button\n                type="button"\n                onClick={() => setSuccessModal(null)}\n                style={{\n                  width: "100%",\n                  padding: "10px 14px",\n                  marginTop: 8,\n                  borderRadius: 12,\n                  border: `1px solid ${C.border}`,\n                  background: "transparent",\n                  color: C.text,\n                  fontWeight: 700,\n                  fontSize: 13,\n                  cursor: "pointer",\n                }}\n              >\n                {ar ? "إغلاق" : "Close"}\n              </button>\n'''
+              text = text[:close_at] + close_btn + text[close_at:]
+
+          # Theme state is exposed for native StatusBar icon contrast.
+          if 'fiftyfit-theme-change' not in text:
+              anchor = '  const ui = { C, lang };'
+              if anchor not in text: raise SystemExit('UI root anchor not found')
+              theme_effect = '''\n  useEffect(() => {\n    try {\n      document.documentElement.style.colorScheme = C.mode;\n      document.documentElement.dataset.fiftyFitTheme = C.mode;\n      window.dispatchEvent(new CustomEvent("fiftyfit-theme-change", { detail: { dark: C.mode === "dark" } }));\n    } catch (_) {}\n  }, [C.mode]);\n'''
+              text = text.replace(anchor, anchor + theme_effect, 1)
+
+          app.write_text(text, encoding='utf-8')
+          print('Canonical App.jsx repair/hardening complete')
+          PY
+
+      - name: Commit repaired source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.jsx
+          if git diff --cached --quiet; then
+            echo 'No App.jsx changes needed.'
+            exit 0
+          fi
+          git commit -m "Restore canonical App and harden runtime flows [skip ci]"
+          git push origin HEAD:main

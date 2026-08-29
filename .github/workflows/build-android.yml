@@ -136,6 +136,8 @@ jobs:
           set -euo pipefail
           npx capacitor-assets generate --android
           npx cap sync android
+      - name: Inject Android edge-to-edge system UI (black status/nav bars)
+        run: python3 scripts/inject-android-system-ui.py
       - name: Inject first-party Google Play Billing bridge
         run: python3 scripts/inject-fiftyfit-billing-v2.py
       - name: Apply Android main-thread Billing launch patch
@@ -152,7 +154,8 @@ jobs:
           tiktok_activity = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java')
           manifest = Path('android/app/src/main/AndroidManifest.xml')
           gradle = Path('android/app/build.gradle')
-          main_files = list(Path('android/app/src/main/java').rglob('MainActivity.java'))
+          main_files = list(Path('android/app/src/main/java').rglob('MainActivity.java')
+          )
           assert plugin.is_file(), 'FiftyFitBillingPlugin.java missing'
           assert tiktok_plugin.is_file(), 'TikTokWebViewPlugin.java missing'
           assert tiktok_activity.is_file(), 'TikTokWebViewActivity.java missing'

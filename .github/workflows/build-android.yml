@@ -170,9 +170,10 @@ jobs:
           assert 'https://www.tiktok.com/player/v1/' in tiktok
           assert 'allowfullscreen' in tiktok
           assert 'TikTokWebViewActivity' in manifest_text
+          assert 'android:screenOrientation="portrait"' not in manifest_text, 'TikTok activity must not impose a portrait-only device requirement'
           assert main.index('registerPlugin(FiftyFitBillingPlugin.class)') < main.index('super.onCreate(savedInstanceState);')
           assert main.index('registerPlugin(TikTokWebViewPlugin.class)') < main.index('super.onCreate(savedInstanceState);')
-          print('First-party Billing + TikTok embedded player + registration verified')
+          print('First-party Billing + TikTok embedded player + registration + compatibility verified')
           PY
       - name: Configure release signing
         env:
@@ -211,7 +212,7 @@ jobs:
           assert 'play-services-auth' in app
           assert 'compileSdkVersion = 36' in vars_text and 'targetSdkVersion = 36' in vars_text
           assert re.findall(r'\bapplicationId\s+["\']([^"\']+)["\']', app) == ['com.bodyahmed77.fiftyfit']
-          assert re.findall(r'\bversionCode\s+(\d+)', app) == [str(2000 + int(os.environ['GITHUB_RUN_NUMBER']))]
+          assert re.findall(r'\bversionCode\s+(\d+)', app) == [str(2000 + int(os.environ['GITHUB_RUN_NUMBER'])]
           print('Android release preflight passed')
           PY
       - name: Build signed release AAB/APK

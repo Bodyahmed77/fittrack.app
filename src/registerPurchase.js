@@ -15,6 +15,37 @@ const VERIFY_TIMEOUT_MS = 20000;
 const SERVER_RETRY_DELAYS_MS = [800, 1800, 3500];
 const AUTH_WAIT_MS = 12000;
 
+// ------------------------------------------------------------------
+// Cross-call-site dedup guard.
+//
+// registerServerEntitlement() is called from three independent places
+// (direct purchase, manual "Restore Purchases", and the auto-restore
+// effect that runs on every Firebase auth-state change, including
+// token refreshes that happen mid-purchase). Without this guard, the
+// same purchaseToken can be POSTed to verify-purchase multiple times
+// concurrently from different call sites, multiplying retries and
+// spamming the backend/Google (and confusingly, Google Play's
+// "thank you for subscribing" email) for a single purchase.
+//
+// Two protections:
+//   1. In-flight map: if a call for this exact token is already
+//      running, piggyback on that same promise instead of starting a
+//      new request chain.
+//   2. Recently-succeeded set: if this token was verified successfully
+//      in the last few minutes, short-circuit immediately without
+//      hitting the network at all.
+// ------------------------------------------------------------------
+const RECENT_SUCCESS_TTL_MS = 5 * 60 * 1000;
+const inFlightByToken = new Map();
+const recentSuccessByToken = new Map();
+
+function pruneRecentSuccess() {
+  const now = Date.now();
+  for (const [token, expiresAt] of recentSuccessByToken) {
+    if (expiresAt <= now) recentSuccessByToken.delete(token);
+  }
+}
+
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -174,6 +205,55 @@ async function postPurchase(endpoint, idToken, productId, purchaseToken) {
 }
 
 export async function registerServerEntitlement(
+  productId,
+  reportedProductId,
+  purchaseResult,
+) {
+  const dedupToken = extractToken(purchaseResult);
+
+  if (dedupToken) {
+    pruneRecentSuccess();
+
+    if (recentSuccessByToken.has(dedupToken)) {
+      writeServerDiagnostics({
+        stage: "server_verification_skipped_recent_success",
+        serverVerification: "verified_and_registered",
+        productId,
+      });
+      return { ok: true, verified: true, productId, deduped: true };
+    }
+
+    const existing = inFlightByToken.get(dedupToken);
+    if (existing) {
+      writeServerDiagnostics({
+        stage: "server_verification_joined_in_flight",
+        serverVerification: "started",
+        productId,
+      });
+      return existing;
+    }
+
+    const runPromise = registerServerEntitlementUncached(
+      productId,
+      reportedProductId,
+      purchaseResult,
+    )
+      .then((data) => {
+        recentSuccessByToken.set(dedupToken, Date.now() + RECENT_SUCCESS_TTL_MS);
+        return data;
+      })
+      .finally(() => {
+        inFlightByToken.delete(dedupToken);
+      });
+
+    inFlightByToken.set(dedupToken, runPromise);
+    return runPromise;
+  }
+
+  return registerServerEntitlementUncached(productId, reportedProductId, purchaseResult);
+}
+
+async function registerServerEntitlementUncached(
   productId,
   reportedProductId,
   purchaseResult,

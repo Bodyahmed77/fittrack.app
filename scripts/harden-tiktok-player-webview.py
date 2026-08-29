@@ -37,10 +37,18 @@ text = text.replace(
     'String player = officialPlayerUrl(url);\n                if (player != null && player.matches("https://www\\\\.tiktok\\\\.com/player/v1/\\\\d{15,}.*")) {\n                    view.loadDataWithBaseURL("https://www.tiktok.com/", playerHtml(player), "text/html", "UTF-8", null);\n                } else {\n                    view.loadUrl(player);\n                }',
 )
 
-# Do not declare portrait-only on the secondary activity. The main app can remain
-# portrait-oriented while this embedded player remains compatible with devices
-# whose natural display is landscape (including automotive/TV configurations).
-text = text.replace('android:screenOrientation="portrait"', '')
+# The main app can remain portrait-oriented. The secondary player activity must
+# not advertise portrait as a required device feature, because that can exclude
+# landscape-only automotive/TV configurations from Google Play compatibility.
+manifest = Path('android/app/src/main/AndroidManifest.xml')
+if manifest.is_file():
+    manifest_text = manifest.read_text(encoding='utf-8')
+    manifest_text = re.sub(
+        r'(<activity\s+android:name="\.TikTokWebViewActivity"[^>]*?)\s+android:screenOrientation="portrait"',
+        r'\1',
+        manifest_text,
+    )
+    manifest.write_text(manifest_text, encoding='utf-8')
 
 path.write_text(text, encoding='utf-8')
 print('TikTok embedded player hardened without an implicit portrait requirement')

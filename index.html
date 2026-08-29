@@ -2,12 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="color-scheme" content="dark" />
     <title>Fifty Fit</title>
     <style>
-      html, body, #root { height: 100%; margin: 0; padding: 0; background: #0b0d10; }
-      * { -webkit-tap-highlight-color: transparent; }
+      html, body, #root {
+        height: 100%;
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+        background: #000000;
+        overflow-x: hidden;
+      }
+      body {
+        overscroll-behavior: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
     </style>
     <script>
       /* Lightweight runtime guard for the AI composer only. */
@@ -42,6 +55,7 @@
             drawer.style.setProperty("height", "calc(100% - " + inset + "px)", "important");
             drawer.style.setProperty("max-height", "calc(100% - " + inset + "px)", "important");
             drawer.style.setProperty("padding-bottom", "0px", "important");
+            drawer.style.setProperty("background", "#000000", "important");
           } catch (_) {}
         }
 

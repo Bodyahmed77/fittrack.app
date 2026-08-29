@@ -8,9 +8,11 @@ async function applySystemBarColors(dark = true) {
     const { Capacitor } = await import("@capacitor/core");
     if (!Capacitor.isNativePlatform()) return;
     const { StatusBar, Style } = await import("@capacitor/status-bar");
+    // Draw web content edge-to-edge under the system bars.
     await StatusBar.setOverlaysWebView({ overlay: true });
+    await StatusBar.setBackgroundColor({ color: dark ? "#000000" : "#ffffff" });
     await StatusBar.setStyle({ style: dark ? Style.Light : Style.Dark });
-    // Immersive: hide system status bar (Wi‑Fi, clock, battery) at the top edge.
+    // Immersive: hide status bar icons (Wi‑Fi, clock, battery) so the app owns the top edge.
     await StatusBar.hide();
   } catch (e) {
     console.warn("[SystemBars] status bar config failed", e);
@@ -26,9 +28,18 @@ function syncDocumentChrome({ dark, lang } = {}) {
   document.documentElement.dir = nextLang === "ar" ? "rtl" : "ltr";
   document.documentElement.style.colorScheme = isDark ? "dark" : "light";
   document.documentElement.style.backgroundColor = bg;
+  document.documentElement.style.minHeight = "100%";
   if (document.body) {
     document.body.style.backgroundColor = bg;
     document.body.style.color = isDark ? "#ffffff" : "#000000";
+    document.body.style.margin = "0";
+    document.body.style.minHeight = "100%";
+  }
+  const root = document.getElementById("root");
+  if (root) {
+    root.style.minHeight = "100vh";
+    root.style.minHeight = "100dvh";
+    root.style.backgroundColor = bg;
   }
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", bg);
@@ -47,6 +58,13 @@ if (typeof window !== "undefined") {
   window.addEventListener("fiftyfit-language-change", (event) => {
     const lang = event?.detail?.language === "ar" ? "ar" : "en";
     syncDocumentChrome({ dark: document.documentElement.style.colorScheme !== "light", lang });
+  });
+  // Re-apply after resume (Android can restore system bars).
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      const dark = document.documentElement.style.colorScheme !== "light";
+      applySystemBarColors(dark);
+    }
   });
 }
 

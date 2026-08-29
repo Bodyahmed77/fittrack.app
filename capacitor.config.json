@@ -20,7 +20,7 @@
     "StatusBar": {
       "style": "DARK",
       "backgroundColor": "#000000",
-      "overlaysWebView": false
+      "overlaysWebView": true
     },
     "FirebaseAuthentication": {
       "skipNativeAuth": true,

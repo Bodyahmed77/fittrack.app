@@ -3,6 +3,7 @@
 
 1) Snapshot merge: OR Firestore entitlements with Play-verified flags.
 2) Empty Play restore must not force-clear Pro (preserves admin grants).
+3) productKey must be a string product id, not BILLING_PRODUCTS[planId] object.
 """
 from pathlib import Path
 
@@ -10,6 +11,23 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "src" / "App.jsx"
 text = APP.read_text(encoding="utf-8")
 original = text
+
+# Ensure productIdFor is imported from billing
+old_imp = """import {
+  purchase as billingPurchase,
+  queryProducts as billingQueryProducts,
+  restorePurchases as billingRestore,
+} from \"./billing\";"""
+new_imp = """import {
+  purchase as billingPurchase,
+  queryProducts as billingQueryProducts,
+  restorePurchases as billingRestore,
+  productIdFor,
+} from \"./billing\";"""
+if "productIdFor," not in text and "productIdFor }" not in text:
+    if old_imp not in text:
+        raise SystemExit("billing import block not found")
+    text = text.replace(old_imp, new_imp, 1)
 
 old_merge = """          entitlements: {
             ...fresh.entitlements,
@@ -57,8 +75,25 @@ if "Do NOT force-clear verified flags" not in text:
         raise SystemExit("empty restore block not found in App.jsx")
     text = text.replace(old_empty, new_empty, 1)
 
+# productKey bug: BILLING_PRODUCTS[planId] is an object, not a string id
+if "productIdFor(planId, durationId)" not in text and "BILLING_PRODUCTS[planId]?.[durationId]" not in text:
+    if "BILLING_PRODUCTS[planId] || result?.productId" in text:
+        text = text.replace(
+            "BILLING_PRODUCTS[planId] || result?.productId || planId",
+            """(typeof productIdFor === \"function\" ? productIdFor(planId, durationId) : null) ||
+          result?.productId ||
+          (typeof BILLING_PRODUCTS[planId] === \"string\"
+            ? BILLING_PRODUCTS[planId]
+            : BILLING_PRODUCTS[planId]?.[durationId] ||
+              BILLING_PRODUCTS[planId]?.monthly) ||
+          planId""",
+            1,
+        )
+    else:
+        raise SystemExit("productKey block not found")
+
 if text != original:
     APP.write_text(text, encoding="utf-8")
-    print("App.jsx: admin+Play entitlements OR-merge applied")
+    print("App.jsx: entitlements OR-merge + productKey string fix applied")
 else:
-    print("App.jsx: entitlements OR-merge already present")
+    print("App.jsx: patches already present")

@@ -8,7 +8,8 @@
     "hostname": "localhost"
   },
   "android": {
-    "adjustMarginsForEdgeToEdge": "force"
+    "adjustMarginsForEdgeToEdge": "auto",
+    "backgroundColor": "#000000"
   },
   "plugins": {
     "SplashScreen": {
@@ -29,7 +30,7 @@
       ]
     },
     "Keyboard": {
-      "resize": "native",
+      "resize": "body",
       "resizeOnFullScreen": true
     }
   }

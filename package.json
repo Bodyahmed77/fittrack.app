@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "python3 scripts/patch-fullscreen-ui.py && python3 scripts/patch-purchase-ack.py && python3 scripts/prepare-billing-release.py && vite build --config vite.release.config.js",
+    "build": "python3 scripts/patch-fullscreen-ui.py && python3 scripts/patch-purchase-ack.py && python3 scripts/patch-ui-ux.py && python3 scripts/prepare-billing-release.py && vite build --config vite.release.config.js",
     "postinstall": "python3 scripts/apply-google-native-diagnostics.py",
     "preview": "vite preview",
     "cap:sync": "npx cap sync android"

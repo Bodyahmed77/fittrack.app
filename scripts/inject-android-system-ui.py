@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Patch generated Android configuration and enforce the current Play target.
+"""Patch generated Android configuration for true edge-to-edge black chrome.
 
-This script runs after `npx cap sync`, so generated Android changes belong here.
-It keeps UI/system-bar behavior deterministic and pins the Android billing stack
-used by the generated app to the current Google Play Billing release.
+MUST run after `npx cap sync` (Capacitor regenerates styles/manifest).
 """
 from __future__ import annotations
 
@@ -20,14 +18,17 @@ VARIABLES = ROOT / "android" / "variables.gradle"
 APP_GRADLE = ROOT / "android" / "app" / "build.gradle"
 
 STATUS_ITEMS = [
-    ("android:statusBarColor", "#000000"),
-    ("android:navigationBarColor", "#000000"),
+    ("android:statusBarColor", "@android:color/transparent"),
+    ("android:navigationBarColor", "@android:color/transparent"),
     ("android:windowBackground", "@android:color/black"),
     ("android:navigationBarDividerColor", "#000000"),
     ("android:windowLightStatusBar", "false"),
     ("android:windowLightNavigationBar", "false"),
     ("android:enforceStatusBarContrast", "false"),
     ("android:enforceNavigationBarContrast", "false"),
+    ("android:windowDrawsSystemBarBackgrounds", "true"),
+    ("android:windowLayoutInDisplayCutoutMode", "shortEdges"),
+    ("android:fitsSystemWindows", "false"),
 ]
 
 
@@ -67,26 +68,56 @@ def patch_manifest(path: Path) -> str:
     if not path.is_file():
         return "AndroidManifest missing (skip)"
     text = path.read_text(encoding="utf-8")
-    if "windowSoftInputMode" in text:
-        new_text, n = re.subn(
-            r'android:windowSoftInputMode="[^"]*"',
-            'android:windowSoftInputMode="adjustResize"',
-            text,
+    original = text
+    if 'android:windowSoftInputMode' not in text:
+        text = text.replace(
+            "android:configChanges=",
+            'android:windowSoftInputMode="adjustResize" android:configChanges=',
+            1,
         )
-        if n and new_text != text:
-            path.write_text(new_text, encoding="utf-8")
-            return "windowSoftInputMode -> adjustResize"
-        return "windowSoftInputMode already set"
-    new_text, n = re.subn(
-        r'(<activity\b[^>]*android:name="[^"]*MainActivity"[^>]*)(>)',
-        r'\1 android:windowSoftInputMode="adjustResize"\2',
-        text,
-        count=1,
-    )
-    if n and new_text != text:
-        path.write_text(new_text, encoding="utf-8")
-        return "added windowSoftInputMode adjustResize"
-    return "manifest unchanged"
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return "AndroidManifest updated softInputMode"
+    return "AndroidManifest already ok"
+
+
+def patch_main_activity() -> str:
+    mains = list((ROOT / "android" / "app" / "src" / "main" / "java").rglob("MainActivity.java"))
+    if not mains:
+        return "MainActivity.java missing (skip)"
+    path = mains[0]
+    text = path.read_text(encoding="utf-8")
+    original = text
+    marker = "FIFTYFIT_EDGE_TO_EDGE_V1"
+    if marker in text:
+        return "MainActivity edge-to-edge already present"
+
+    edge_block = f'''
+    // {marker}: draw under system bars; CSS safe-area pads content.
+    try {{
+      if (android.os.Build.VERSION.SDK_INT >= 30) {{
+        getWindow().setDecorFitsSystemWindows(false);
+      }} else {{
+        getWindow().getDecorView().setSystemUiVisibility(
+          android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        );
+      }}
+      getWindow().setStatusBarColor(0x00000000);
+      getWindow().setNavigationBarColor(0x00000000);
+      getWindow().getDecorView().setBackgroundColor(0xFF000000);
+    }} catch (Throwable ignored) {{}}
+'''
+
+    m = re.search(r"(super\.onCreate\s*\([^;]*\);)", text)
+    if not m:
+        return "MainActivity: super.onCreate not found"
+    text = text[: m.end()] + "\n" + edge_block + text[m.end() :]
+    if text != original:
+        path.write_text(text, encoding="utf-8")
+        return f"MainActivity edge-to-edge injected ({path.name})"
+    return "MainActivity unchanged"
 
 
 def patch_android_api() -> str:
@@ -133,8 +164,8 @@ def patch_billing_stack() -> str:
     original = text
 
     dependency_lines = [
-        '    implementation \'com.android.billingclient:billing:9.1.0\'',
-        '    implementation \'androidx.core:core:1.9.0\'',
+        "    implementation 'com.android.billingclient:billing:9.1.0'",
+        "    implementation 'androidx.core:core:1.9.0'",
     ]
     if "com.android.billingclient:billing:9.1.0" not in text:
         marker = "dependencies {"
@@ -154,6 +185,7 @@ def main() -> None:
     print(patch_styles(STYLES))
     print(patch_styles(STYLES_V31))
     print(patch_manifest(MANIFEST))
+    print(patch_main_activity())
 
 
 if __name__ == "__main__":

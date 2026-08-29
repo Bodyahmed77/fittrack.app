@@ -23,10 +23,18 @@ jobs:
           import json
           with open('billing-backend-check.json', encoding='utf-8') as f:
               data = json.load(f)
-          assert data.get('ok') is True, data
           assert data.get('secretPresent') is True, data
           assert data.get('credentialParseable') is True, data
           assert data.get('oauthExchange') is True, data
           assert data.get('playApiReachable') is True, data
+          # This is the check that actually matters: listing product
+          # metadata (playApiReachable) uses a different Google Play
+          # permission than reading real purchase/order data. A service
+          # account can pass every check above while still lacking the
+          # "purchases & subscriptions" permission that verify-purchase
+          # needs for every real transaction. Without this assertion the
+          # health check can go green while production purchases 503.
+          assert data.get('purchaseVerificationPermission') is True, data
+          assert data.get('ok') is True, data
           print('Google Play billing backend health: PASS')
           PY

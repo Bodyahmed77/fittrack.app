@@ -344,15 +344,23 @@ export async function purchase(planId, durationId) {
       const activeSubscriptions = await queryActiveSubscriptions(plugin);
       const alreadyOwned = activeSubscriptions.find((purchase) => isPurchased(purchase) && purchaseProducts(purchase).includes(productId));
       if (alreadyOwned) {
+        // Treat already-owned as recoverable success so App can server-verify + unlock.
         const token = extractPurchaseToken(alreadyOwned);
-        const err = new Error(`This Google Play subscription is already owned: ${productId}`);
-        err.code = "ITEM_ALREADY_OWNED";
-        err.responseCode = 7;
-        err.nativeCode = 7;
-        err.billingResponseCodeName = "ITEM_ALREADY_OWNED";
-        err.productId = productId;
-        writeBillingDiagnostics({ stage: "purchase_blocked_already_owned", productId, responseCode: 7, responseName: "ITEM_ALREADY_OWNED", purchaseTokenPresent: !!token });
-        return { success: false, preview: false, error: err, alreadyOwned: true };
+        writeBillingDiagnostics({
+          stage: "purchase_already_owned_recovered",
+          productId,
+          responseCode: 7,
+          responseName: "ITEM_ALREADY_OWNED",
+          purchaseTokenPresent: !!token,
+        });
+        return {
+          success: true,
+          preview: false,
+          alreadyOwned: true,
+          productId: purchaseProducts(alreadyOwned)[0] || productId,
+          result: alreadyOwned,
+          purchaseToken: token || null,
+        };
       }
 
       const selected = await queryAnyProductDetails(plugin, productId);

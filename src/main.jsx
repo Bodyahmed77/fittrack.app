@@ -8,9 +8,6 @@ async function applySystemBarColors(dark = true) {
     const { Capacitor } = await import("@capacitor/core");
     if (!Capacitor.isNativePlatform()) return;
     const { StatusBar, Style } = await import("@capacitor/status-bar");
-    // The native activity keeps system bars hidden by default. Overlaying the
-    // webview lets transient bars reveal the actual app background instead of
-    // a platform-generated gray strip.
     await StatusBar.setOverlaysWebView({ overlay: true });
     await StatusBar.setStyle({ style: dark ? Style.Light : Style.Dark });
   } catch (e) {
@@ -18,12 +15,36 @@ async function applySystemBarColors(dark = true) {
   }
 }
 
+function syncDocumentChrome({ dark, lang } = {}) {
+  if (typeof document === "undefined") return;
+  const isDark = dark !== false;
+  const nextLang = lang === "ar" ? "ar" : "en";
+  const bg = isDark ? "#000000" : "#ffffff";
+  document.documentElement.lang = nextLang;
+  document.documentElement.dir = nextLang === "ar" ? "rtl" : "ltr";
+  document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+  document.documentElement.style.backgroundColor = bg;
+  if (document.body) {
+    document.body.style.backgroundColor = bg;
+    document.body.style.color = isDark ? "#ffffff" : "#000000";
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", bg);
+}
+
+syncDocumentChrome({ dark: true, lang: "en" });
 applySystemBarColors(true);
 setTimeout(() => applySystemBarColors(true), 400);
 setTimeout(() => applySystemBarColors(true), 1200);
 if (typeof window !== "undefined") {
   window.addEventListener("fiftyfit-theme-change", (event) => {
-    applySystemBarColors(event?.detail?.dark !== false);
+    const dark = event?.detail?.dark !== false;
+    applySystemBarColors(dark);
+    syncDocumentChrome({ dark, lang: document.documentElement.lang });
+  });
+  window.addEventListener("fiftyfit-language-change", (event) => {
+    const lang = event?.detail?.language === "ar" ? "ar" : "en";
+    syncDocumentChrome({ dark: document.documentElement.style.colorScheme !== "light", lang });
   });
 }
 
@@ -176,5 +197,5 @@ createRoot(document.getElementById("root")).render(
         <App />
       </Suspense>
     </StartupGate>
-  </ErrorBoundary>,
+  </ErrorBoundary>
 );

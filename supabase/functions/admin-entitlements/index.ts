@@ -66,11 +66,21 @@ function firestoreTimestamp(value: unknown): string | null {
 }
 
 function normalizeAdminEntitlements(fields: Record<string, unknown> | undefined) {
-  const source = (fields?.adminEntitlements || {}) as Record<string, unknown>;
-  const expiresAt = firestoreString(source?.mapValue?.fields?.proExpiresAt);
-  const trainingPro = firestoreBoolean(source?.mapValue?.fields?.trainingPro);
-  const nutritionPro = firestoreBoolean(source?.mapValue?.fields?.nutritionPro);
-  const aiCoachPro = firestoreBoolean(source?.mapValue?.fields?.aiCoachPro);
+  // Phone AdminScreen + app unlock write users/{uid}.entitlements.*
+  // Older paths may use adminEntitlements — accept either.
+  const primary = (fields?.entitlements || {}) as Record<string, unknown>;
+  const fallback = (fields?.adminEntitlements || {}) as Record<string, unknown>;
+  const primaryFields = (primary?.mapValue?.fields || {}) as Record<string, unknown>;
+  const fallbackFields = (fallback?.mapValue?.fields || {}) as Record<string, unknown>;
+
+  const trainingPro =
+    firestoreBoolean(primaryFields.trainingPro) || firestoreBoolean(fallbackFields.trainingPro);
+  const nutritionPro =
+    firestoreBoolean(primaryFields.nutritionPro) || firestoreBoolean(fallbackFields.nutritionPro);
+  const aiCoachPro =
+    firestoreBoolean(primaryFields.aiCoachPro) || firestoreBoolean(fallbackFields.aiCoachPro);
+  const expiresAt =
+    firestoreString(primaryFields.proExpiresAt) || firestoreString(fallbackFields.proExpiresAt) || null;
 
   if (!trainingPro && !nutritionPro && !aiCoachPro) {
     return { trainingPro: false, nutritionPro: false, aiCoachPro: false, proExpiresAt: null };

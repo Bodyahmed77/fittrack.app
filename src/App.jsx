@@ -11256,7 +11256,8 @@ function GoalsScreen({ data, setData, back, showToast }) {
     const next = clone(data);
     next.account.goal = goal;
     if (pro && chosen) next.activePlanId = chosen.planId;
-    next.customTrainingPlanActive = false;
+      next.customTrainingPlanActive = false;
+      next.customTrainingPlanActive = false;
     setData(next);
     showToast(
       pro
@@ -12865,19 +12866,8 @@ export default function GymApp() {
       .catch(() => setIsAdmin(false));
   }, [firebaseUser]);
 
-  const firebaseUid = firebaseUser?.uid || null;
-  const loginRestoreRanForUidRef = useRef(null);
   useEffect(() => {
-    if (!firebaseUid || !loaded) return undefined;
-    // Firebase emits a new user object on every token refresh (which can
-    // happen mid-purchase, e.g. registerPurchase's 401 retry path calling
-    // getIdToken(true)). Re-running the full restore+verify loop on every
-    // such refresh would re-POST already-claimed purchase tokens to
-    // verify-purchase. Only run this once per signed-in uid per app
-    // session; registerServerEntitlement's own dedup guard covers the
-    // remaining case of a token verified moments ago by another call site.
-    if (loginRestoreRanForUidRef.current === firebaseUid) return undefined;
-    loginRestoreRanForUidRef.current = firebaseUid;
+    if (!firebaseUser || !loaded) return undefined;
     let cancelled = false;
     // On sign-in: query Play purchases, then server-verify each token.
     // Never grant Pro from client-side purchase presence alone.
@@ -12936,7 +12926,7 @@ export default function GymApp() {
     return () => {
       cancelled = true;
     };
-  }, [firebaseUid, loaded, setVerifiedEntitlements]);
+  }, [firebaseUser, loaded, setVerifiedEntitlements]);
   const [phase, setPhase] = useState("splash");
   const [localLang, setLocalLang] = useState(readStoredLanguage);
   useEffect(() => {

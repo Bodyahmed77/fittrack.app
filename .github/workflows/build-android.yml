@@ -64,6 +64,8 @@ jobs:
           assert 'PURCHASE_FLOW_TIMEOUT' in billing
           print('First-party Billing static entrypoint and timeout guards validated')
           PY
+      - name: Merge admin + Play entitlements (OR)
+        run: python3 scripts/patch-entitlements-or-merge.py
       - name: Build web application
         run: npm run build
       - name: Ensure Android platform exists

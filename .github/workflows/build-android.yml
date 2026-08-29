@@ -168,7 +168,7 @@ jobs:
           assert 'com.android.billingclient:billing:9.1.0' in gradle.read_text(encoding='utf-8')
           assert 'registerPlugin(FiftyFitBillingPlugin.class)' in main
           assert 'registerPlugin(TikTokWebViewPlugin.class)' in main
-          assert 'FIFTYFIT_EDGE_TO_EDGE_V1' in main, 'edge-to-edge MainActivity patch missing'
+          assert 'FIFTYFIT_EDGE_TO_EDGE_V2' in main, 'edge-to-edge MainActivity patch missing'
           assert 'FIFTYFIT_TIKTOK_IFRAME_V1' in tiktok
           assert 'https://www.tiktok.com/player/v1/' in tiktok
           assert 'allowfullscreen' in tiktok

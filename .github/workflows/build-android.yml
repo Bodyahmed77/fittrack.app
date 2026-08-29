@@ -14,46 +14,37 @@ jobs:
     steps:
       - name: Checkout main
         uses: actions/checkout@v6
-
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: tools platform-tools
-
       - name: Install Android SDK API 36
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
-
       - name: Install dependencies reproducibly
         run: npm ci --ignore-scripts
-
       - name: Restore sharp native runtime
         run: |
           set -euo pipefail
           npm rebuild sharp --foreground-scripts
           node -e "require('sharp'); console.log('sharp native runtime OK')"
-
       - name: Keep Google Sign-In native diagnostics
         run: python3 scripts/apply-google-native-diagnostics.py
-
       - name: Remove legacy capacitor-billing runtime
         run: |
           set -euo pipefail
           rm -rf node_modules/capacitor-billing
           test ! -d node_modules/capacitor-billing
           echo 'Legacy capacitor-billing runtime removed; FiftyFitBilling is the only release billing implementation.'
-
       - name: Validate source entrypoints
         run: |
           set -euo pipefail
@@ -73,15 +64,12 @@ jobs:
           assert 'PURCHASE_FLOW_TIMEOUT' in billing
           print('First-party Billing static entrypoint and timeout guards validated')
           PY
-
       - name: Build web application
         run: npm run build
-
       - name: Ensure Android platform exists
         run: |
           set -euo pipefail
           if [ ! -d android ]; then npx cap add android; else echo 'Android platform already present.'; fi
-
       - name: Inject google-services.json and validate Firebase package
         env:
           GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
@@ -99,7 +87,6 @@ jobs:
           assert matches, 'No Firebase client for com.bodyahmed77.fiftyfit'
           print('Firebase/google-services preflight passed')
           PY
-
       - name: Configure Android application
         run: |
           set -euo pipefail
@@ -110,12 +97,10 @@ jobs:
           top = root / 'build.gradle'
           app = root / 'app' / 'build.gradle'
           vars_file = root / 'variables.gradle'
-
           t = top.read_text(encoding='utf-8')
           if 'com.google.gms:google-services' not in t:
               t = t.replace('dependencies {', "dependencies {\n    classpath 'com.google.gms:google-services:4.4.0'", 1)
           top.write_text(t, encoding='utf-8')
-
           t = app.read_text(encoding='utf-8')
           if 'play-services-auth' not in t:
               t = t.replace('dependencies {', "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
@@ -124,13 +109,11 @@ jobs:
           if 'com.google.gms.google-services' not in t:
               t += '\napply plugin: \'com.google.gms.google-services\'\n'
           app.write_text(t, encoding='utf-8')
-
           t = vars_file.read_text(encoding='utf-8')
           t = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', t)
           t = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', t)
           vars_file.write_text(t, encoding='utf-8')
           PY
-
       - name: Set monotonic Play version code
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
@@ -148,37 +131,49 @@ jobs:
           path.write_text(text, encoding='utf-8')
           print(f'versionCode={2000+n}, versionName=1.0.{n}')
           PY
-
       - name: Sync Capacitor
         run: |
           set -euo pipefail
           npx capacitor-assets generate --android
           npx cap sync android
-
       - name: Inject first-party Google Play Billing bridge
         run: python3 scripts/inject-fiftyfit-billing-v2.py
-
       - name: Apply Android main-thread Billing launch patch
         run: python3 scripts/apply-billing-main-thread.py
-
-      - name: Verify first-party native Billing bridge
+      - name: Harden TikTok embedded player
+        run: python3 scripts/harden-tiktok-player-webview.py
+      - name: Verify first-party native Billing and TikTok bridges
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           plugin = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java')
+          tiktok_plugin = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewPlugin.java')
+          tiktok_activity = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java')
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
           gradle = Path('android/app/build.gradle')
           main_files = list(Path('android/app/src/main/java').rglob('MainActivity.java'))
           assert plugin.is_file(), 'FiftyFitBillingPlugin.java missing'
-          text = plugin.read_text(encoding='utf-8')
-          assert 'FIFTYFIT_NATIVE_BILLING_V7' in text
-          assert 'FIFTYFIT_BILLING_MAIN_THREAD_V1' in text
-          assert 'runOnUiThread' in text
+          assert tiktok_plugin.is_file(), 'TikTokWebViewPlugin.java missing'
+          assert tiktok_activity.is_file(), 'TikTokWebViewActivity.java missing'
+          billing = plugin.read_text(encoding='utf-8')
+          tiktok = tiktok_activity.read_text(encoding='utf-8')
+          main = main_files[0].read_text(encoding='utf-8') if main_files else ''
+          manifest_text = manifest.read_text(encoding='utf-8')
+          assert 'FIFTYFIT_NATIVE_BILLING_V7' in billing
+          assert 'FIFTYFIT_BILLING_MAIN_THREAD_V1' in billing
+          assert 'runOnUiThread' in billing
           assert 'com.android.billingclient:billing:9.1.0' in gradle.read_text(encoding='utf-8')
-          assert main_files and 'registerPlugin(FiftyFitBillingPlugin.class)' in main_files[0].read_text(encoding='utf-8')
-          print('First-party Billing bridge registration, PBL9 dependency, and main-thread launch verified')
+          assert 'registerPlugin(FiftyFitBillingPlugin.class)' in main
+          assert 'registerPlugin(TikTokWebViewPlugin.class)' in main
+          assert 'FIFTYFIT_TIKTOK_IFRAME_V1' in tiktok
+          assert 'https://www.tiktok.com/player/v1/' in tiktok
+          assert 'allowfullscreen' in tiktok
+          assert 'TikTokWebViewActivity' in manifest_text
+          assert main.index('registerPlugin(FiftyFitBillingPlugin.class)') < main.index('super.onCreate(savedInstanceState);')
+          assert main.index('registerPlugin(TikTokWebViewPlugin.class)') < main.index('super.onCreate(savedInstanceState);')
+          print('First-party Billing + TikTok embedded player + registration verified')
           PY
-
       - name: Configure release signing
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -199,10 +194,8 @@ jobs:
               t = t.replace('buildTypes {', 'buildTypes {\n        release { signingConfig signingConfigs.release }', 1)
           p.write_text(t, encoding='utf-8')
           PY
-
       - name: Verify first-party Billing content before Gradle
         run: python3 scripts/verify-first-party-billing-release.py --prebuild
-
       - name: Android release preflight
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
@@ -221,7 +214,6 @@ jobs:
           assert re.findall(r'\bversionCode\s+(\d+)', app) == [str(2000 + int(os.environ['GITHUB_RUN_NUMBER']))]
           print('Android release preflight passed')
           PY
-
       - name: Build signed release AAB/APK
         working-directory: android
         env:
@@ -232,7 +224,6 @@ jobs:
           set -euo pipefail
           chmod +x ./gradlew
           ./gradlew bundleRelease assembleRelease --no-daemon --stacktrace
-
       - name: Collect release artifacts
         working-directory: android
         run: |
@@ -244,17 +235,14 @@ jobs:
           cp "$AAB" release-artifacts/fifty-fit-release.aab
           cp "$APK" release-artifacts/fifty-fit-release.apk
           sha256sum release-artifacts/*
-
       - name: Verify final AAB and APK contents
         run: python3 scripts/verify-first-party-billing-release.py
-
       - name: Upload verified AAB
         uses: actions/upload-artifact@v4
         with:
           name: fifty-fit-verified-release-aab-${{ github.run_number }}
           path: android/release-artifacts/fifty-fit-release.aab
           if-no-files-found: error
-
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:

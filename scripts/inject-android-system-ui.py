@@ -88,20 +88,37 @@ def patch_main_activity() -> str:
     path = mains[0]
     text = path.read_text(encoding="utf-8")
     original = text
-    marker = "FIFTYFIT_EDGE_TO_EDGE_V1"
+    marker = "FIFTYFIT_EDGE_TO_EDGE_V2"
     if marker in text:
         return "MainActivity edge-to-edge already present"
 
+    # Remove older V1 patch if present so we can re-inject V2
+    text = re.sub(
+        r"\n\s*// FIFTYFIT_EDGE_TO_EDGE_V1:.*?(?=\n\s*(?:registerPlugin|\}|$))",
+        "\n",
+        text,
+        count=1,
+        flags=re.S,
+    )
+
     edge_block = f'''
-    // {marker}: draw under system bars; CSS safe-area pads content.
+    // {marker}: immersive sticky hide bars; swipe to reveal.
     try {{
       if (android.os.Build.VERSION.SDK_INT >= 30) {{
         getWindow().setDecorFitsSystemWindows(false);
+        final android.view.WindowInsetsController c = getWindow().getInsetsController();
+        if (c != null) {{
+          c.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+          c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }}
       }} else {{
         getWindow().getDecorView().setSystemUiVisibility(
-          android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+          android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
             | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+            | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
         );
       }}
       getWindow().setStatusBarColor(0x00000000);

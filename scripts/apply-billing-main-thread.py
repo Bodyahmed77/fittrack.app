@@ -61,6 +61,7 @@ imports = [
     "import android.view.View;",
     "import android.view.WindowInsets;",
     "import android.view.WindowInsetsController;",
+    "import androidx.core.view.WindowCompat;",
 ]
 for imp in imports:
     if imp not in main:
@@ -98,6 +99,14 @@ if "configureFiftyFitSystemBars" not in main:
     private void configureFiftyFitSystemBars() {
         try {
             final android.view.Window window = getWindow();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // Let the app draw its own content behind where the system
+                // bars would normally reserve layout space. Without this,
+                // hiding the bars still leaves a blank reserved strip where
+                // the status bar used to be, even though nothing is drawn
+                // there — the screen never actually becomes full-bleed.
+                WindowCompat.setDecorFitsSystemWindows(window, false);
+            }
             window.setStatusBarColor(Color.TRANSPARENT);
             window.setNavigationBarColor(Color.TRANSPARENT);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

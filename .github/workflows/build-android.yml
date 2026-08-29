@@ -66,6 +66,8 @@ jobs:
           PY
       - name: Merge admin + Play entitlements (OR)
         run: python3 scripts/patch-entitlements-or-merge.py
+      - name: Unlock Pro when Play ack is still pending
+        run: python3 scripts/patch-register-purchase-ack.py
       - name: Build web application
         run: npm run build
       - name: Ensure Android platform exists

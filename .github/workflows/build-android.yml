@@ -223,6 +223,7 @@ jobs:
           print('Android release preflight passed')
           PY
       - name: Build signed release AAB/APK
+        timeout-minutes: 20
         working-directory: android
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}

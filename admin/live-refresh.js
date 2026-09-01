@@ -1,4 +1,4 @@
-const CACHE_VERSION = "20260902-live2";
+const CACHE_VERSION = "20260902-live3";
 let wrappedButton = null;
 let wrapperObserver = null;
 let refreshing = false;
@@ -24,7 +24,7 @@ function stamp(message, live = false) {
 
 function setBusy(button, busy) {
   button.classList.toggle("fiftyfit-refreshing", busy);
-  button.textContent = busy ? "Refreshing…" : "Refresh";
+  button.setAttribute("aria-busy", busy ? "true" : "false");
 }
 
 function wrapRefreshButton() {
@@ -61,7 +61,6 @@ function wrapRefreshButton() {
     }
   };
 
-  // A visible admin tab should refresh as soon as it comes back online/into focus.
   if (!window.__fiftyFitLiveRefreshBound) {
     window.__fiftyFitLiveRefreshBound = true;
     window.addEventListener("online", () => document.getElementById("refresh-customers")?.click());

@@ -49,15 +49,16 @@ jobs:
       - name: Build web app
         run: npm run build
 
+      - name: Validate generated web demo output
+        run: |
+          test -f dist/index.html
+          grep -q 'src="./assets/' dist/index.html || true
+          test -f dist/admin/index.html
+          test -f dist/assets/logo.png || test -d dist/assets
+          echo "Web demo artifact structure validated"
+
       - name: Keep admin dashboard in Pages artifact
         run: rm -rf dist/admin && cp -R admin dist/admin
-
-      - name: Add Pages no-cache headers
-        run: |
-          cat > dist/_headers <<'EOF'
-          /*
-            Cache-Control: no-cache, no-store, must-revalidate
-          EOF
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

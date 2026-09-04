@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "python3 scripts/patch-production-hardening.py && python3 scripts/patch-production-reliability.py && python3 scripts/patch-ai-client-hardening.py && python3 scripts/patch-subscription-date-hardening.py && python3 scripts/patch-fullscreen-ui.py && python3 scripts/patch-purchase-ack.py && python3 scripts/patch-ui-ux.py && python3 scripts/prepare-billing-release.py && vite build --config vite.release.config.js",
+    "build": "python3 scripts/patch-production-hardening.py && python3 scripts/patch-production-reliability.py && python3 scripts/patch-ai-client-hardening.py && python3 scripts/patch-paywall-verified-state.py && python3 scripts/patch-subscription-date-hardening.py && python3 scripts/patch-fullscreen-ui.py && python3 scripts/patch-purchase-ack.py && python3 scripts/patch-ui-ux.py && python3 scripts/prepare-billing-release.py && vite build --config vite.release.config.js",
     "postinstall": "python3 scripts/apply-google-native-diagnostics.py",
     "preview": "vite preview",
     "cap:sync": "npx cap sync android"
@@ -29,7 +29,6 @@
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
-    "@capacitor/cli": "^7.6.8",
     "patch-package": "^8.0.0",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.2"

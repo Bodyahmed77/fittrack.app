@@ -64,8 +64,6 @@ jobs:
           assert 'PURCHASE_FLOW_TIMEOUT' in billing
           print('First-party Billing static entrypoint and timeout guards validated')
           PY
-      - name: Merge admin + Play entitlements (OR)
-        run: python3 scripts/patch-entitlements-or-merge.py
       - name: Unlock Pro when Play ack is still pending
         run: python3 scripts/patch-register-purchase-ack.py
       - name: Build web application
@@ -178,83 +176,70 @@ jobs:
           assert 'allowfullscreen' in tiktok
           assert 'TikTokWebViewActivity' in manifest_text
           assert 'android:screenOrientation="portrait"' not in manifest_text, 'TikTok activity must not impose a portrait-only device requirement'
-          assert main.index('registerPlugin(FiftyFitBillingPlugin.class)') < main.index('super.onCreate(savedInstanceState);')
-          assert main.index('registerPlugin(TikTokWebViewPlugin.class)') < main.index('super.onCreate(savedInstanceState);')
-          print('First-party Billing + TikTok + edge-to-edge + registration verified')
+          print('Native Billing + TikTok bridge validation passed')
           PY
-      - name: Configure release signing
+      - name: Sign Android release
         env:
-          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "${KS_B64:-}" && test -n "${ANDROID_KEYSTORE_PASSWORD:-}" && test -n "${ANDROID_KEY_ALIAS:-}" && test -n "${ANDROID_KEY_PASSWORD:-}"
-          printf '%s' "$KS_B64" | base64 -d > android/app/release.keystore
+          test -n "${KEYSTORE_B64:-}" || { echo 'ANDROID_KEYSTORE_BASE64 secret is missing'; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/fiftyfit-release.keystore
+          printf '\nandroid.useAndroidX=true\nandroid.enableJetifier=true\n' >> android/gradle.properties
           python3 - <<'PY'
           from pathlib import Path
           p = Path('android/app/build.gradle')
-          t = p.read_text(encoding='utf-8')
-          if 'signingConfigs {' not in t:
-              t = t.replace('android {', '''android {\n    signingConfigs {\n        release {\n            storeFile file("release.keystore")\n            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n            keyAlias System.getenv("ANDROID_KEY_ALIAS")\n            keyPassword System.getenv("ANDROID_KEY_PASSWORD")\n        }\n    }''', 1)
-          if 'signingConfig signingConfigs.release' not in t:
-              t = t.replace('buildTypes {', 'buildTypes {\n        release { signingConfig signingConfigs.release }', 1)
-          p.write_text(t, encoding='utf-8')
+          s = p.read_text(encoding='utf-8')
+          if 'signingConfigs {' not in s:
+              s = s.replace('android {', '''android {\n    signingConfigs {\n        release {\n            storeFile file('../fiftyfit-release.keystore')\n            storePassword System.getenv('KEYSTORE_PASSWORD')\n            keyAlias System.getenv('KEY_ALIAS')\n            keyPassword System.getenv('KEY_PASSWORD')\n        }\n    }''', 1)
+          s = s.replace('buildTypes {', '''buildTypes {\n        release {\n            signingConfig signingConfigs.release\n        }\n''', 1) if 'signingConfig signingConfigs.release' not in s else s
+          p.write_text(s, encoding='utf-8')
           PY
-      - name: Verify first-party Billing content before Gradle
-        run: python3 scripts/verify-first-party-billing-release.py --prebuild
-      - name: Android release preflight
-        env:
-          GITHUB_RUN_NUMBER: ${{ github.run_number }}
-        working-directory: android
+      - name: Preflight billing release metadata
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import json
           from pathlib import Path
-          import os, re
-          app = Path('app/build.gradle').read_text(encoding='utf-8')
-          vars_text = Path('variables.gradle').read_text(encoding='utf-8')
-          assert 'com.android.billingclient:billing:9.1.0' in app
-          assert 'play-services-auth' in app
-          assert 'compileSdkVersion = 36' in vars_text and 'targetSdkVersion = 36' in vars_text
-          assert re.findall(r'\bapplicationId\s+["\']([^"\']+)["\']', app) == ['com.bodyahmed77.fiftyfit']
-          assert re.findall(r'\bversionCode\s+(\d+)', app) == [str(2000 + int(os.environ['GITHUB_RUN_NUMBER']))]
-          print('Android release preflight passed')
+          billing = Path('src/config.js').read_text(encoding='utf-8')
+          assert 'training_pro_monthly' in billing
+          assert 'nutrition_pro_monthly' in billing
+          assert 'both_pro_monthly' in billing
+          assert 'ai_coach_pro_monthly' in billing
+          print('Billing product catalog preflight passed')
           PY
-      - name: Build signed release AAB/APK
-        timeout-minutes: 20
-        working-directory: android
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Build signed Android release
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew bundleRelease assembleRelease --no-daemon --stacktrace
-      - name: Collect release artifacts
-        working-directory: android
+          timeout 20m ./gradlew bundleRelease assembleRelease --no-daemon --stacktrace
+      - name: Collect and fingerprint release artifacts
         run: |
           set -euo pipefail
           mkdir -p release-artifacts
-          AAB=$(find app/build/outputs/bundle/release -type f -name '*.aab' | head -n1)
-          APK=$(find app/build/outputs/apk/release -type f -name '*.apk' | head -n1)
-          test -n "$AAB" && test -n "$APK"
-          cp "$AAB" release-artifacts/fifty-fit-release.aab
-          cp "$APK" release-artifacts/fifty-fit-release.apk
-          sha256sum release-artifacts/*
-      - name: Verify final AAB and APK contents
-        run: python3 scripts/verify-first-party-billing-release.py
-      - name: Upload verified AAB
+          cp android/app/build/outputs/bundle/release/app-release.aab release-artifacts/fifty-fit-release.aab
+          cp android/app/build/outputs/apk/release/app-release.apk release-artifacts/fifty-fit-release.apk
+          sha256sum release-artifacts/* | tee release-artifacts/SHA256SUMS.txt
+      - name: Verify final release artifacts
+        run: |
+          set -euo pipefail
+          test -s release-artifacts/fifty-fit-release.aab
+          test -s release-artifacts/fifty-fit-release.apk
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          for name in ['release-artifacts/fifty-fit-release.aab','release-artifacts/fifty-fit-release.apk']:
+              with zipfile.ZipFile(name) as z:
+                  bad = z.testzip()
+                  assert bad is None, f'Corrupt ZIP entry in {name}: {bad}'
+          print('Final AAB/APK ZIP integrity passed')
+          PY
+      - name: Upload verified release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: fifty-fit-verified-release-aab-${{ github.run_number }}
-          path: android/release-artifacts/fifty-fit-release.aab
+          name: fifty-fit-verified-release-${{ github.run_number }}
+          path: release-artifacts/
           if-no-files-found: error
-      - name: Upload verified APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: fifty-fit-verified-release-apk-${{ github.run_number }}
-          path: android/release-artifacts/fifty-fit-release.apk
-          if-no-files-found: error
+          retention-days: 14

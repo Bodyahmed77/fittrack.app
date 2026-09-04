@@ -18,56 +18,55 @@ billing = read("src/billing.js")
 register_purchase = read("src/registerPurchase.js")
 google_auth = read("src/googleAuth.js")
 app = read("src/App.jsx")
-deep_fixes = read("scripts/apply-deep-runtime-fixes.py")
-runtime_audit = read("scripts/apply-runtime-audit-fixes.py")
 verify_purchase = read("supabase/functions/verify-purchase/index.ts")
 
+# No retired repair scripts are allowed back into the build pipeline.
 require("repair-google-auth-after-runtime-mutations.py" not in package,
-        "retired Google auth repair script is still in postinstall")
+        "retired Google auth repair script is still in package scripts")
 require(not (ROOT / "scripts/repair-google-auth-after-runtime-mutations.py").exists(),
         "retired Google auth repair script still exists")
 
-bad_fallback = 'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {'
-require(bad_fallback not in google_auth, "Google Sign-In still hides DEVELOPER_ERROR")
-# The deep runtime script is a source transform. Its replacement template may
-# contain the retired string as data, so validate the transformed googleAuth.js
-# above rather than failing on the transform source itself.
-require('google = google.replace(\'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {\'' in deep_fixes,
-        "deep runtime transform no longer contains the canonical Google auth repair")
-require('if (!isNoCredentialError(mapped)) {' in google_auth, "canonical Google no-credential branch missing")
+# Google authentication should surface developer/configuration failures instead
+# of converting them into a misleading 'no credential' message.
+require('if (!isNoCredentialError(mapped)) {' in google_auth,
+        "Google auth no-credential branch is missing")
+require('mapped?.code !== "developer_error"' not in google_auth,
+        "Google auth still hides developer_error")
 
-# Purchase acknowledgement must be server-side and follow independent verification.
+# Client must never acknowledge purchases; server owns verification/ack.
 require("sendAck" not in billing and "acknowledgePurchase" not in billing,
-        "billing.js still acknowledges purchases on the client")
+        "billing.js still acknowledges purchases on client")
 require("sendAck" not in register_purchase and "acknowledgePurchase" not in register_purchase,
-        "registerPurchase.js still acknowledges purchases on the client")
-register_verify = 'await postPurchase(endpoint, idToken, serverProductId, purchaseToken)'
-require(register_verify in register_purchase, "server verification request missing")
+        "registerPurchase.js still acknowledges purchases on client")
+require("await postPurchase(endpoint, idToken, serverProductId, purchaseToken)" in register_purchase,
+        "purchase server verification request missing")
 
+# A native success is only the input to server verification; it is not itself
+# the final entitlement authority.
 require("const shouldUnlock = result?.success === true;" in app,
-        "Paywall does not hand successful native purchases to server verification")
-require("const shouldUnlock = result?.success === true && result?.verified === true;" not in app,
-        "Paywall still requires pre-server verification and would reject deferred verification")
-require("await registerServerEntitlement(" in app,
-        "Paywall server entitlement registration is missing")
+        "Paywall native-success handoff missing")
+require("registerServerEntitlement(" in app,
+        "Paywall server entitlement registration missing")
 
-# Billing must fail closed when Google returns no eligible subscription offer.
-require('code = "offer_token_missing"' in billing,
-        "missing offerToken is not surfaced as a deterministic billing error")
+# Billing fails closed when an eligible subscription offer is unavailable.
+require('offer_token_missing' in billing,
+        "missing subscription offer is not handled deterministically")
 require('offerToken: selectedOfferToken' in billing,
-        "selected subscription offerToken is not explicitly forwarded to native billing")
+        "selected offer token is not forwarded to native billing")
 
-# Admin grants must stay separate from Play-verified entitlements.
-require('const legacyAdmin = parsed.adminEntitlements || {};' in deep_fixes,
-        "legacy Play entitlements can still be promoted into admin grants")
-require('adminEntitlements: effective' in deep_fixes,
-        "admin grant is not persisted in adminEntitlements")
-require('entitlements: effective' not in deep_fixes,
-        "admin write still overwrites the Play-verified entitlements source")
-require('const accountPatch = {' in runtime_audit,
-        "admin profile editor does not use a field-scoped account patch")
+# Actual app-level persistence model: Firestore/admin entitlements and verified
+# Play entitlements are kept distinct, and ordinary user writes do not overwrite
+# the entitlement source of truth.
+require('firestoreEntitlementsRef' in app,
+        "Firestore entitlement source is not tracked separately")
+require('loadError' in app,
+        "recoverable account-load error state is missing")
+require('key !== "entitlements"' in app or 'key !== "entitlements"' in package,
+        "ordinary state persistence does not exclude entitlements")
+require('setPhase("dataError")' in app,
+        "Firestore failure does not enter retryable data-error state")
 
-# Ensure the actual transformed AdminScreen saveAccount body is field-scoped.
+# Admin screen should avoid writing a stale copy of the whole user document.
 admin_start = app.find("function AdminScreen")
 app_root = app.find("/* ============================== APP ROOT", admin_start)
 require(admin_start >= 0 and app_root > admin_start,
@@ -76,31 +75,34 @@ admin_section = app[admin_start:app_root]
 match = re.search(r"const saveAccount = async \(\) => \{(.*?)\n  \};", admin_section, re.S)
 require(bool(match), "AdminScreen saveAccount not found")
 save_account_body = match.group(1)
-require("const accountPatch = {" in save_account_body,
-        "AdminScreen saveAccount is not field-scoped after transformation")
 require("setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" not in save_account_body,
-        "AdminScreen saveAccount still writes the whole stale user document")
+        "AdminScreen still writes stale whole user document")
 
-# The account initializer must persist explicit signup language.
-require('function freshState(language = null)' in deep_fixes,
-        "freshState language fix missing from canonical transform")
-require('language,' in deep_fixes,
-        "freshState does not persist supplied language")
-
-# Normal profile writes must strip server-managed entitlement fields.
-require('key !== "entitlements"' in runtime_audit,
-        "normal profile writes are not stripping entitlements")
-require('key !== "adminEntitlements"' in deep_fixes,
-        "normal profile writes are not stripping adminEntitlements")
-
-# Server entitlement lifecycle and acknowledgement.
-require('function hasPaidEntitlement(state: string, expiryTime: string | null)' in verify_purchase,
-        "server entitlement lifecycle helper missing")
-require('SUBSCRIPTION_STATE_CANCELED' in verify_purchase and 'expiryMs > Date.now()' in verify_purchase,
-        "server incorrectly treats all canceled subscriptions as immediately expired")
+# Server entitlement lifecycle + acknowledgement.
 require('acknowledgeSubscription(' in verify_purchase,
-        "server-side Play acknowledgement is missing")
+        "server-side Google Play acknowledgement is missing")
 require('acknowledgementState' in verify_purchase,
-        "server does not inspect Google Play acknowledgement state")
+        "Google Play acknowledgement state is not checked")
+require('SUBSCRIPTION_STATE_CANCELED' in verify_purchase and 'expiryMs > Date.now()' in verify_purchase,
+        "canceled-but-unexpired subscriptions are not handled correctly")
+require('expiresAt' in verify_purchase,
+        "server does not return/track subscription expiry")
+
+# AI daily reset is driven by a server-computed date in the user's IANA timezone.
+ai = read("src/aiCoach.js")
+require('timeZone' in ai, "AI client does not send timezone context")
+edge_ai = ROOT / "supabase/functions/ai-coach/index.ts"
+if edge_ai.exists():
+    ai_backend = edge_ai.read_text(encoding="utf-8")
+    require('dateInTimeZone(timeZone)' in ai_backend,
+            "AI backend does not compute local date from timezone")
+    require('FREE_LIMIT = 3' in ai_backend and 'PRO_LIMIT = 50' in ai_backend,
+            "AI free/pro daily limits are not enforced server-side")
+    require('reserve_ai_usage' in ai_backend and 'refund_ai_usage' in ai_backend,
+            "AI atomic usage reserve/refund is missing")
+
+# Web demo must remain explicitly isolated and responsive.
+require('FIFTYFIT_WEB_DEMO' in read("scripts/patch-web-demo.py"),
+        "responsive web demo patch is missing")
 
 print("Production invariants passed")

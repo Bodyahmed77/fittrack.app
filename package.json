@@ -19,6 +19,7 @@
     "@capacitor/core": "^7.6.8",
     "@capacitor/keyboard": "^7.0.3",
     "@capacitor/local-notifications": "^7.0.7",
+    "@capacitor/network": "^7.0.4",
     "@capacitor/splash-screen": "^7.0.5",
     "@capacitor/status-bar": "^7.0.6",
     "capacitor-billing": "^8.0.0",

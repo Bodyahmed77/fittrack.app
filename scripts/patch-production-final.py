@@ -25,6 +25,46 @@ def patch(s):
         "state refs",
     )
 
+    # Cache the last known account locally. This makes startup resilient to a
+    # delayed/offline Firestore connection on older phones and lets the app open
+    # immediately instead of trapping the user on "Loading your progress".
+    cache_anchor = '''  useEffect(() => {
+    if (!uid) {'''
+    cache_block = '''  useEffect(() => {
+    if (!uid) {
+      return;
+    }
+    const cacheKey = `fiftyfit:account-cache:${uid}`;
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (!cached || typeof cached !== "object") return;
+      setDataRaw((current) => ({
+        ...current,
+        ...cached,
+        account: { ...current.account, ...(cached.account || {}) },
+        settings: { ...current.settings, ...(cached.settings || {}) },
+        profile: { ...current.profile, ...(cached.profile || {}) },
+        entitlements: { ...current.entitlements, ...(cached.entitlements || {}) },
+      }));
+      setLoaded(true);
+      setLoadError(null);
+    } catch (_) {}
+  }, [uid]);
+
+  useEffect(() => {
+    if (!uid || !loaded || loadError || !data) return;
+    try {
+      localStorage.setItem(`fiftyfit:account-cache:${uid}`, JSON.stringify(data));
+    } catch (_) {}
+  }, [uid, loaded, loadError, data]);
+
+'''
+    if cache_block not in s:
+        # The first hook after the refs belongs to the account listener.
+        s = require_replace(s, cache_anchor, cache_block + cache_anchor, "startup account cache")
+
     # Reset source refs when auth identity changes.
     s = require_replace(
         s,
@@ -44,6 +84,9 @@ def patch(s):
         '''      (err) => {
         console.error("Firestore read failed", err);
         setLoadError({ code: String(err?.code || "firestore_read_failed") });
+        // If cached account data already hydrated the UI, keep the app open and
+        // treat this as a background sync problem instead of blocking the user.
+        if (loaded) return;
         setLoaded(false);
       },''',
         "Firestore error handling",
@@ -173,7 +216,7 @@ def patch(s):
     s = require_replace(
         s,
         '    if (!loaded || writePending) return;\n    if (saveError) return;',
-        '''    if (loadError) {
+        '''    if (loadError && !loaded) {
       setPhase("dataError");
       return;
     }
@@ -222,10 +265,8 @@ def patch(s):
                   ? verifiedRestore.expiresAt
                   : activated.proExpiresAt;
             }'''
-    # This appears in the root auto-restore and may have a second restore loop.
-    if auto_new not in s:
-        if auto_old in s:
-            s = s.replace(auto_old, auto_new, 1)
+    if auto_new not in s and auto_old in s:
+        s = s.replace(auto_old, auto_new, 1)
 
     # Paywall: use actual server expiry immediately after verification.
     s = require_replace(

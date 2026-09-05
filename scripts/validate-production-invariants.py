@@ -93,7 +93,7 @@ require("acknowledgementPending" in verify_purchase,
         "verified purchase does not remain successful when acknowledgement is pending")
 
 require("timeZone" in ai, "AI client does not send timezone context")
-require("dateInTimeZone(timeZone)" in ai_backend,
+require("dateInTimeZone(clientTimeZone)" in ai_backend or "dateInTimeZone(timeZone)" in ai_backend,
         "AI backend does not compute local date from timezone")
 require("FREE_LIMIT = 3" in ai_backend or "FREE_LIMIT=3" in ai_backend,
         "AI free daily limit is not enforced server-side")

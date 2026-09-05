@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 APP = Path("src/App.jsx")
 text = APP.read_text(encoding="utf-8")
@@ -10,15 +9,9 @@ if 'User-selected nutrition ratios remain authoritative' in text:
     print('nutrition ratio persistence already applied')
     raise SystemExit(0)
 
-m = re.search(r'(function App\s*\([^)]*\)\s*\{)', text)
-if not m:
-    raise SystemExit('nutrition ratio patch: App function not found')
-start = m.end()
-ret = text.find('\n  return (', start)
-if ret < 0:
-    ret = text.find('\n  return(', start)
-if ret < 0:
-    raise SystemExit('nutrition ratio patch: App return marker not found')
-text = text[:ret] + EFFECT + text[ret:]
+anchor = '''  const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError } = useAppData(\n    firebaseUser?.uid,\n  );'''
+if anchor not in text:
+    raise SystemExit('nutrition ratio patch: GymApp data hook anchor not found')
+text = text.replace(anchor, anchor + EFFECT, 1)
 APP.write_text(text, encoding='utf-8')
 print('nutrition ratio persistence applied')

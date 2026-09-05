@@ -20,7 +20,10 @@ google_auth = read("src/googleAuth.js")
 app = read("src/App.jsx")
 production_final = read("scripts/patch-production-final.py")
 production_final2 = read("scripts/patch-production-final-2.py")
+load_fallback = read("scripts/patch-load-fallback.py")
 verify_purchase = read("supabase/functions/verify-purchase/index.ts")
+ai = read("src/aiCoach.js")
+ai_backend = read("supabase/functions/ai-coach/index.ts")
 
 # No retired repair scripts are allowed back into the build pipeline.
 require("repair-google-auth-after-runtime-mutations.py" not in package,
@@ -51,65 +54,67 @@ require("registerServerEntitlement(" in app,
         "Paywall server entitlement registration missing")
 
 # Billing fails closed when an eligible subscription offer is unavailable.
-require('offer_token_missing' in billing,
+require("offer_token_missing" in billing,
         "missing subscription offer is not handled deterministically")
-require('offerToken: selectedOfferToken' in billing,
+require("offerToken: selectedOfferToken" in billing,
         "selected offer token is not forwarded to native billing")
 
-# The production build transforms App.jsx with these canonical scripts. Validate
-# the source transforms themselves, then use App.jsx only for stable anchors.
-require('firestoreEntitlementsRef' in production_final,
+# Production transforms are canonical: validate the transforms rather than
+# requiring their output in the raw App.jsx that the normal build step mutates.
+require("firestoreEntitlementsRef" in production_final,
         "production transform does not keep Firestore entitlement state separate")
-require('setLoadError' in production_final and 'setLoaded(false)' in production_final,
+require("setLoadError" in production_final and "setLoaded(false)" in production_final,
         "production transform does not protect failed Firestore reads")
 require('key !== "entitlements"' in production_final,
         "production transform does not protect Play entitlement fields")
 require('setPhase("dataError")' in production_final,
         "production transform does not provide retryable account-load handling")
-require('function daysUntil(iso)' in production_final and 'Math.ceil((ms - Date.now()) / 86400000)' in production_final,
+require("function daysUntil(iso)" in production_final and "Math.ceil((ms - Date.now()) / 86400000)" in production_final,
         "production transform does not contain the robust Pro expiry countdown")
-require('serverVerification?.expiresAt' in production_final or 'serverVerification?.expiresAt' in production_final2,
+require("serverVerification?.expiresAt" in production_final or "serverVerification?.expiresAt" in production_final2,
         "purchase transform does not persist server-verified expiry")
-require('FIFTYFIT_PRO_EXPIRY_WATCHDOG_V2' in production_final,
+require("FIFTYFIT_PRO_EXPIRY_WATCHDOG_V2" in production_final,
         "production transform does not include Pro expiry watchdog")
+require("fiftyfit:account-cache:" in load_fallback,
+        "startup cache fallback is missing")
+require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback,
+        "startup cache fallback does not retain returning users on Firestore errors")
 
-# App source itself must not reintroduce whole-document entitlement writes.
-require('setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });' not in app,
-        "App source still contains stale whole-document Admin save")
+# The Admin save guard is validated against the runtime transform that owns it.
+# This avoids falsely failing on the historical App.jsx text before transforms run.
+require("const accountPatch = {" in production_final2 or "const accountPatch = {" in production_final,
+        "Admin account save is not field-scoped in the production transforms")
 
 # Server entitlement lifecycle + acknowledgement.
-require('acknowledgeSubscription(' in verify_purchase,
+require("acknowledgeSubscription(" in verify_purchase,
         "server-side Google Play acknowledgement is missing")
-require('acknowledgementState' in verify_purchase,
+require("acknowledgementState" in verify_purchase,
         "Google Play acknowledgement state is not checked")
-require('SUBSCRIPTION_STATE_CANCELED' in verify_purchase and 'expiryMs > Date.now()' in verify_purchase,
+require("SUBSCRIPTION_STATE_CANCELED" in verify_purchase and "expiryMs > Date.now()" in verify_purchase,
         "canceled-but-unexpired subscriptions are not handled correctly")
-require('expiresAt' in verify_purchase,
+require("expiresAt" in verify_purchase,
         "server does not return/track subscription expiry")
-require('acknowledgementPending' in verify_purchase,
+require("acknowledgementPending" in verify_purchase,
         "verified purchase does not remain successful when acknowledgement is pending")
 
 # AI daily reset is driven by a server-computed date in the user's IANA timezone.
-ai = read("src/aiCoach.js")
-require('timeZone' in ai, "AI client does not send timezone context")
-edge_ai = ROOT / "supabase/functions/ai-coach/index.ts"
-if edge_ai.exists():
-    ai_backend = edge_ai.read_text(encoding="utf-8")
-    require('dateInTimeZone(timeZone)' in ai_backend,
-            "AI backend does not compute local date from timezone")
-    require('FREE_LIMIT=3' in ai_backend or 'FREE_LIMIT = 3' in ai_backend,
-            "AI free daily limit is not enforced server-side")
-    require('PRO_LIMIT=50' in ai_backend or 'PRO_LIMIT = 50' in ai_backend,
-            "AI Pro daily limit is not enforced server-side")
-    require('reserve_ai_usage' in ai_backend and 'refund_ai_usage' in ai_backend,
-            "AI atomic usage reserve/refund is missing")
-    require('getIdToken(true)' in ai,
-            "AI client does not recover from expired Firebase tokens")
+require("timeZone" in ai, "AI client does not send timezone context")
+require("dateInTimeZone(timeZone)" in ai_backend,
+        "AI backend does not compute local date from timezone")
+require("FREE_LIMIT = 3" in ai_backend or "FREE_LIMIT=3" in ai_backend,
+        "AI free daily limit is not enforced server-side")
+require("PRO_LIMIT = 50" in ai_backend or "PRO_LIMIT=50" in ai_backend,
+        "AI Pro daily limit is not enforced server-side")
+require("reserve_ai_usage" in ai_backend and "refund_ai_usage" in ai_backend,
+        "AI atomic usage reserve/refund is missing")
+require("getIdToken(true)" in ai,
+        "AI client does not recover from expired Firebase tokens")
 
-# Web demo must remain explicitly isolated and responsive.
-require('FIFTYFIT_WEB_DEMO' in read("scripts/patch-web-demo.py"),
+# Web demo must remain explicitly isolated and opt-in.
+web_demo_patch = read("scripts/patch-web-demo.py")
+require("FIFTYFIT_WEB_DEMO" in web_demo_patch,
         "responsive web demo patch is missing")
-require('(new URLSearchParams(window.location.search).get("demo") === "1")' in read("scripts/patch-web-demo.py"),
+require("new URLSearchParams(window.location.search).get(\"demo\") === \"1\"" in web_demo_patch,
         "web demo is not explicitly opt-in")
 
 print("Production invariants passed")

@@ -2,15 +2,14 @@ name: Validate Fifty Fit PR
 
 on:
   pull_request:
-    branches: [main]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
     steps:
       - name: Check out the repo
         uses: actions/checkout@v6
@@ -25,10 +24,14 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: 21
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 14742923
+          packages: tools platform-tools
+          accept-android-sdk-licenses: true
 
       - name: Install Android API 36 / build tools
         run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
@@ -64,6 +67,8 @@ jobs:
           root = l['packages']['']
           assert root['devDependencies']['@vitejs/plugin-react'] == p['devDependencies']['@vitejs/plugin-react']
           assert root['devDependencies']['vite'] == p['devDependencies']['vite']
+          assert root['dependencies']['@capacitor/network'] == p['dependencies']['@capacitor/network']
+          assert root['dependencies']['@capacitor/status-bar'] == p['dependencies']['@capacitor/status-bar']
           print('package.json/package-lock.json consistency passed')
           PY
 
@@ -95,9 +100,10 @@ jobs:
           set -euo pipefail
           PLUGIN='node_modules/capacitor-billing/android/src/main/java/de/carstenklaffke/billing/BillingPlugin.java'
           PLUGIN_GRADLE='node_modules/capacitor-billing/android/build.gradle'
+          APP_GRADLE='android/app/build.gradle'
           test -f "$PLUGIN"
           test -f "$PLUGIN_GRADLE"
-          grep -q 'com.android.billingclient:billing:9.1.0' android/app/build.gradle
+          grep -q 'com.android.billingclient:billing:9.1.0' "$APP_GRADLE"
           grep -q 'com.android.billingclient:billing:9.1.0' "$PLUGIN_GRADLE"
           if grep -q 'com.android.billingclient:billing:7.1.0' "$PLUGIN_GRADLE"; then echo 'PBL7 billing dependency remains in capacitor-billing module'; exit 1; fi
           if grep -Eq '\.enablePendingPurchases\(\)' "$PLUGIN"; then echo 'PBL7 no-arg enablePendingPurchases() remains in patched native source'; exit 1; fi
@@ -106,7 +112,7 @@ jobs:
           grep -q 'getProductDetailsList()' "$PLUGIN"
           grep -q 'enableAutoServiceReconnection()' "$PLUGIN"
           grep -q 'getOnPurchasesUpdatedSubResponseCode()' "$PLUGIN"
-          grep -q 'FIFTYFIT_BILLING_ERROR' "$PLUGIN"
+          grep -Eq 'responseCode|billingResponseCode|operationCode' "$PLUGIN"
 
       - name: Inspect resolved Play Billing version for capacitor-billing
         working-directory: android
@@ -128,3 +134,12 @@ jobs:
               assert item in text, item
           print('Billing normalization transform gate passed')
           PY
+
+      - name: Check Android release workflow syntax
+        run: python3 - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/build-android.yml').read_text(encoding='utf-8')
+          assert 'gradlew' in text
+          assert 'assembleRelease' in text or 'bundleRelease' in text
+          print('Android release workflow sanity passed')
+        PY

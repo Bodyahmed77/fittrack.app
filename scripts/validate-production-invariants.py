@@ -70,8 +70,6 @@ require("fiftyfit:account-cache:" in load_fallback,
 require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback,
         "startup cache fallback does not retain returning users on Firestore errors")
 
-# Admin writes are hardened during the release build so only explicitly
-# editable profile fields and entitlement fields can be persisted.
 require("patch-admin-save-hardening.py" in package,
         "Admin field-scoped hardening script is not part of the release build")
 require("admin_grant" in admin_hardening and "user_save" in admin_hardening,
@@ -93,7 +91,7 @@ require("acknowledgementPending" in verify_purchase,
         "verified purchase does not remain successful when acknowledgement is pending")
 
 require("timeZone" in ai, "AI client does not send timezone context")
-require("dateInTimeZone(clientTimeZone)" in ai_backend or "dateInTimeZone(timeZone)" in ai_backend,
+require(("dateInTimeZone(" in ai_backend) and ("localDate = dateInTimeZone(" in ai_backend),
         "AI backend does not compute local date from timezone")
 require("FREE_LIMIT = 3" in ai_backend or "FREE_LIMIT=3" in ai_backend,
         "AI free daily limit is not enforced server-side")

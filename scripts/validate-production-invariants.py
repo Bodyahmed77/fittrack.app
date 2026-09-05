@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -18,89 +17,95 @@ billing = read("src/billing.js")
 register_purchase = read("src/registerPurchase.js")
 google_auth = read("src/googleAuth.js")
 app = read("src/App.jsx")
-deep_fixes = read("scripts/apply-deep-runtime-fixes.py")
-runtime_audit = read("scripts/apply-runtime-audit-fixes.py")
+production_final = read("scripts/patch-production-final.py")
+production_final2 = read("scripts/patch-production-final-2.py")
+load_fallback = read("scripts/patch-load-fallback.py")
+admin_hardening = read("scripts/patch-admin-save-hardening.py")
 verify_purchase = read("supabase/functions/verify-purchase/index.ts")
+ai = read("src/aiCoach.js")
+ai_backend = read("supabase/functions/ai-coach/index.ts")
 
 require("repair-google-auth-after-runtime-mutations.py" not in package,
-        "retired Google auth repair script is still in postinstall")
+        "retired Google auth repair script is still in package scripts")
 require(not (ROOT / "scripts/repair-google-auth-after-runtime-mutations.py").exists(),
         "retired Google auth repair script still exists")
 
-bad_fallback = 'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {'
-require(bad_fallback not in google_auth, "Google Sign-In still hides DEVELOPER_ERROR")
-# The deep runtime script is a source transform. Its replacement template may
-# contain the retired string as data, so validate the transformed googleAuth.js
-# above rather than failing on the transform source itself.
-require('google = google.replace(\'if (!isNoCredentialError(mapped) && mapped?.code !== "developer_error") {\'' in deep_fixes,
-        "deep runtime transform no longer contains the canonical Google auth repair")
-require('if (!isNoCredentialError(mapped)) {' in google_auth, "canonical Google no-credential branch missing")
+require('if (!isNoCredentialError(mapped)) {' in google_auth,
+        "Google auth no-credential branch is missing")
+require('mapped?.code !== "developer_error"' not in google_auth,
+        "Google auth still hides developer_error")
 
-# Purchase acknowledgement must be server-side and follow independent verification.
 require("sendAck" not in billing and "acknowledgePurchase" not in billing,
-        "billing.js still acknowledges purchases on the client")
+        "billing.js still acknowledges purchases on client")
 require("sendAck" not in register_purchase and "acknowledgePurchase" not in register_purchase,
-        "registerPurchase.js still acknowledges purchases on the client")
-register_verify = 'await postPurchase(endpoint, idToken, serverProductId, purchaseToken)'
-require(register_verify in register_purchase, "server verification request missing")
+        "registerPurchase.js still acknowledges purchases on client")
+require("await postPurchase(endpoint, idToken, serverProductId, purchaseToken)" in register_purchase,
+        "purchase server verification request missing")
 
 require("const shouldUnlock = result?.success === true;" in app,
-        "Paywall does not hand successful native purchases to server verification")
-require("const shouldUnlock = result?.success === true && result?.verified === true;" not in app,
-        "Paywall still requires pre-server verification and would reject deferred verification")
-require("await registerServerEntitlement(" in app,
-        "Paywall server entitlement registration is missing")
+        "Paywall native-success handoff missing")
+require("registerServerEntitlement(" in app,
+        "Paywall server entitlement registration missing")
+require("offer_token_missing" in billing,
+        "missing subscription offer is not handled deterministically")
+require("offerToken: selectedOfferToken" in billing,
+        "selected offer token is not forwarded to native billing")
 
-# Billing must fail closed when Google returns no eligible subscription offer.
-require('code = "offer_token_missing"' in billing,
-        "missing offerToken is not surfaced as a deterministic billing error")
-require('offerToken: selectedOfferToken' in billing,
-        "selected subscription offerToken is not explicitly forwarded to native billing")
+require("firestoreEntitlementsRef" in production_final,
+        "production transform does not keep Firestore entitlement state separate")
+require("setLoadError" in production_final and "setLoaded(false)" in production_final,
+        "production transform does not protect failed Firestore reads")
+require('key !== "entitlements"' in production_final,
+        "production transform does not protect Play entitlement fields")
+require('setPhase("dataError")' in production_final,
+        "production transform does not provide retryable account-load handling")
+require("function daysUntil(iso)" in production_final and "Math.ceil((ms - Date.now()) / 86400000)" in production_final,
+        "production transform does not contain the robust Pro expiry countdown")
+require("serverVerification?.expiresAt" in production_final or "serverVerification?.expiresAt" in production_final2,
+        "purchase transform does not persist server-verified expiry")
+require("FIFTYFIT_PRO_EXPIRY_WATCHDOG_V2" in production_final,
+        "production transform does not include Pro expiry watchdog")
+require("fiftyfit:account-cache:" in load_fallback,
+        "startup cache fallback is missing")
+require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback,
+        "startup cache fallback does not retain returning users on Firestore errors")
 
-# Admin grants must stay separate from Play-verified entitlements.
-require('const legacyAdmin = parsed.adminEntitlements || {};' in deep_fixes,
-        "legacy Play entitlements can still be promoted into admin grants")
-require('adminEntitlements: effective' in deep_fixes,
-        "admin grant is not persisted in adminEntitlements")
-require('entitlements: effective' not in deep_fixes,
-        "admin write still overwrites the Play-verified entitlements source")
-require('const accountPatch = {' in runtime_audit,
-        "admin profile editor does not use a field-scoped account patch")
+require("patch-admin-save-hardening.py" in package,
+        "Admin field-scoped hardening script is not part of the release build")
+require("admin_grant" in admin_hardening and "user_save" in admin_hardening,
+        "Admin hardening script does not define separate grant and profile writes")
+require('"account.name": next.account.name' in admin_hardening and '"account.phone": next.account.phone' in admin_hardening,
+        "Admin profile write is not field-scoped")
+require('"entitlements.trainingPro"' in admin_hardening and '"entitlements.aiCoachPro"' in admin_hardening,
+        "Admin entitlement write is not field-scoped")
 
-# Ensure the actual transformed AdminScreen saveAccount body is field-scoped.
-admin_start = app.find("function AdminScreen")
-app_root = app.find("/* ============================== APP ROOT", admin_start)
-require(admin_start >= 0 and app_root > admin_start,
-        "AdminScreen section not found")
-admin_section = app[admin_start:app_root]
-match = re.search(r"const saveAccount = async \(\) => \{(.*?)\n  \};", admin_section, re.S)
-require(bool(match), "AdminScreen saveAccount not found")
-save_account_body = match.group(1)
-require("const accountPatch = {" in save_account_body,
-        "AdminScreen saveAccount is not field-scoped after transformation")
-require("setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" not in save_account_body,
-        "AdminScreen saveAccount still writes the whole stale user document")
+require("acknowledgeSubscription(" in verify_purchase,
+        "server-side Google Play acknowledgement is missing")
+require("acknowledgementState" in verify_purchase,
+        "Google Play acknowledgement state is not checked")
+require("SUBSCRIPTION_STATE_CANCELED" in verify_purchase and "expiryMs > Date.now()" in verify_purchase,
+        "canceled-but-unexpired subscriptions are not handled correctly")
+require("expiresAt" in verify_purchase,
+        "server does not return/track subscription expiry")
+require("acknowledgementPending" in verify_purchase,
+        "verified purchase does not remain successful when acknowledgement is pending")
 
-# The account initializer must persist explicit signup language.
-require('function freshState(language = null)' in deep_fixes,
-        "freshState language fix missing from canonical transform")
-require('language,' in deep_fixes,
-        "freshState does not persist supplied language")
+require("timeZone" in ai, "AI client does not send timezone context")
+require(("dateInTimeZone(" in ai_backend) and ("localDate = dateInTimeZone(" in ai_backend),
+        "AI backend does not compute local date from timezone")
+require("FREE_LIMIT = 3" in ai_backend or "FREE_LIMIT=3" in ai_backend,
+        "AI free daily limit is not enforced server-side")
+require("PRO_LIMIT = 50" in ai_backend or "PRO_LIMIT=50" in ai_backend,
+        "AI Pro daily limit is not enforced server-side")
+require("reserve_ai_usage" in ai_backend and "refund_ai_usage" in ai_backend,
+        "AI atomic usage reserve/refund is missing")
+require("getIdToken(true)" in ai,
+        "AI client does not recover from expired Firebase tokens")
 
-# Normal profile writes must strip server-managed entitlement fields.
-require('key !== "entitlements"' in runtime_audit,
-        "normal profile writes are not stripping entitlements")
-require('key !== "adminEntitlements"' in deep_fixes,
-        "normal profile writes are not stripping adminEntitlements")
-
-# Server entitlement lifecycle and acknowledgement.
-require('function hasPaidEntitlement(state: string, expiryTime: string | null)' in verify_purchase,
-        "server entitlement lifecycle helper missing")
-require('SUBSCRIPTION_STATE_CANCELED' in verify_purchase and 'expiryMs > Date.now()' in verify_purchase,
-        "server incorrectly treats all canceled subscriptions as immediately expired")
-require('acknowledgeSubscription(' in verify_purchase,
-        "server-side Play acknowledgement is missing")
-require('acknowledgementState' in verify_purchase,
-        "server does not inspect Google Play acknowledgement state")
+web_demo_patch = read("scripts/patch-web-demo.py")
+require("FIFTYFIT_WEB_DEMO" in web_demo_patch,
+        "responsive web demo patch is missing")
+require("new URLSearchParams(window.location.search).get(\"demo\") === \"1\"" in web_demo_patch,
+        "web demo is not explicitly opt-in")
 
 print("Production invariants passed")

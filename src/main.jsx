@@ -8,11 +8,9 @@ async function applySystemBarColors(dark = true) {
     const { Capacitor } = await import("@capacitor/core");
     if (!Capacitor.isNativePlatform()) return;
     const { StatusBar, Style } = await import("@capacitor/status-bar");
-    // Draw web content edge-to-edge under the system bars.
     await StatusBar.setOverlaysWebView({ overlay: true });
     await StatusBar.setBackgroundColor({ color: dark ? "#000000" : "#ffffff" });
     await StatusBar.setStyle({ style: dark ? Style.Light : Style.Dark });
-    // Immersive: hide status bar icons (Wi‑Fi, clock, battery) so the app owns the top edge.
     await StatusBar.hide();
   } catch (e) {
     console.warn("[SystemBars] status bar config failed", e);
@@ -59,7 +57,6 @@ if (typeof window !== "undefined") {
     const lang = event?.detail?.language === "ar" ? "ar" : "en";
     syncDocumentChrome({ dark: document.documentElement.style.colorScheme !== "light", lang });
   });
-  // Re-apply after resume (Android can restore system bars).
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       const dark = document.documentElement.style.colorScheme !== "light";
@@ -110,7 +107,6 @@ async function setupKeyboardInsets() {
     console.warn("[Keyboard] listeners failed", e);
   }
 
-  // Always keep a viewport-based fallback for devices that don't emit keyboard events.
   syncKeyboardFromViewport();
   window.visualViewport?.addEventListener("resize", syncKeyboardFromViewport);
   window.visualViewport?.addEventListener("scroll", syncKeyboardFromViewport);
@@ -138,12 +134,37 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     console.error("App crashed:", error, info);
   }
+  handleRetry = () => {
+    try {
+      window.location.reload();
+    } catch (_) {}
+  };
   render() {
     if (this.state.error) {
+      const lang = typeof document !== "undefined" && document.documentElement.lang === "ar" ? "ar" : "en";
+      const errorId = (() => {
+        try {
+          const raw = String(this.state.error?.message || this.state.error || "error");
+          let hash = 0;
+          for (let i = 0; i < raw.length; i += 1) hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
+          return `FF-${Math.abs(hash).toString(36).toUpperCase()}`;
+        } catch (_) {
+          return "FF-UNKNOWN";
+        }
+      })();
       return (
-        <div style={{ minHeight: "100vh", background: "#000", color: "#fff", padding: 24, fontFamily: "monospace", fontSize: 13, whiteSpace: "pre-wrap" }}>
-          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Something went wrong</div>
-          {String(this.state.error?.stack || this.state.error)}
+        <div dir={lang === "ar" ? "rtl" : "ltr"} style={{ minHeight: "100vh", background: "#000", color: "#fff", padding: 28, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
+          <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
+            <img src={logoSrc} alt="Fifty Fit" width={64} height={64} style={{ objectFit: "contain", marginBottom: 16 }} />
+            <div style={{ fontWeight: 900, fontSize: 20 }}>{lang === "ar" ? "حصل خطأ غير متوقع" : "Something went wrong"}</div>
+            <div style={{ color: "#9a9a9a", fontSize: 13, lineHeight: 1.6, marginTop: 9 }}>
+              {lang === "ar" ? "بياناتك لم يتم حذفها. أعد فتح التطبيق وحاول مرة أخرى." : "Your data was not deleted. Restart the app and try again."}
+            </div>
+            <button onClick={this.handleRetry} style={{ marginTop: 20, width: "100%", border: "none", borderRadius: 13, padding: "13px 16px", background: "#fff", color: "#000", fontWeight: 900, fontSize: 14 }}>
+              {lang === "ar" ? "إعادة المحاولة" : "Try again"}
+            </button>
+            <div style={{ color: "#555", fontSize: 10.5, marginTop: 12 }}>Error ID: {errorId}</div>
+          </div>
         </div>
       );
     }

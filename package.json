@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "python3 scripts/patch-production-final.py && python3 scripts/patch-production-final-2.py && python3 scripts/patch-load-fallback.py && python3 scripts/patch-ai-client-hardening.py && python3 scripts/patch-subscription-date-hardening.py && python3 scripts/patch-fullscreen-ui.py && python3 scripts/patch-purchase-ack.py && python3 scripts/patch-ui-ux.py && python3 scripts/patch-nutrition-goals.py && python3 scripts/prepare-billing-release.py && vite build --config vite.release.config.js",
+    "build": "python3 scripts/patch-production-final.py && python3 scripts/patch-production-final-2.py && python3 scripts/patch-load-fallback.py && python3 scripts/patch-ai-client-hardening.py && python3 scripts/patch-subscription-date-hardening.py && python3 scripts/patch-fullscreen-ui.py && python3 scripts/patch-purchase-ack.py && python3 scripts/patch-ui-ux.py && python3 scripts/patch-nutrition-goals.py && python3 scripts/patch-nutrition-ratio-persistence.py && python3 scripts/prepare-billing-release.py && vite build --config vite.release.config.js",
     "postinstall": "python3 scripts/apply-google-native-diagnostics.py",
     "preview": "vite preview",
     "cap:sync": "npx cap sync android"
@@ -18,8 +18,7 @@
     "@capacitor/browser": "^7.0.5",
     "@capacitor/core": "^7.6.8",
     "@capacitor/keyboard": "^7.0.3",
-    "@capacitor/local-notifications": "^7.0.7",
-    "@capacitor/network": "^7.0.4",
+    "@capacitor/local-notifications": "^7.0.4",
     "@capacitor/splash-screen": "^7.0.5",
     "capacitor-billing": "^8.0.0",
     "firebase": "^11.2.0",

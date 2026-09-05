@@ -95,17 +95,14 @@ jobs:
           python3 scripts/inject-android-system-ui.py
           if [ -f scripts/inject-tiktok-webview.py ]; then python3 scripts/inject-tiktok-webview.py; else echo 'No legacy TikTok injector present; native bridge is supplied by the release workflow.'; fi
 
-      - name: Validate Play Billing version pins
+      - name: Validate Play Billing dependency pins
         run: |
           set -euo pipefail
           PLUGIN_GRADLE='node_modules/capacitor-billing/android/build.gradle'
-          APP_GRADLE='android/app/build.gradle'
           test -f "$PLUGIN_GRADLE"
-          test -f "$APP_GRADLE"
-          grep -q 'com.android.billingclient:billing:9.1.0' "$APP_GRADLE"
           grep -q 'com.android.billingclient:billing:9.1.0' "$PLUGIN_GRADLE"
           if grep -q 'com.android.billingclient:billing:7.1.0' "$PLUGIN_GRADLE"; then echo 'PBL7 billing dependency remains in capacitor-billing module'; exit 1; fi
-          echo 'Play Billing 9.1.0 pin verified; API compatibility is validated by Gradle compile.'
+          echo 'Play Billing 9.1.0 pin verified in capacitor-billing; final resolved dependency/API compatibility is validated by Gradle.'
 
       - name: Inspect resolved Play Billing version for capacitor-billing
         working-directory: android

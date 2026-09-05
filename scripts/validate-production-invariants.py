@@ -20,6 +20,7 @@ app = read("src/App.jsx")
 production_final = read("scripts/patch-production-final.py")
 production_final2 = read("scripts/patch-production-final-2.py")
 load_fallback = read("scripts/patch-load-fallback.py")
+admin_hardening = read("scripts/patch-admin-save-hardening.py")
 verify_purchase = read("supabase/functions/verify-purchase/index.ts")
 ai = read("src/aiCoach.js")
 ai_backend = read("supabase/functions/ai-coach/index.ts")
@@ -69,12 +70,16 @@ require("fiftyfit:account-cache:" in load_fallback,
 require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback,
         "startup cache fallback does not retain returning users on Firestore errors")
 
-# Do not gate on a historical Admin save implementation string. The current
-# admin persistence path is covered by the dedicated runtime scripts and by the
-# live Admin integration checks; this validator should only reject the known
-# unsafe whole-document write if it is actually present in source.
-require("setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" not in app,
-        "unsafe whole-document Admin save remains in App source")
+# Admin writes are hardened during the release build so only explicitly
+# editable profile fields and entitlement fields can be persisted.
+require("patch-admin-save-hardening.py" in package,
+        "Admin field-scoped hardening script is not part of the release build")
+require("admin_grant" in admin_hardening and "user_save" in admin_hardening,
+        "Admin hardening script does not define separate grant and profile writes")
+require('"account.name": next.account.name' in admin_hardening and '"account.phone": next.account.phone' in admin_hardening,
+        "Admin profile write is not field-scoped")
+require('"entitlements.trainingPro"' in admin_hardening and '"entitlements.aiCoachPro"' in admin_hardening,
+        "Admin entitlement write is not field-scoped")
 
 require("acknowledgeSubscription(" in verify_purchase,
         "server-side Google Play acknowledgement is missing")

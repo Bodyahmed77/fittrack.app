@@ -10,10 +10,14 @@ if 'User-selected nutrition ratios remain authoritative' in text:
     print('nutrition ratio persistence already applied')
     raise SystemExit(0)
 
-pattern = re.compile(
-    r'(  const \{ data, setData, setVerifiedEntitlements, loaded, writePending, saveError(?:, loadError)? \} = useAppData\(\s*firebaseUser\?\.uid,\s*\);)'
-)
-m = pattern.search(text)
+patterns = [
+    re.compile(r'''  const \{ data, setData, setVerifiedEntitlements, loaded, writePending, saveError(?:, loadError)? \} = useAppData\(\s*firebaseUser\?\.uid,\s*\);'''),
+]
+m = None
+for pattern in patterns:
+    m = pattern.search(text)
+    if m:
+        break
 if not m:
     raise SystemExit('nutrition ratio patch: GymApp data hook anchor not found')
 text = text[:m.end()] + EFFECT + text[m.end():]

@@ -67,6 +67,14 @@ function resolveAnonKey() {
   try { if (import.meta?.env?.VITE_SUPABASE_ANON_KEY) return String(import.meta.env.VITE_SUPABASE_ANON_KEY); } catch {}
   return SUPABASE_ANON_KEY || "";
 }
+function resolveTimeZone() {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone || "UTC";
+  } catch (_) {
+    return "UTC";
+  }
+}
 function normalizeUsage(data, fallbackDate) {
   if (!data || typeof data !== "object") return null;
   const u = data.usage && typeof data.usage === "object" ? data.usage : data;
@@ -149,20 +157,27 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
     const user = auth.currentUser;
     if (!user) { const e = new Error("Sign in required"); e.code = "auth_missing"; writeAiDiagnostics({ stage: "auth", code: e.code }); throw e; }
 
-    const requestDate = localISODateNow();
-    const idToken = await user.getIdToken(true);
+    const requestDate = localDate || localISODateNow();
+    const timeZone = resolveTimeZone();
+    let idToken = await user.getIdToken(false);
     const recent = (messages || []).slice(-6);
     const lastUser = [...recent].reverse().find((m) => m?.role === "user" && m.content);
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` };
     const anon = resolveAnonKey();
     if (anon) headers.apikey = anon;
-    const body = { messages: recent, message: lastUser ? String(lastUser.content) : "", lang: lang || "en", localDate: requestDate, context: userContext || {} };
+    const body = { messages: recent, message: lastUser ? String(lastUser.content) : "", lang: lang || "en", localDate: requestDate, timeZone, context: userContext || {} };
 
     let response = null;
     try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         response = await postAiRequest(endpoint, headers, body);
-        if (response.status !== 503 || attempt === 1) break;
+        if (response.status === 401 && attempt === 0) {
+          writeAiDiagnostics({ stage: "auth_retry", status: 401 });
+          idToken = await user.getIdToken(true);
+          headers.Authorization = `Bearer ${idToken}`;
+          continue;
+        }
+        if (response.status !== 503 || attempt >= 2) break;
         writeAiDiagnostics({ stage: "backend_retry", attempt: attempt + 1, status: response.status });
         await new Promise((resolve) => setTimeout(resolve, 900));
       }

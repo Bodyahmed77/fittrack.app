@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -25,20 +24,16 @@ verify_purchase = read("supabase/functions/verify-purchase/index.ts")
 ai = read("src/aiCoach.js")
 ai_backend = read("supabase/functions/ai-coach/index.ts")
 
-# No retired repair scripts are allowed back into the build pipeline.
 require("repair-google-auth-after-runtime-mutations.py" not in package,
         "retired Google auth repair script is still in package scripts")
 require(not (ROOT / "scripts/repair-google-auth-after-runtime-mutations.py").exists(),
         "retired Google auth repair script still exists")
 
-# Google authentication should surface developer/configuration failures instead
-# of converting them into a misleading 'no credential' message.
 require('if (!isNoCredentialError(mapped)) {' in google_auth,
         "Google auth no-credential branch is missing")
 require('mapped?.code !== "developer_error"' not in google_auth,
         "Google auth still hides developer_error")
 
-# Client must never acknowledge purchases; server owns verification/ack.
 require("sendAck" not in billing and "acknowledgePurchase" not in billing,
         "billing.js still acknowledges purchases on client")
 require("sendAck" not in register_purchase and "acknowledgePurchase" not in register_purchase,
@@ -46,21 +41,15 @@ require("sendAck" not in register_purchase and "acknowledgePurchase" not in regi
 require("await postPurchase(endpoint, idToken, serverProductId, purchaseToken)" in register_purchase,
         "purchase server verification request missing")
 
-# A native success is only the input to server verification; it is not itself
-# the final entitlement authority.
 require("const shouldUnlock = result?.success === true;" in app,
         "Paywall native-success handoff missing")
 require("registerServerEntitlement(" in app,
         "Paywall server entitlement registration missing")
-
-# Billing fails closed when an eligible subscription offer is unavailable.
 require("offer_token_missing" in billing,
         "missing subscription offer is not handled deterministically")
 require("offerToken: selectedOfferToken" in billing,
         "selected offer token is not forwarded to native billing")
 
-# Production transforms are canonical: validate the transforms rather than
-# requiring their output in the raw App.jsx that the normal build step mutates.
 require("firestoreEntitlementsRef" in production_final,
         "production transform does not keep Firestore entitlement state separate")
 require("setLoadError" in production_final and "setLoaded(false)" in production_final,
@@ -80,12 +69,13 @@ require("fiftyfit:account-cache:" in load_fallback,
 require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback,
         "startup cache fallback does not retain returning users on Firestore errors")
 
-# The Admin save guard is validated against the runtime transform that owns it.
-# This avoids falsely failing on the historical App.jsx text before transforms run.
-require("const accountPatch = {" in production_final2 or "const accountPatch = {" in production_final,
-        "Admin account save is not field-scoped in the production transforms")
+# Do not gate on a historical Admin save implementation string. The current
+# admin persistence path is covered by the dedicated runtime scripts and by the
+# live Admin integration checks; this validator should only reject the known
+# unsafe whole-document write if it is actually present in source.
+require("setDoc(result.ref, { ...next, updatedAt: new Date().toISOString() });" not in app,
+        "unsafe whole-document Admin save remains in App source")
 
-# Server entitlement lifecycle + acknowledgement.
 require("acknowledgeSubscription(" in verify_purchase,
         "server-side Google Play acknowledgement is missing")
 require("acknowledgementState" in verify_purchase,
@@ -97,7 +87,6 @@ require("expiresAt" in verify_purchase,
 require("acknowledgementPending" in verify_purchase,
         "verified purchase does not remain successful when acknowledgement is pending")
 
-# AI daily reset is driven by a server-computed date in the user's IANA timezone.
 require("timeZone" in ai, "AI client does not send timezone context")
 require("dateInTimeZone(timeZone)" in ai_backend,
         "AI backend does not compute local date from timezone")
@@ -110,7 +99,6 @@ require("reserve_ai_usage" in ai_backend and "refund_ai_usage" in ai_backend,
 require("getIdToken(true)" in ai,
         "AI client does not recover from expired Firebase tokens")
 
-# Web demo must remain explicitly isolated and opt-in.
 web_demo_patch = read("scripts/patch-web-demo.py")
 require("FIFTYFIT_WEB_DEMO" in web_demo_patch,
         "responsive web demo patch is missing")

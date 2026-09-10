@@ -22,10 +22,16 @@ const firebaseConfig = {
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 
-// Make the signed-in session survive app restarts and upgrades whenever the
-// WebView provides IndexedDB. Failure is non-fatal because Firebase Auth can
-// fall back to its normal persistence strategy.
-void setPersistence(auth, indexedDBLocalPersistence).catch(() => {});
+// Auth persistence must settle before the app interprets the auth observer's
+// first value. Without this readiness barrier a slow/hibernated Android WebView
+// can momentarily look signed-out while IndexedDB persistence is still loading.
+export const authPersistenceReady = setPersistence(
+  auth,
+  indexedDBLocalPersistence,
+).catch((error) => {
+  console.warn("[Firebase Auth] IndexedDB persistence unavailable", error);
+  return null;
+});
 
 // Firestore keeps a local cache so a returning user can render their last known
 // account/workout state immediately while the live listener reconnects.

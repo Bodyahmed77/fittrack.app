@@ -11,13 +11,17 @@ def patch_main():
     s = MAIN.read_text(encoding="utf-8")
     if MARKER in s:
         return
-    pattern = re.compile(r"/\* FIFTYFIT_WEB_DEMO_V2 \*/.*?(?=const App = React\.lazy\(\(\) => import\(\"\./App\.jsx\"\)\);)", re.S)
-    replacement = '''/* FIFTYFIT_WEB_DEMO_V3 */
-const FIFTYFIT_WEB_DEMO_V1 = typeof window !== "undefined" &&
-  (new URLSearchParams(window.location.search).get("demo") === "1");
 
-function prepareFiftyFitWebDemo() {
-  if (!FIFTYFIT_WEB_DEMO_V1) return;
+    # The first demo patch creates a V1 block around the browser bootstrap. Replace
+    # that browser-auth bootstrap entirely with a local, synthetic demo session.
+    pattern = re.compile(
+        r"/\* FIFTYFIT_WEB_DEMO_V1 \*/.*?(?=const App = React\.lazy\(\(\) => import\(\"\./App\.jsx\"\)\);)",
+        re.S,
+    )
+    replacement = '''/* FIFTYFIT_WEB_DEMO_V3 */
+const FIFTYFIT_WEB_DEMO_MODE = typeof window !== "undefined" &&
+  (new URLSearchParams(window.location.search).get("demo") === "1");
+if (FIFTYFIT_WEB_DEMO_MODE) {
   window.__FIFTYFIT_DEMO_MODE__ = true;
   document.documentElement.classList.add("fiftyfit-web-demo");
   document.documentElement.style.overflowX = "hidden";
@@ -55,16 +59,17 @@ function prepareFiftyFitWebDemo() {
     window.__FIFTYFIT_DEMO_INITIAL__ = seed;
   }
 }
-prepareFiftyFitWebDemo();
 
 '''
     if not pattern.search(s):
-        raise SystemExit("web-demo-isolation: expected V2 main block not found")
+        raise SystemExit("web-demo-isolation: expected V1 main block not found")
     s = pattern.sub(replacement, s, count=1)
-    # Existing V2 wrapper waits on an unnecessary Firebase bootstrap. Replace the
-    # render tail with a synchronous demo-aware render that is safe in browsers.
-    old_tail = re.compile(r"const renderApplication = \(\) => createRoot\(document\.getElementById\(\"root\"\)\)\.render\(.*?\nprepareFiftyFitWebDemo\(\).*?\.finally\(renderApplication\);", re.S)
-    new_tail = '''const renderApplication = () => createRoot(document.getElementById("root")).render(
+
+    # Remove the old asynchronous demo bootstrap. Rendering is synchronous because
+    # the demo identity/data are entirely local and never touch Firebase/Play.
+    s = re.sub(
+        r'\nconst renderApplication = \(\) => createRoot\(document\.getElementById\("root"\)\)\.render\(.*?\n(?:\(FIFTYFIT_WEB_DEMO_V1 \? bootstrapDemoSession\(\)\.catch\(.*?\) : Promise\.resolve\(\)\)\.finally\(renderApplication\);|renderApplication\(\);)',
+        '''\nconst renderApplication = () => createRoot(document.getElementById("root")).render(
   <ErrorBoundary>
     <StartupGate>
       <Suspense fallback={<StartupShell />}>
@@ -74,11 +79,11 @@ prepareFiftyFitWebDemo();
   </ErrorBoundary>
 );
 
-renderApplication();'''
-    if old_tail.search(s):
-        s = old_tail.sub(new_tail, s, count=1)
+renderApplication();''',
+        s,
+        flags=re.S,
+    )
     s = s.replace('import { bootstrapDemoSession } from "./demoBootstrap";\n', '', 1)
-    s = s.replace('/* FIFTYFIT_WEB_DEMO_ISOLATION_V1 */\n', '')
     s = '/* FIFTYFIT_WEB_DEMO_ISOLATION_V1 */\n' + s
     MAIN.write_text(s, encoding="utf-8")
 
@@ -88,15 +93,17 @@ def patch_app():
     if MARKER in s:
         return
 
-    # Use an in-memory synthetic session for Demo Mode. This keeps a real visitor's
-    # Firebase login untouched and prevents multiple advertisers sharing one demo account.
+    # Demo authentication is synthetic; it must never consume or mutate a real
+    # Firebase session.
     auth_marker = 'function useFirebaseSession() {'
-    demo_auth = '''function useFirebaseSession() {\n  if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {\n    return { uid: "web-demo", email: "demo@fiftyfit.app", isWebDemo: true };\n  }'''
+    demo_auth = '''function useFirebaseSession() {
+  if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {
+    return { uid: "web-demo", email: "demo@fiftyfit.app", isWebDemo: true };
+  }'''
     if auth_marker not in s:
         raise SystemExit("web-demo-isolation: useFirebaseSession anchor missing")
     s = s.replace(auth_marker, demo_auth, 1)
 
-    # Hydrate the data hook from per-browser localStorage and never open Firestore.
     s = s.replace(
         '  const latestLocalWriteAtRef = useRef(null);',
         '  const latestLocalWriteAtRef = useRef(null);\n  const demoMode = typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;',
@@ -108,12 +115,13 @@ def patch_app():
       try {
         const raw = localStorage.getItem(key);
         const seeded = raw ? JSON.parse(raw) : (window.__FIFTYFIT_DEMO_INITIAL__ || freshState());
+        const base = freshState();
         const merged = {
-          ...freshState(), ...seeded,
-          account: { ...freshState().account, ...(seeded.account || {}) },
-          settings: { ...freshState().settings, ...(seeded.settings || {}) },
-          profile: { ...freshState().profile, ...(seeded.profile || {}) },
-          entitlements: { ...freshState().entitlements, ...(seeded.entitlements || {}) },
+          ...base, ...seeded,
+          account: { ...base.account, ...(seeded.account || {}) },
+          settings: { ...base.settings, ...(seeded.settings || {}) },
+          profile: { ...base.profile, ...(seeded.profile || {}) },
+          entitlements: { ...base.entitlements, ...(seeded.entitlements || {}) },
         };
         setDataRaw(merged);
         setLoaded(true);
@@ -144,7 +152,7 @@ def patch_app():
         raise SystemExit("web-demo-isolation: setData anchor missing")
     s = s.replace(setdata_anchor, setdata_replacement, 1)
 
-    # Never run native/real Play restore from a browser demo.
+    # Never run real Play restore from a browser demo.
     s = s.replace(
         '    if (!firebaseUser || !loaded) return undefined;\n    let cancelled = false;',
         '    if (!firebaseUser || !loaded || (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__)) return undefined;\n    let cancelled = false;',

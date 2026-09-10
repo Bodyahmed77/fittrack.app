@@ -49,16 +49,17 @@ jobs:
       - name: Build web app
         run: npm run build
 
+      - name: Keep admin dashboard in Pages artifact
+        run: rm -rf dist/admin && cp -R admin dist/admin
+
       - name: Validate generated web demo output
         run: |
+          set -euo pipefail
           test -f dist/index.html
           grep -q 'src="./assets/' dist/index.html || true
           test -f dist/admin/index.html
           test -f dist/assets/logo.png || test -d dist/assets
           echo "Web demo artifact structure validated"
-
-      - name: Keep admin dashboard in Pages artifact
-        run: rm -rf dist/admin && cp -R admin dist/admin
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

@@ -95,20 +95,22 @@ jobs:
           python3 scripts/inject-android-system-ui.py
           if [ -f scripts/inject-tiktok-webview.py ]; then python3 scripts/inject-tiktok-webview.py; else echo 'No legacy TikTok injector present; native bridge is supplied by the release workflow.'; fi
 
-      - name: Validate Play Billing dependency pin source
+      - name: Validate Play Billing app dependency pin
         run: |
           set -euo pipefail
-          PLUGIN_GRADLE='node_modules/capacitor-billing/android/build.gradle'
-          test -f "$PLUGIN_GRADLE"
-          grep -q 'com.android.billingclient:billing:9.1.0' "$PLUGIN_GRADLE"
-          if grep -q 'com.android.billingclient:billing:7.1.0' "$PLUGIN_GRADLE"; then echo 'PBL7 billing dependency remains in capacitor-billing module'; exit 1; fi
-          echo 'Play Billing 9.1.0 pin verified in capacitor-billing module.'
+          APP_GRADLE='android/app/build.gradle'
+          test -f "$APP_GRADLE"
+          grep -q 'com.android.billingclient:billing:9.1.0' "$APP_GRADLE"
+          if grep -q 'com.android.billingclient:billing:7.1.0' "$APP_GRADLE"; then echo 'PBL7 billing dependency remains in app module'; exit 1; fi
+          echo 'Play Billing 9.1.0 app dependency pin verified.'
 
       - name: Inspect resolved Play Billing version for capacitor-billing
         working-directory: android
         run: |
           set -euo pipefail
-          ./gradlew :capacitor-billing:dependencyInsight --dependency com.android.billingclient:billing --configuration debugCompileClasspath
+          ./gradlew :capacitor-billing:dependencyInsight --dependency com.android.billingclient:billing --configuration debugCompileClasspath | tee /tmp/fiftyfit-pbl.txt
+          grep -Eq 'com\.android\.billingclient:billing:9\.1\.0' /tmp/fiftyfit-pbl.txt
+          echo 'Resolved Play Billing 9.1.0 verified.'
 
       - name: Compile Android debug artifact (Billing/PBL compatibility gate)
         working-directory: android

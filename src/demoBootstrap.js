@@ -1,5 +1,5 @@
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "./firebase";
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { auth, authPersistenceReady } from "./firebase";
 
 const DEMO_EMAIL = "fiftyfit.ad.demo@bodyahmed77.com";
 const DEMO_PASSWORD = "FiftyFitDemo#2026!";
@@ -8,8 +8,12 @@ export const WEB_DEMO_EMAIL = DEMO_EMAIL;
 
 export async function bootstrapDemoSession() {
   if (typeof window === "undefined") return null;
+  await authPersistenceReady.catch(() => null);
   try { localStorage.setItem("50fit-lang", "en"); } catch (_) {}
-  if (auth.currentUser) return auth.currentUser;
+  if (auth.currentUser && auth.currentUser.email !== DEMO_EMAIL) {
+    await signOut(auth);
+  }
+  if (auth.currentUser?.email === DEMO_EMAIL) return auth.currentUser;
   try {
     const signedIn = await signInWithEmailAndPassword(auth, DEMO_EMAIL, DEMO_PASSWORD);
     return signedIn.user;

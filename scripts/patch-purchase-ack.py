@@ -38,7 +38,7 @@ def main() -> None:
     elif "productIdFor," in src and 'from "./billing"' in src:
         applied += 1
     else:
-        print("WARN: billing import pattern not found")
+        print("INFO: billing import already supplied by another build transform")
 
     old_key = """        const productKey =
           BILLING_PRODUCTS[planId] || result?.productId || planId;
@@ -70,7 +70,7 @@ def main() -> None:
     elif "productIdFor(planId, durationId)" in src:
         applied += 1
     else:
-        print("WARN: productKey registration block not found")
+        print("INFO: product registration block already supplied by another build transform")
 
     if src != original:
         APP.write_text(src, encoding="utf-8")

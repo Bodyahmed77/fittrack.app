@@ -12,10 +12,10 @@ def patch_main():
     if MARKER in s:
         return
 
-    # The first demo patch creates a V1 block around the browser bootstrap. Replace
+    # The first demo patch creates a V2/V1 block around the browser bootstrap. Replace
     # that browser-auth bootstrap entirely with a local, synthetic demo session.
     pattern = re.compile(
-        r"/\* FIFTYFIT_WEB_DEMO_V1 \*/.*?(?=const App = React\.lazy\(\(\) => import\(\"\./App\.jsx\"\)\);)",
+        r"/\* FIFTYFIT_WEB_DEMO_V[12] \*/.*?(?=const App = React\.lazy\(\(\) => import\(\"\./App\.jsx\"\)\);)",
         re.S,
     )
     replacement = '''/* FIFTYFIT_WEB_DEMO_V3 */
@@ -62,14 +62,15 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
 
 '''
     if not pattern.search(s):
-        raise SystemExit("web-demo-isolation: expected V1 main block not found")
+        raise SystemExit("web-demo-isolation: expected V1/V2 main block not found")
     s = pattern.sub(replacement, s, count=1)
 
     # Remove the old asynchronous demo bootstrap. Rendering is synchronous because
     # the demo identity/data are entirely local and never touch Firebase/Play.
     s = re.sub(
         r'\nconst renderApplication = \(\) => createRoot\(document\.getElementById\("root"\)\)\.render\(.*?\n(?:\(FIFTYFIT_WEB_DEMO_V1 \? bootstrapDemoSession\(\)\.catch\(.*?\) : Promise\.resolve\(\)\)\.finally\(renderApplication\);|renderApplication\(\);)',
-        '''\nconst renderApplication = () => createRoot(document.getElementById("root")).render(
+        '''
+const renderApplication = () => createRoot(document.getElementById("root")).render(
   <ErrorBoundary>
     <StartupGate>
       <Suspense fallback={<StartupShell />}>

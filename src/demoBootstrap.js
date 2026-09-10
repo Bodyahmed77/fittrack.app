@@ -1,8 +1,13 @@
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { auth, authPersistenceReady } from "./firebase";
+import { auth, db, authPersistenceReady } from "./firebase";
 
 const DEMO_EMAIL = "fiftyfit.ad.demo@bodyahmed77.com";
 const DEMO_PASSWORD = "FiftyFitDemo#2026!";
+
+// Web-demo bootstrap code is injected into main.jsx by the Pages build patch.
+// Expose the same Firestore instance to that injected module-level code without
+// changing the production/native entrypoint.
+if (typeof globalThis !== "undefined") globalThis.db = db;
 
 export const WEB_DEMO_EMAIL = DEMO_EMAIL;
 

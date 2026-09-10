@@ -1,10 +1,13 @@
-import { defineConfig } from "vite";
+import { defineConfig, transformWithEsbuild } from "vite";
 
 function fiftyFitReleaseCompatibility() {
   return {
     name: "fifty-fit-release-compatibility",
     enforce: "pre",
-    transform(code, id) {
+    async transform(code, id) {
+      if (id.endsWith("/src/nutritionGoals.js")) {
+        return await transformWithEsbuild(code, id, { loader: "jsx", jsx: "transform" });
+      }
       if (!id.endsWith("/src/App.jsx") && !id.endsWith("/src/billing.js")) return null;
       let out = code;
 
@@ -65,8 +68,6 @@ function fiftyFitReleaseCompatibility() {
       }
 
       if (id.endsWith("/src/billing.js")) {
-        // The native plugin returns the modern PBL9 offer list using the
-        // Android-style field name. Accept that plus the older aliases.
         out = out.replace(
           'details.offers,',
           'details.offers,\n    details.subscription_offers,',

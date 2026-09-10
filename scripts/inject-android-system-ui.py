@@ -37,11 +37,7 @@ def _upsert_items_in_style_block(block: str) -> str:
     for name, value in STATUS_ITEMS:
         item = f'<item name="{name}">{value}</item>'
         if re.search(rf'<item name="{re.escape(name)}">[^<]*</item>', body):
-            body = re.sub(
-                rf'<item name="{re.escape(name)}">[^<]*</item>',
-                item,
-                body,
-            )
+            body = re.sub(rf'<item name="{re.escape(name)}">[^<]*</item>', item, body)
         else:
             body = re.sub(r"</style>", f"        {item}\n    </style>", body, count=1)
     return body
@@ -51,11 +47,7 @@ def patch_styles(path: Path) -> str:
     if not path.is_file():
         return f"{path} missing (skip)"
     text = path.read_text(encoding="utf-8")
-    new_text, n = re.subn(
-        r"<style\b[^>]*>[\s\S]*?</style>",
-        lambda m: _upsert_items_in_style_block(m.group(0)),
-        text,
-    )
+    new_text, n = re.subn(r"<style\b[^>]*>[\s\S]*?</style>", lambda m: _upsert_items_in_style_block(m.group(0)), text)
     if n == 0:
         return f"{path.name}: no <style> blocks"
     if new_text != text:
@@ -70,11 +62,7 @@ def patch_manifest(path: Path) -> str:
     text = path.read_text(encoding="utf-8")
     original = text
     if 'android:windowSoftInputMode' not in text:
-        text = text.replace(
-            "android:configChanges=",
-            'android:windowSoftInputMode="adjustResize" android:configChanges=',
-            1,
-        )
+        text = text.replace("android:configChanges=", 'android:windowSoftInputMode="adjustResize" android:configChanges=', 1)
     if text != original:
         path.write_text(text, encoding="utf-8")
         return "AndroidManifest updated softInputMode"
@@ -87,12 +75,10 @@ def patch_main_activity() -> str:
         return "MainActivity.java missing (skip)"
     path = mains[0]
     text = path.read_text(encoding="utf-8")
-    original = text
     marker = "FIFTYFIT_EDGE_TO_EDGE_V2"
     if marker in text:
         return "MainActivity edge-to-edge already present"
 
-    # Remove older V1 patch if present so we can re-inject V2
     text = re.sub(
         r"\n\s*// FIFTYFIT_EDGE_TO_EDGE_V1:.*?(?=\n\s*(?:registerPlugin|\}|$))",
         "\n",
@@ -127,14 +113,26 @@ def patch_main_activity() -> str:
     }} catch (Throwable ignored) {{}}
 '''
 
-    m = re.search(r"(super\.onCreate\s*\([^;]*\);)", text)
-    if not m:
-        return "MainActivity: super.onCreate not found"
-    text = text[: m.end()] + "\n" + edge_block + text[m.end() :]
-    if text != original:
-        path.write_text(text, encoding="utf-8")
-        return f"MainActivity edge-to-edge injected ({path.name})"
-    return "MainActivity unchanged"
+    # Capacitor's generated Activity often has no explicit onCreate(). In that
+    # case create a minimal lifecycle override so the UI patch is effective.
+    super_match = re.search(r"super\.onCreate\s*\([^;]*\);", text)
+    if super_match:
+        text = text[: super_match.end()] + "\n" + edge_block + text[super_match.end() :]
+    else:
+        class_end = text.rfind("}")
+        if class_end <= 0:
+            return "MainActivity: class body not found"
+        override = f'''
+    @Override
+    public void onCreate(android.os.Bundle savedInstanceState) {{
+      super.onCreate(savedInstanceState);
+{edge_block}
+    }}
+'''
+        text = text[:class_end] + override + text[class_end:]
+
+    path.write_text(text, encoding="utf-8")
+    return f"MainActivity edge-to-edge injected ({path.name})"
 
 
 def patch_android_api() -> str:
@@ -158,15 +156,8 @@ def patch_android_api() -> str:
     sdkmanager = shutil.which("sdkmanager")
     if not sdkmanager:
         return status + "; sdkmanager not found (local build may need Android 36 installed manually)"
-
     try:
-        subprocess.run(
-            [sdkmanager, "platforms;android-36", "build-tools;36.0.0"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        subprocess.run([sdkmanager, "platforms;android-36", "build-tools;36.0.0"], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         return status + "; Android 36 SDK/build-tools installed"
     except subprocess.CalledProcessError as exc:
         print(exc.stdout or "")
@@ -176,10 +167,8 @@ def patch_android_api() -> str:
 def patch_billing_stack() -> str:
     if not APP_GRADLE.is_file():
         return "app/build.gradle missing — cap sync may have failed"
-
     text = APP_GRADLE.read_text(encoding="utf-8")
     original = text
-
     dependency_lines = [
         "    implementation 'com.android.billingclient:billing:9.1.0'",
         "    implementation 'androidx.core:core:1.9.0'",
@@ -189,7 +178,6 @@ def patch_billing_stack() -> str:
         if marker not in text:
             raise SystemExit("Cannot pin Play Billing 9.1.0: dependencies block missing")
         text = text.replace(marker, marker + "\n" + "\n".join(dependency_lines), 1)
-
     if text != original:
         APP_GRADLE.write_text(text, encoding="utf-8")
         return "Play Billing 9.1.0 + AndroidX Core 1.9.0 pinned"

@@ -4,6 +4,17 @@ import re
 P = Path("src/aiCoach.js")
 s = P.read_text(encoding="utf-8")
 
+# The client is already hardened in source on current production branches.
+# Keep the release transform idempotent instead of failing when an older patch
+# anchor is no longer present.
+modern = "getIdToken(false)" in s and "status === 401" in s and "timeZone" in s
+if modern:
+    if "FIFTYFIT_AI_CLIENT_HARDENING_V2" not in s:
+        s = "/* FIFTYFIT_AI_CLIENT_HARDENING_V2 */\n" + s
+    P.write_text(s, encoding="utf-8")
+    print("AI client hardening already present")
+    raise SystemExit(0)
+
 if "FIFTYFIT_AI_CLIENT_HARDENING_V2" not in s:
     s = s.replace(
         '    const requestDate = localISODateNow();\n    const idToken = await user.getIdToken(true);',

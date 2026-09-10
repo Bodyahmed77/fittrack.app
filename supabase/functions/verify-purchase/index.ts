@@ -257,19 +257,32 @@ Deno.serve(async (req) => {
       acknowledgementError = ack.acknowledged ? null : ack.code || "ack_failed";
     }
 
-    if (!acknowledged) {
-      log("entitlement_granted_ack_pending", { rid, uid, productId, acknowledgementError });
-      return json(503, {
-        error: "acknowledgement_failed",
-        message: "The subscription was verified and entitlement was stored, but Google Play acknowledgement is still pending. Please retry restore.",
-        activated: Array.isArray(grantRow.activated) ? grantRow.activated : [...grantedKeys],
-        requestId: rid,
-      });
-    }
-
     const activated = Array.isArray(grantRow.activated) ? grantRow.activated : [...grantedKeys];
-    log("purchase_verified_granted_acknowledged", { rid, uid, productId, state: verification.state, activated });
-    return json(200, { ok: true, productId, activated, subscriptionState: verification.state, expiresAt: verification.expiryTime, acknowledged: true, requestId: rid });
+    log("purchase_verified_granted", {
+      rid,
+      uid,
+      productId,
+      state: verification.state,
+      activated,
+      acknowledged,
+      acknowledgementError,
+      expiresAt: verification.expiryTime,
+    });
+
+    // Entitlement is already verified and stored. A temporary acknowledgement
+    // failure must never make a successful customer appear unpaid in-app.
+    // A later restore/re-sync retries acknowledgement against the same token.
+    return json(200, {
+      ok: true,
+      productId,
+      activated,
+      subscriptionState: verification.state,
+      expiresAt: verification.expiryTime,
+      acknowledged,
+      acknowledgementPending: !acknowledged,
+      acknowledgementError: acknowledged ? null : acknowledgementError,
+      requestId: rid,
+    });
   } catch (e) {
     log("unexpected_error", { rid, uid, productId, detail: String((e as Error)?.message || e).slice(0, 160) });
     return json(500, { error: "backend_error", message: "Internal error", requestId: rid });

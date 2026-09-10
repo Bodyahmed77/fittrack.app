@@ -1,12 +1,13 @@
 // Firebase project: fittrack-698fa
-// Note: this "apiKey" is not a secret — it's the standard public client
-// config every Firebase web/mobile app ships with. Real protection comes
-// from Firestore Security Rules (see firestore.rules in this project) and,
-// later, App Check. Never put your Firebase *service account* key (a
-// different, genuinely secret file) into client code like this.
+// Public Firebase client configuration. Security is enforced by Auth + Firestore
+// Rules and server-side verification; no service-account credentials belong here.
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getAuth, setPersistence, indexedDBLocalPersistence } from "firebase/auth";
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyANEXYUVqaGss1i9WS5gH7Ic3UrBgKG_qc",
@@ -20,4 +21,27 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+
+// Auth persistence must settle before the app interprets the auth observer's
+// first value. Without this readiness barrier a slow/hibernated Android WebView
+// can momentarily look signed-out while IndexedDB persistence is still loading.
+export const authPersistenceReady = setPersistence(
+  auth,
+  indexedDBLocalPersistence,
+).catch((error) => {
+  console.warn("[Firebase Auth] IndexedDB persistence unavailable", error);
+  return null;
+});
+
+// Firestore keeps a local cache so a returning user can render their last known
+// account/workout state immediately while the live listener reconnects.
+// The fallback keeps older/unsupported WebViews functional instead of crashing.
+export const db = (() => {
+  try {
+    return initializeFirestore(firebaseApp, {
+      localCache: persistentLocalCache(),
+    });
+  } catch (_) {
+    return getFirestore(firebaseApp);
+  }
+})();

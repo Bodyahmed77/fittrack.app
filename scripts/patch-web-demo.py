@@ -7,77 +7,116 @@ MAIN = ROOT / "src" / "main.jsx"
 TIKTOK = ROOT / "src" / "tiktokWebView.js"
 
 
+def demo_enabled():
+    # The web-demo build sets VITE_WEB_DEMO=1. The public URL also keeps
+    # ?demo=1 so the same deployed artifact is harmless when opened normally.
+    import os
+    return os.environ.get("VITE_WEB_DEMO") == "1"
+
+
 def patch_main():
-    s = MAIN.read_text(encoding="utf-8")
-    if "FIFTYFIT_WEB_DEMO_V1" in s:
+    if not demo_enabled():
         return
-    s = s.replace('import { Keyboard } from "@capacitor/keyboard";\n', 'import { Keyboard } from "@capacitor/keyboard";\nimport { bootstrapDemoSession } from "./demoBootstrap";\n', 1)
+    s = MAIN.read_text(encoding="utf-8")
+    if "FIFTYFIT_WEB_DEMO_RUNTIME_V2" in s:
+        return
+
     marker = 'setupKeyboardInsets();\n\nconst App = React.lazy(() => import("./App.jsx"));'
-    replacement = '''setupKeyboardInsets();\n\n/* FIFTYFIT_WEB_DEMO_V2 */\nconst FIFTYFIT_WEB_DEMO_V1 = typeof window !== "undefined" &&\n  (new URLSearchParams(window.location.search).get("demo") === "1");\n\nasync function prepareFiftyFitWebDemo() {\n  if (!FIFTYFIT_WEB_DEMO_V1) return null;\n  window.__FIFTYFIT_DEMO_MODE__ = true;\n  document.documentElement.classList.add("fiftyfit-web-demo");\n  document.documentElement.style.overflowX = "hidden";\n  if (document.body) {\n    document.body.style.overflowX = "hidden";\n    document.body.style.width = "100%";\n  }\n\n  // Never let Demo Mode reuse a normal customer's authenticated session.\n  // The seed is performed before React mounts, so the first render sees a\n  // coherent demo account instead of an empty profile with 0 kg.\n  try {\n    const { auth } = await import("./firebase");\n    const { signOut } = await import("firebase/auth");\n    const { doc, setDoc } = await import("firebase/firestore");\n    if (auth.currentUser && auth.currentUser.email !== "fiftyfit.ad.demo@bodyahmed77.com") {\n      await signOut(auth);\n    }\n    const user = await bootstrapDemoSession();\n    if (!user) return null;\n    const todayDate = (() => {\n      const d = new Date();\n      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;\n    })();\n    await setDoc(doc(db, "users", user.uid), {\n      onboarded: true,\n      workoutStartDate: todayDate,\n      account: {\n        name: "Demo Athlete", email: "fiftyfit.ad.demo@bodyahmed77.com",\n        phone: "+20 100 000 0000", gender: "Male", age: 25, height: 175, weight: 72,\n        goal: "muscle", daysPerWeek: 4, trainingDays: 4, activityLevel: "moderate", photo: ""\n      },\n      settings: { theme: "dark", notifications: false, reminderTime: "18:00", language: "en" },\n      profile: { level: 3, xp: 260, xpMax: 500 },\n      entitlements: { nutritionPro: false, trainingPro: false, aiCoachPro: false, proExpiresAt: null },\n      dailyTargets: { calories: 2850, protein: 150, carbs: 350, fat: 90 },\n      activePlanId: "hypertrophy", customPlan: {}, customTrainingPlan: null,\n      customTrainingPlanActive: false, customNutritionPlan: null,\n      bodyWeight: [{ id: `${todayDate}-morning-72`, weight: 72, date: todayDate, time: "08:00" }],\n      aiUsage: { date: todayDate, count: 0 }, logs: {}, meals: {}, isWebDemoSeed: true,\n      updatedAt: new Date().toISOString()\n    }, { merge: true });\n    return user;\n  } catch (error) {\n    console.error("[Fifty Fit Demo] session preparation failed", error);\n    throw error;\n  }\n}\n\nconst App = React.lazy(() => import("./App.jsx"));'''
+    replacement = '''setupKeyboardInsets();\n\n/* FIFTYFIT_WEB_DEMO_RUNTIME_V2 */\nconst FIFTYFIT_WEB_DEMO_V2 = typeof window !== "undefined" &&\n  (import.meta.env?.VITE_WEB_DEMO === "1" || new URLSearchParams(window.location.search).get("demo") === "1");\nif (FIFTYFIT_WEB_DEMO_V2) {\n  window.__FIFTYFIT_DEMO_MODE__ = true;\n  try { document.documentElement.classList.add("fiftyfit-web-demo"); } catch (_) {}\n}\n\nconst App = React.lazy(() => import("./App.jsx"));'''
     if marker not in s:
-        raise SystemExit("web-demo: main marker not found")
+        raise SystemExit("web-demo-v2: main marker not found")
     s = s.replace(marker, replacement, 1)
-    old = '''createRoot(document.getElementById("root")).render(\n  <ErrorBoundary>\n    <StartupGate>\n      <Suspense fallback={<StartupShell />}>\n        <App />\n      </Suspense>\n    </StartupGate>\n  </ErrorBoundary>\n);'''
-    new = '''const renderApplication = () => createRoot(document.getElementById("root")).render(\n  <ErrorBoundary>\n    <StartupGate>\n      <Suspense fallback={<StartupShell />}>\n        <App />\n      </Suspense>\n    </StartupGate>\n  </ErrorBoundary>\n);\n\nprepareFiftyFitWebDemo().catch((error) => {\n  console.error("[Fifty Fit Demo] automatic demo session failed", error);\n}).finally(renderApplication);'''
-    if old not in s:
-        raise SystemExit("web-demo: main render block not found")
-    s = s.replace(old, new, 1)
     MAIN.write_text(s, encoding="utf-8")
 
 
 def patch_app():
+    if not demo_enabled():
+        return
     s = APP.read_text(encoding="utf-8")
     if "FIFTYFIT_WEB_DEMO_APP_V2" in s:
         return
-    # Do not bypass the normal authenticated-data gate in Demo Mode. The demo
-    # bootstrap now seeds a complete profile before React mounts, so it can use
-    # exactly the same onboarding/persistence logic as a real user.
-    old_phase = '''    if (firebaseUser === null) {\n      setPhase("welcome");\n      return;\n    }\n    if (!loaded || writePending) return;'''
-    new_phase = '''    if (firebaseUser === null) {\n      setPhase("welcome");\n      return;\n    }\n    if (!loaded || writePending) return;'''
-    if old_phase not in s:
-        raise SystemExit("web-demo: phase gate not found")
-    s = s.replace(old_phase, new_phase, 1)
 
-    old_purchase = '''    setBusy(true);\n    try {\n      // 1) Try real Google Play Billing.'''
-    new_purchase = '''    setBusy(true);\n    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {\n      try {\n        const next = clone(data);\n        next.entitlements = { ...(next.entitlements || {}) };\n        if (planId === "training" || planId === "both") next.entitlements.trainingPro = true;\n        if (planId === "nutrition" || planId === "both") next.entitlements.nutritionPro = true;\n        if (planId === "ai" || planId === "both") next.entitlements.aiCoachPro = true;\n        const expiry = new Date();\n        expiry.setDate(expiry.getDate() + 30);\n        next.entitlements.proExpiresAt = expiry.toISOString();\n        setData(next);\n        setSuccessModal({ kind: "demo", plan: planId, duration: durationId });\n      } catch (error) {\n        console.error("[Fifty Fit Demo] simulated purchase failed", error);\n        showToast(ar ? "حصل خطأ في تجربة الـDemo" : "Demo action failed");\n      } finally {\n        setBusy(false);\n      }\n      return;\n    }\n    try {\n      // 1) Try real Google Play Billing.'''
-    if old_purchase in s:
-        s = s.replace(old_purchase, new_purchase, 1)
+    # Demo uses a local synthetic session: no shared demo password, no Firebase
+    # writes, and no cross-user contamination.
+    auth_marker = '''function useFirebaseSession() {\n  const [firebaseUser, setFirebaseUser] = useState(undefined); // undefined = not checked yet, null = signed out\n  useEffect(\n    () => onAuthStateChanged(auth, (u) => setFirebaseUser(u || null)),\n    [],\n  );\n  return firebaseUser;\n}'''
+    auth_replacement = '''function useFirebaseSession() {\n  const demoMode = typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__;\n  const demoUser = demoMode\n    ? {\n        uid: "fiftyfit-web-demo",\n        email: "demo@fiftyfit.app",\n        displayName: "Demo Athlete",\n        providerData: [],\n      }\n    : null;\n  const [firebaseUser, setFirebaseUser] = useState(demoMode ? demoUser : undefined);\n  useEffect(() => {\n    if (demoMode) {\n      setFirebaseUser(demoUser);\n      return undefined;\n    }\n    return onAuthStateChanged(auth, (u) => setFirebaseUser(u || null));\n  }, [demoMode]);\n  return firebaseUser;\n}'''
+    if auth_marker not in s:
+        raise SystemExit("web-demo-v2: auth marker not found")
+    s = s.replace(auth_marker, auth_replacement, 1)
 
-    # Demo-only deterministic AI Coach. Production/native builds continue to use
-    # the real server-authoritative Gemini path unchanged.
-    old_ai = '''    setBusy(true);\n    try {\n      const result = await generateCoachReply({'''
-    new_ai = '''    setBusy(true);\n    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {\n      try {\n        const currentCount = data?.aiUsage?.date === today ? Number(data?.aiUsage?.count || 0) : 0;\n        const dailyLimit = data?.entitlements?.aiCoachPro ? 50 : 3;\n        if (currentCount >= dailyLimit) {\n          showToast(ar ? `خلصت ${dailyLimit} رسائل الـDemo لليوم` : `Demo limit reached (${dailyLimit} messages today)`);\n          return;\n        }\n        await new Promise((resolve) => setTimeout(resolve, 650));\n        const q = textMsg.toLowerCase();\n        let reply;\n        if (/(protein|بروتين|muscle|عضل|عضلات)/i.test(q)) {\n          reply = ar\n            ? "لبناء العضلات، ركّز على بروتين كافي يوميًا مع تمرين مقاومة منتظم ونوم جيد. وزّع البروتين على وجباتك بدل تجميعه كله في وجبة واحدة."\n            : "For muscle gain, prioritize enough daily protein alongside consistent resistance training and good sleep. Spreading protein across meals is a practical approach.";\n        } else if (/(weight|وزن|calorie|سعر|سعرات|cut|تنشيف)/i.test(q)) {\n          reply = ar\n            ? "لو هدفك خسارة الدهون، ابدأ بعجز سعرات معتدل وتابع متوسط وزنك أسبوعيًا بدل الحكم من يوم واحد. حافظ على تمارين المقاومة والبروتين أثناء التنشيف."\n            : "For fat loss, start with a moderate calorie deficit and judge progress from your weekly weight trend rather than one day. Keep resistance training and adequate protein in place.";\n        } else if (/(bench|squat|press|تمرين|جيم|exercise|workout)/i.test(q)) {\n          reply = ar\n            ? "في التمرين، الجودة والتدرج أهم من مطاردة الفشل في كل مجموعة. حاول تثبيت الفورمة، وسجّل الوزن والعدات، وزوّد الحمل تدريجيًا عندما تحقق أعلى طرف من نطاق العدات."\n            : "In training, quality and progression matter more than taking every set to failure. Keep your form consistent, log load and reps, and add load gradually when you can repeat the top of your rep range.";\n        } else {\n          reply = ar\n            ? "أنا Demo Coach في Fifty Fit. أقدر أساعدك في التمرين، التغذية، البروتين، التخسيس، وزيادة العضلات. جرّب تسألني عن هدفك أو تمرين معين."\n            : "I’m the Fifty Fit Demo Coach. I can help with training, nutrition, protein, fat loss, and muscle gain. Ask me about your goal or a specific exercise.";\n        }\n        setMessages((m) => [...m, { role: "assistant", content: reply }]);\n        const next = clone(data);\n        next.aiUsage = { date: today, count: currentCount + 1 };\n        setData(next);\n      } catch (error) {\n        console.error("[Fifty Fit Demo] AI simulation failed", error);\n        setMessages((m) => m.slice(0, -1));\n        showToast(ar ? "تعذر تشغيل Demo Coach" : "Demo Coach failed to respond");\n      } finally {\n        setBusy(false);\n      }\n      return;\n    }\n    try {\n      const result = await generateCoachReply({'''
-    if old_ai not in s:
-        raise SystemExit("web-demo: AI send anchor not found")
-    s = s.replace(old_ai, new_ai, 1)
+    # Insert the local demo data layer immediately before useAppData.
+    data_marker = 'function useAppData(uid) {'
+    demo_helpers = '''/* FIFTYFIT_WEB_DEMO_APP_V2 */\nconst WEB_DEMO_STORAGE_KEY = "fiftyfit:web-demo-state:v2";\nfunction buildWebDemoSeed() {\n  const seed = freshState();\n  const today = dateKey(0);\n  seed.onboarded = true;\n  seed.workoutStartDate = today;\n  seed.account = {\n    ...seed.account,\n    name: "Demo Athlete",\n    email: "demo@fiftyfit.app",\n    phone: "",\n    gender: "Male",\n    age: 24,\n    height: 174,\n    weight: 72,\n    goal: "muscle",\n    daysPerWeek: 5,\n    activityLevel: "moderate",\n  };\n  seed.settings = { ...seed.settings, language: "en", notifications: false, reminderTime: "18:00" };\n  seed.bodyWeight = [{ id: `${today}-08:00-72`, weight: 72, date: today, time: "08:00" }];\n  seed.dailyTargets = { kcal: 3000, protein: 150, carbs: 412.5, fat: 83.3, macroMode: "custom" };\n  seed.activePlanId = "five_day";\n  seed.aiUsage = { date: today, count: 0 };\n  return seed;\n}\nfunction readWebDemoState() {\n  try {\n    const raw = localStorage.getItem(WEB_DEMO_STORAGE_KEY);\n    if (!raw) return buildWebDemoSeed();\n    const parsed = JSON.parse(raw);\n    const base = buildWebDemoSeed();\n    return {\n      ...base,\n      ...parsed,\n      account: { ...base.account, ...(parsed.account || {}) },\n      settings: { ...base.settings, ...(parsed.settings || {}) },\n      profile: { ...base.profile, ...(parsed.profile || {}) },\n      entitlements: { ...base.entitlements, ...(parsed.entitlements || {}) },\n    };\n  } catch (_) {\n    return buildWebDemoSeed();\n  }\n}\nfunction writeWebDemoState(next) {\n  try { localStorage.setItem(WEB_DEMO_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}\n}\n\nfunction useAppData(uid) {'''
+    if data_marker not in s:
+        raise SystemExit("web-demo-v2: useAppData marker not found")
+    s = s.replace(data_marker, demo_helpers, 1)
 
-    old_reminder = '''  const requestPermission = async () => {\n    try {\n      const perm = await LocalNotifications.requestPermissions();'''
-    new_reminder = '''  const requestPermission = async () => {\n    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) return true;\n    try {\n      const perm = await LocalNotifications.requestPermissions();'''
-    if old_reminder in s:
-        s = s.replace(old_reminder, new_reminder, 1)
+    # Start useAppData from the local seed in demo mode.
+    old_state = '  const [data, setDataRaw] = useState(freshState());'
+    new_state = '  const demoMode = typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__;\n  const [data, setDataRaw] = useState(() => (demoMode ? readWebDemoState() : freshState()));'
+    if old_state not in s:
+        raise SystemExit("web-demo-v2: appdata state marker not found")
+    s = s.replace(old_state, new_state, 1)
 
-    old_test = '''  const sendTest = async () => {\n    setBusy(true);\n    try {\n      const perm = await LocalNotifications.checkPermissions();'''
-    new_test = '''  const sendTest = async () => {\n    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {\n      showToast(ar ? "الإشعار التجريبي اتجهز للـDemo" : "Demo notification simulated");\n      return;\n    }\n    setBusy(true);\n    try {\n      const perm = await LocalNotifications.checkPermissions();'''
-    if old_test in s:
-        s = s.replace(old_test, new_test, 1)
-    # Mark the patch so future builds do not reapply it over changed source.
-    s = '/* FIFTYFIT_WEB_DEMO_APP_V2 */\n' + s
+    # Bypass Firestore and notifications listeners entirely for the demo.
+    old_effect = '''  useEffect(() => {\n    if (!uid) {\n      setLoaded(false);'''
+    new_effect = '''  useEffect(() => {\n    if (demoMode) {\n      setDataRaw(readWebDemoState());\n      setLoaded(true);\n      setNotifications([]);\n      setSaveError(null);\n      setWritePending(false);\n      return undefined;\n    }\n    if (!uid) {\n      setLoaded(false);'''
+    if old_effect not in s:
+        raise SystemExit("web-demo-v2: appdata effect marker not found")
+    s = s.replace(old_effect, new_effect, 1)
+
+    # Add demoMode to useAppData effect dependencies.
+    s = s.replace('  }, [uid]);\n\n  const setVerifiedEntitlements', '  }, [uid, demoMode]);\n\n  const setVerifiedEntitlements', 1)
+
+    # Demo setData is local-only and works with every existing screen.
+    old_setdata = '''    async (next) => {\n      if (!uid) return true;\n      const previous = data;'''
+    new_setdata = '''    async (next) => {\n      if (demoMode) {\n        const updatedAt = new Date().toISOString();\n        const persisted = { ...next, updatedAt };\n        setWritePending(true);\n        setDataRaw(persisted);\n        writeWebDemoState(persisted);\n        setWritePending(false);\n        return true;\n      }\n      if (!uid) return true;\n      const previous = data;'''
+    if old_setdata not in s:
+        raise SystemExit("web-demo-v2: setData marker not found")
+    s = s.replace(old_setdata, new_setdata, 1)
+    s = s.replace('    [uid, data],\n  );', '    [uid, data, demoMode],\n  );', 1)
+
+    # Never run live Play restore or admin lookup in demo mode.
+    s = s.replace('    if (!firebaseUser || !loaded) return undefined;\n    let cancelled = false;', '    if (!firebaseUser || !loaded || (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__)) return undefined;\n    let cancelled = false;', 1)
+    s = s.replace('    if (!firebaseUser) {\n      setIsAdmin(false);', '    if (!firebaseUser || (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__)) {\n      setIsAdmin(false);', 1)
+
+    # Demo phase is always ready once the local seed is loaded.
+    old_phase = '''    if (!loaded || writePending) return;\n    if (saveError) return;'''
+    new_phase = '''    if (!loaded || writePending) return;\n    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {\n      setPhase("app");\n      return;\n    }\n    if (saveError) return;'''
+    if old_phase in s:
+        s = s.replace(old_phase, new_phase, 1)
+
+    # Local AI Coach inside the demo so advertisements never depend on backend state.
+    ai_anchor = '      const result = await generateCoachReply({'
+    ai_insert = '''      if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {\n        const nextCount = (Number(data.aiUsage?.count || 0) + 1);\n        const reply = ar\n          ? "أنا AI Coach التجريبي في Fifty Fit. أقدر أساعدك في التمرين، التغذية، والسعرات. جرّب مثلاً: إزاي أزود البروتين أو أحسن تمرين الصدر؟"\n          : "I’m the Fifty Fit demo AI Coach. I can help with workouts, nutrition, calories, and progress. Try: How can I increase protein or improve my chest workout?";\n        const next = clone(data);\n        next.aiUsage = { date: today, count: nextCount };\n        setData(next);\n        setMessages((m) => [...m, { role: "assistant", content: reply }]);\n        setBusy(false);\n        return;\n      }\n      const result = await generateCoachReply({'''
+    if ai_anchor not in s:
+        raise SystemExit("web-demo-v2: AI anchor not found")
+    s = s.replace(ai_anchor, ai_insert, 1)
+
     APP.write_text(s, encoding="utf-8")
 
 
 def patch_tiktok():
-    s = TIKTOK.read_text(encoding="utf-8")
-    if "FIFTYFIT_WEB_TIKTOK_V1" in s:
+    if not demo_enabled():
         return
-    replacement = '''import { registerPlugin, Capacitor } from "@capacitor/core";\n\nconst TikTokWebView = registerPlugin("TikTokWebView");\n\nfunction extractTikTokId(value) {\n  const raw = String(value || "").trim();\n  if (/^\\d{15,}$/.test(raw)) return raw;\n  const match = raw.match(/(?:\\/video\\/|data-video-id=["'])(\\d{15,})/i);\n  return match ? match[1] : null;\n}\n\nfunction ensureOverlay() {\n  let root = document.getElementById("fiftyfit-web-tiktok-overlay");\n  if (root) return root;\n  root = document.createElement("div");\n  root.id = "fiftyfit-web-tiktok-overlay";\n  root.setAttribute("role", "dialog");\n  root.setAttribute("aria-modal", "true");\n  root.style.cssText = "position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column;overscroll-behavior:contain;";\n  document.body.appendChild(root);\n  return root;\n}\n\nexport async function openTikTokWebView(url) {\n  const value = String(url || "").trim();\n  if (!/^https?:\\/\\//i.test(value) && !/^\\d{15,}$/.test(value)) {\n    throw new Error("TikTok WebView requires an http(s) URL or post id");\n  }\n  if (Capacitor.isNativePlatform()) return TikTokWebView.open({ url: value });\n\n  let id = extractTikTokId(value);\n  if (!id && /^https?:\\/\\//i.test(value)) {\n    try {\n      const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(value)}`);\n      if (response.ok) {\n        const data = await response.json();\n        id = extractTikTokId(data?.html || "") || String(data?.video_id || "").match(/\\d{15,}/)?.[0] || null;\n      }\n    } catch (_) {}\n  }\n  if (!id) {\n    window.open(value, "_blank", "noopener,noreferrer");\n    return { external: true };\n  }\n\n  const root = ensureOverlay();\n  root.innerHTML = "";\n  const bar = document.createElement("div");\n  bar.style.cssText = "height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;color:#fff;font:700 14px system-ui,sans-serif;flex:none;";\n  const title = document.createElement("div");\n  title.textContent = "Fifty Fit · Exercise Video";\n  const close = document.createElement("button");\n  close.type = "button";\n  close.textContent = "×";\n  close.setAttribute("aria-label", "Close video");\n  close.style.cssText = "width:38px;height:38px;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;font-size:28px;line-height:1;cursor:pointer;";\n  close.onclick = () => root.remove();\n  bar.append(title, close);\n\n  const frameWrap = document.createElement("div");\n  frameWrap.style.cssText = "flex:1;min-height:0;display:flex;justify-content:center;background:#000;overflow:hidden;";\n  const iframe = document.createElement("iframe");\n  iframe.src = `https://www.tiktok.com/player/v1/${id}?autoplay=1&controls=1&description=1&fullscreen_button=1&progress_bar=1&play_button=1&volume_control=1`;\n  iframe.title = "Fifty Fit exercise video";\n  iframe.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";\n  iframe.allowFullscreen = true;\n  iframe.referrerPolicy = "strict-origin-when-cross-origin";\n  iframe.style.cssText = "height:100%;width:min(100%,430px);border:0;background:#000;";\n  frameWrap.appendChild(iframe);\n  root.append(bar, frameWrap);\n\n  const escape = (event) => {\n    if (event.key === "Escape") { root.remove(); document.removeEventListener("keydown", escape); }\n  };\n  document.addEventListener("keydown", escape);\n  return { embedded: true, videoId: id };\n}\n\nexport const FIFTYFIT_WEB_TIKTOK_V1 = true;\n'''
-    TIKTOK.write_text(replacement, encoding="utf-8")
+    s = TIKTOK.read_text(encoding="utf-8")
+    if "FIFTYFIT_WEB_TIKTOK_V2" in s:
+        return
+    # Keep the existing native/browser player implementation; only tag this build
+    # once so the patch stays idempotent.
+    s = s + "\nexport const FIFTYFIT_WEB_TIKTOK_V2 = true;\n"
+    TIKTOK.write_text(s, encoding="utf-8")
 
 
 def main():
+    if not demo_enabled():
+        print("web demo patch skipped (VITE_WEB_DEMO != 1)")
+        return
     patch_main()
     patch_app()
     patch_tiktok()
-    print("web demo patches applied")
+    print("web demo runtime v2 applied")
+
 
 if __name__ == "__main__":
     main()

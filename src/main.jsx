@@ -219,3 +219,5 @@ createRoot(document.getElementById("root")).render(
     </StartupGate>
   </ErrorBoundary>
 );
+
+try { window.__FIFTYFIT_MARK_BOOT_OK__?.(); } catch (_) {}

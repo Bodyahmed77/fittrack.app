@@ -21,7 +21,25 @@
         -webkit-overflow-scrolling: touch;
       }
       * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+      #fiftyfit-boot-fallback { display:none; }
     </style>
+    <script>
+      (function () {
+        window.__FIFTYFIT_BOOT_OK__ = false;
+        window.__FIFTYFIT_MARK_BOOT_OK__ = function () {
+          window.__FIFTYFIT_BOOT_OK__ = true;
+          var node = document.getElementById("fiftyfit-boot-fallback");
+          if (node) node.remove();
+        };
+        function bootFallback() {
+          if (window.__FIFTYFIT_BOOT_OK__) return;
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount > 0) return;
+          root.innerHTML = '<div id="fiftyfit-boot-fallback" style="min-height:100%;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;padding:24px;font-family:system-ui,sans-serif;text-align:center"><div style="max-width:340px"><div style="font-size:22px;font-weight:900;margin-bottom:8px">Fifty Fit</div><div style="color:#aaa;font-size:13px;line-height:1.6">Fifty Fit could not start correctly. Please reload the page.</div><button onclick="location.reload()" style="margin-top:18px;width:100%;padding:13px 16px;border:0;border-radius:12px;background:#fff;color:#000;font-weight:900;font-size:14px">Reload</button></div></div>';
+        }
+        window.setTimeout(bootFallback, 20000);
+      })();
+    </script>
     <script>
       /* Lightweight runtime guard for the AI composer only. */
       (function () {
@@ -32,7 +50,6 @@
             return Math.max(0, Math.round(window.innerHeight - vv.height - (vv.offsetTop || 0)));
           } catch (_) { return 0; }
         }
-
         function findAiDrawer() {
           var target = document.activeElement;
           if (!target) return null;
@@ -45,7 +62,6 @@
           }
           return null;
         }
-
         function syncAiDrawer() {
           try {
             var inset = keyboardInset();
@@ -58,7 +74,6 @@
             drawer.style.setProperty("background", "#000000", "important");
           } catch (_) {}
         }
-
         try {
           var vv = window.visualViewport;
           if (vv) {

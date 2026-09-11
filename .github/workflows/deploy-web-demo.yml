@@ -2,7 +2,7 @@ name: Deploy Fifty Fit Web Demo
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/post-launch-demo-runtime]
     paths:
       - 'src/**'
       - 'public/**'
@@ -24,6 +24,9 @@ concurrency:
   group: pages-web-demo
   cancel-in-progress: true
 
+env:
+  VITE_WEB_DEMO: '1'
+
 jobs:
   build-and-deploy:
     environment:
@@ -31,7 +34,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Checkout current source
         uses: actions/checkout@v6
 
       - name: Set up Node.js
@@ -43,23 +46,25 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Apply web-demo patches
-        run: python3 scripts/patch-web-demo.py
+      - name: Build isolated demo
+        run: VITE_WEB_DEMO=1 npm run build
 
-      - name: Build web app
-        run: npm run build
-
-      - name: Keep admin dashboard in Pages artifact
-        run: rm -rf dist/admin && cp -R admin dist/admin
-
-      - name: Validate generated web demo output
+      - name: Assemble Pages artifact
         run: |
           set -euo pipefail
-          test -f dist/index.html
-          grep -q 'src="./assets/' dist/index.html || true
-          test -f dist/admin/index.html
-          test -f dist/assets/logo.png || test -d dist/assets
-          echo "Web demo artifact structure validated"
+          rm -rf dist/admin
+          cp -R admin dist/admin
+          cp dist/index.html dist/404.html
+
+      - name: Validate generated demo artifact
+        run: |
+          set -euo pipefail
+          test -s dist/index.html
+          test -s dist/404.html
+          test -s dist/admin/index.html
+          test -d dist/assets
+          grep -R "FIFTYFIT_WEB_DEMO_V4" dist/assets --include='*.js' >/dev/null
+          echo "Web demo artifact validated"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

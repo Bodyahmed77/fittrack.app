@@ -4,8 +4,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Keep Actions focused on the newest PR revision. Older in-flight validations
-# are superseded instead of leaving a long list of stale red runs.
 concurrency:
   group: fiftyfit-pr-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -56,6 +54,9 @@ jobs:
 
       - name: Validate Python scripts
         run: python3 -m py_compile scripts/*.py
+
+      - name: Validate nutrition macro math
+        run: python3 scripts/validate-nutrition-macro-math.py
 
       - name: Validate JavaScript syntax
         run: |

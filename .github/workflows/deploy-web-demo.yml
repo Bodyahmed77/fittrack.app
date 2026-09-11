@@ -63,7 +63,8 @@ jobs:
           test -s dist/404.html
           test -s dist/admin/index.html
           test -d dist/assets
-          grep -R "FIFTYFIT_WEB_DEMO_V5" dist/assets --include='*.js' >/dev/null
+          grep -R "fiftyfit:web-demo:v5" dist/assets --include='*.js' >/dev/null
+          grep -q 'assets/' dist/index.html
           echo "Web demo artifact validated"
 
       - name: Configure GitHub Pages

@@ -49,20 +49,18 @@ jobs:
       - name: Build demo app
         run: VITE_WEB_DEMO=1 npm run build
 
+      - name: Keep admin dashboard in Pages artifact
+        run: rm -rf dist/admin && cp -R admin dist/admin
+
       - name: Validate generated web demo output
         run: |
           set -euo pipefail
           test -f dist/index.html
           test -f dist/admin/index.html
+          test -f dist/404.html || cp dist/index.html dist/404.html
           test -d dist/assets
           grep -R "FIFTYFIT_WEB_DEMO" dist/assets --include='*.js' >/dev/null
           echo "Web demo artifact structure and demo marker validated"
-
-      - name: Keep admin dashboard in Pages artifact
-        run: rm -rf dist/admin && cp -R admin dist/admin
-
-      - name: Add GitHub Pages SPA fallback
-        run: cp dist/index.html dist/404.html
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

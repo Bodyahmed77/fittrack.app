@@ -76,11 +76,10 @@ jobs:
           from pathlib import Path
           html = Path('/tmp/fiftyfit-demo-dom.html').read_text(errors='replace')
           print('--- DOM smoke summary ---')
-          root = html.find('id="root"')
-          print('root marker:', root >= 0)
-          if root >= 0:
-              snippet = html[root:root + 3000]
-              print(snippet)
+          if 'data-fiftyfit-demo-mounted="1"' not in html:
+              print('Demo mounted marker missing.')
+              print(html[:12000])
+              raise SystemExit(1)
           if 'data-fiftyfit-demo-runtime-error="1"' in html:
               print('Web demo App runtime error detected:')
               print(html[:12000])
@@ -89,14 +88,15 @@ jobs:
               print('Web demo ErrorBoundary rendered unexpectedly:')
               print(html[:12000])
               raise SystemExit(1)
+          root = html.find('id="root"')
           if root < 0:
               raise SystemExit('Web demo root element missing')
           body_start = html.find('<body')
           body_end = html.find('</body>')
           body = html[body_start:body_end if body_end >= 0 else len(html)]
+          print(body[:5000])
           if len(body) < 500:
               print('Unexpectedly empty body after React runtime.')
-              print(body)
               raise SystemExit(1)
           print('Web demo runtime smoke test passed')
           PY

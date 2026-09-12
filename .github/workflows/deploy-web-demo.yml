@@ -77,9 +77,17 @@ jobs:
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
           "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' > /tmp/fiftyfit-demo-dom.html
+          if grep -q 'data-fiftyfit-demo-runtime-error="1"' /tmp/fiftyfit-demo-dom.html; then
+            echo 'Web demo App runtime error detected:'
+            cat /tmp/fiftyfit-demo-dom.html
+            echo 'Vite preview log:'
+            cat /tmp/fiftyfit-vite-preview.log
+            exit 1
+          fi
           grep -q "Demo Athlete" /tmp/fiftyfit-demo-dom.html
           if grep -q "Something went wrong" /tmp/fiftyfit-demo-dom.html; then
             echo "Web demo ErrorBoundary rendered unexpectedly"
+            cat /tmp/fiftyfit-demo-dom.html
             cat /tmp/fiftyfit-vite-preview.log
             exit 1
           fi

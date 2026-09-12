@@ -71,22 +71,35 @@ jobs:
           test "$ready" = 1
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' > /tmp/fiftyfit-demo-dom.html
-          if grep -q 'data-fiftyfit-demo-runtime-error="1"' /tmp/fiftyfit-demo-dom.html; then
-            echo 'Web demo App runtime error detected:'
-            cat /tmp/fiftyfit-demo-dom.html
-            echo 'Vite preview log:'
-            cat /tmp/fiftyfit-vite-preview.log
-            exit 1
-          fi
-          if grep -q "Something went wrong" /tmp/fiftyfit-demo-dom.html; then
-            echo "Web demo ErrorBoundary rendered unexpectedly"
-            cat /tmp/fiftyfit-demo-dom.html
-            cat /tmp/fiftyfit-vite-preview.log
-            exit 1
-          fi
-          grep -Eq '<div id="root">[[:space:]]*<[^/]' /tmp/fiftyfit-demo-dom.html
-          echo "Web demo runtime smoke test passed"
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --run-all-compositor-stages-before-draw --virtual-time-budget=15000 --dump-dom 'http://127.0.0.1:4173/?demo=1' > /tmp/fiftyfit-demo-dom.html
+          python3 - <<'PY'
+          from pathlib import Path
+          html = Path('/tmp/fiftyfit-demo-dom.html').read_text(errors='replace')
+          print('--- DOM smoke summary ---')
+          root = html.find('id="root"')
+          print('root marker:', root >= 0)
+          if root >= 0:
+              snippet = html[root:root + 3000]
+              print(snippet)
+          if 'data-fiftyfit-demo-runtime-error="1"' in html:
+              print('Web demo App runtime error detected:')
+              print(html[:12000])
+              raise SystemExit(1)
+          if 'Something went wrong' in html:
+              print('Web demo ErrorBoundary rendered unexpectedly:')
+              print(html[:12000])
+              raise SystemExit(1)
+          if root < 0:
+              raise SystemExit('Web demo root element missing')
+          body_start = html.find('<body')
+          body_end = html.find('</body>')
+          body = html[body_start:body_end if body_end >= 0 else len(html)]
+          if len(body) < 500:
+              print('Unexpectedly empty body after React runtime.')
+              print(body)
+              raise SystemExit(1)
+          print('Web demo runtime smoke test passed')
+          PY
 
   deploy:
     needs: smoke

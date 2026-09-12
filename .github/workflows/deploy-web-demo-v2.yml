@@ -1,0 +1,74 @@
+name: Deploy Fifty Fit Web Demo V2
+
+on:
+  push:
+    branches: [main, fix/launch-billing-ai-final]
+    paths:
+      - 'web-demo/**'
+      - 'vite.webdemo.config.js'
+      - '.github/workflows/deploy-web-demo-v2.yml'
+      - 'admin/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+concurrency:
+  group: fiftyfit-web-demo-v2
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build isolated demo
+        run: npx vite build --config vite.webdemo.config.js
+
+      - name: Validate demo artifact
+        run: |
+          set -euo pipefail
+          test -f dist-web-demo/index.html
+          test -d dist-web-demo/assets
+          grep -q 'Fifty Fit' dist-web-demo/index.html
+
+      - name: Assemble Pages artifact
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mv dist-web-demo dist
+          rm -rf dist/admin
+          cp -R admin dist/admin
+          cp dist/index.html dist/404.html
+          test -f dist/index.html
+          test -f dist/404.html
+          test -f dist/admin/index.html
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,1 @@
+CSS aligned with web-demo/main.js selectors in follow-up review.

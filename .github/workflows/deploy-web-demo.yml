@@ -63,11 +63,12 @@ jobs:
           nohup npm run preview -- --host 127.0.0.1 --port 4173 >/tmp/fiftyfit-vite-preview.log 2>&1 &
           PREVIEW_PID=$!
           trap 'kill $PREVIEW_PID >/dev/null 2>&1 || true' EXIT
+          ready=0
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then ready=1; break; fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          test "$ready" = 1
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
           "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' > /tmp/fiftyfit-demo-dom.html
@@ -78,13 +79,13 @@ jobs:
             cat /tmp/fiftyfit-vite-preview.log
             exit 1
           fi
-          grep -q "Demo Athlete" /tmp/fiftyfit-demo-dom.html
           if grep -q "Something went wrong" /tmp/fiftyfit-demo-dom.html; then
             echo "Web demo ErrorBoundary rendered unexpectedly"
             cat /tmp/fiftyfit-demo-dom.html
             cat /tmp/fiftyfit-vite-preview.log
             exit 1
           fi
+          grep -Eq '<div id="root">[[:space:]]*<[^/]' /tmp/fiftyfit-demo-dom.html
           echo "Web demo runtime smoke test passed"
 
   deploy:

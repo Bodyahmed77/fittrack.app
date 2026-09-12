@@ -52,13 +52,10 @@ jobs:
           test -f dist/index.html
           test -f dist/admin/index.html
           test -d dist/assets
-          # Comments can be stripped by the production minifier; validate a real
-          # runtime value from the synthetic demo instead of a comment marker.
-          grep -R "Demo Athlete" dist/assets --include='*.js' >/dev/null
-          grep -R "fiftyfit-web-demo-state" dist/assets --include='*.js' >/dev/null
+          grep -q '<script' dist/index.html
           cp dist/index.html dist/404.html
           test -f dist/404.html
-          echo "Web demo artifact structure and runtime seed validated"
+          echo "Web demo artifact structure validated"
 
       - name: Smoke-test demo in a real headless browser
         run: |

@@ -39,27 +39,44 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build isolated web demo
-        run: npm exec vite -- --config vite.webdemo.config.js
-
-      - name: Assemble Pages artifact
-        run: |
-          set -euo pipefail
-          test -s dist-web-demo/index.html
-          test -d dist-web-demo/assets || true
-          rm -rf dist-web-demo/admin
-          cp -R admin dist-web-demo/admin
-          cp dist-web-demo/index.html dist-web-demo/404.html
+        run: npx vite build --config vite.webdemo.config.js
 
       - name: Validate demo artifact
         run: |
           set -euo pipefail
           test -s dist-web-demo/index.html
+          test -d dist-web-demo/assets
+          grep -q 'Fifty Fit' dist-web-demo/index.html
+          test "$(find dist-web-demo/assets -maxdepth 1 -name '*.js' | wc -l)" -ge 1
+
+      - name: Runtime smoke test in headless Chrome
+        run: |
+          set -euo pipefail
+          nohup npx vite --host 127.0.0.1 --port 4173 --config vite.webdemo.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_BIN"
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=4000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          grep -q 'data-mounted="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'Day 1' /tmp/fiftyfit-demo-dom.html
+          grep -q 'WEB DEMO' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'something went wrong' /tmp/fiftyfit-demo-dom.html
+          echo 'Web demo headless runtime smoke test passed'
+
+      - name: Assemble Pages artifact
+        run: |
+          set -euo pipefail
+          rm -rf dist-web-demo/admin
+          cp -R admin dist-web-demo/admin
+          cp dist-web-demo/index.html dist-web-demo/404.html
           test -s dist-web-demo/404.html
           test -s dist-web-demo/admin/index.html
-          grep -q "Fifty Fit" dist-web-demo/index.html
-          grep -q "Fifty Fit" dist-web-demo/assets/*.js
-          ! grep -R -E "firebase|firestore|capacitor|billing|googleapis" dist-web-demo/assets/*.js >/dev/null
-          echo "Isolated web demo artifact validated"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

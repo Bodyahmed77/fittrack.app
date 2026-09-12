@@ -58,6 +58,14 @@ jobs:
       - name: Validate nutrition macro math
         run: python3 scripts/validate-nutrition-macro-math.py
 
+      - name: Validate subscription notification date parsing
+        run: |
+          set -euo pipefail
+          grep -q 'patch-subscription-reminder-date.py' package.json
+          ! grep -q 'expiresAtISO + "T10:00:00"' src/App.jsx
+          grep -q 'Number.isFinite(parsed.getTime())' scripts/patch-subscription-reminder-date.py
+          echo 'Subscription expiry reminder date hardening validated.'
+
       - name: Validate JavaScript syntax
         run: |
           node --check src/googleAuth.js

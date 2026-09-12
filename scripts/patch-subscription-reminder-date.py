@@ -52,7 +52,10 @@ pattern = re.compile(
 replacement = NEW + '\nfunction authErrorMessage'
 if not pattern.search(s):
     raise SystemExit("subscription reminder function anchor not found")
-s2 = pattern.sub(replacement, s, count=1)
+# Use a callable replacement because NEW intentionally contains backslashes
+# in a JavaScript regex literal; re.sub would otherwise interpret them as
+# replacement-template escapes.
+s2 = pattern.sub(lambda _match: replacement, s, count=1)
 if s2 == s:
     raise SystemExit("subscription reminder patch made no change")
 APP.write_text(s2, encoding="utf-8")

@@ -1,6 +1,8 @@
 name: Validate Fifty Fit PR
 
 on:
+  push:
+    branches: [fix/launch-billing-ai-final]
   pull_request:
   workflow_dispatch:
 
@@ -62,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           grep -q 'patch-subscription-reminder-date.py' package.json
-          ! grep -q 'expiresAtISO + "T10:00:00"' src/App.jsx
+          ! grep -q 'expiresAtISO T10:00:00' src/App.jsx
           grep -q 'Number.isFinite(parsed.getTime())' scripts/patch-subscription-reminder-date.py
           echo 'Subscription expiry reminder date hardening validated.'
 
@@ -84,6 +86,7 @@ jobs:
           assert root['devDependencies']['vite'] == p['devDependencies']['vite']
           assert root['dependencies']['@capacitor/network'] == p['dependencies']['@capacitor/network']
           assert root['dependencies']['@capacitor/status-bar'] == p['dependencies']['@capacitor/status-bar']
+          assert root['devDependencies']['@capacitor/cli'] == p['devDependencies']['@capacitor/cli']
           print('package.json/package-lock.json consistency passed')
           PY
 

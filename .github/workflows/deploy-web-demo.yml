@@ -57,10 +57,33 @@ jobs:
           set -euo pipefail
           test -f dist/index.html
           test -f dist/admin/index.html
-          test -f dist/404.html || cp dist/index.html dist/404.html
           test -d dist/assets
           grep -R "FIFTYFIT_WEB_DEMO" dist/assets --include='*.js' >/dev/null
+          cp dist/index.html dist/404.html
+          test -f dist/404.html
           echo "Web demo artifact structure and demo marker validated"
+
+      - name: Smoke-test demo in a real headless browser
+        run: |
+          set -euo pipefail
+          nohup npm run preview -- --host 127.0.0.1 --port 4173 >/tmp/fiftyfit-vite-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill $PREVIEW_PID >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_BIN"
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' > /tmp/fiftyfit-demo-dom.html
+          grep -q "Demo Athlete" /tmp/fiftyfit-demo-dom.html
+          if grep -q "Something went wrong" /tmp/fiftyfit-demo-dom.html; then
+            echo "Web demo ErrorBoundary rendered unexpectedly"
+            cat /tmp/fiftyfit-vite-preview.log
+            exit 1
+          fi
+          echo "Web demo runtime smoke test passed"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

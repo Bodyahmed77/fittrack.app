@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'scripts/**'
+      - 'docs/**'
       - 'package.json'
       - 'package-lock.json'
       - 'vite.config.js'
@@ -42,16 +43,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # IMPORTANT: the public demo is the real Fifty Fit React app, not a
-      # separately reimplemented UI. The build-time adapter supplies a
-      # synthetic local account and disables production auth/billing/backend
-      # side effects while keeping the exact production App.jsx UI and flows.
+      # The public demo is the real Fifty Fit React app, not a reimplemented UI.
+      # VITE_WEB_DEMO only replaces native/auth/backend side effects with local
+      # demo adapters while keeping the canonical App.jsx/CSS/components/flows.
       - name: Build the canonical Fifty Fit app in web-demo mode
         env:
           VITE_WEB_DEMO: '1'
         run: npm run build
 
-      - name: Validate demo artifact
+      - name: Validate canonical demo artifact
         run: |
           set -euo pipefail
           test -s dist/index.html
@@ -71,20 +71,89 @@ jobs:
           curl -fsS http://127.0.0.1:4173/ >/dev/null
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=6000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-dom.html
+
+          # The actual app now lives at /demo/; this avoids replacing the
+          # public Pages root with the app itself.
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=6000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
           grep -q 'Fifty Fit' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'حصل خطأ غير متوقع' /tmp/fiftyfit-demo-dom.html
           echo 'Canonical Fifty Fit web demo runtime smoke test passed'
 
-      - name: Assemble Pages artifact
+      - name: Assemble GitHub Pages site
         run: |
           set -euo pipefail
+
+          # Preserve the built real app as the public Web Demo.
+          mkdir -p dist/demo
+          cp dist/index.html dist/demo/index.html
+
+          # Keep the existing admin tool and legal pages available as stable URLs.
           rm -rf dist/admin
           cp -R admin dist/admin
-          cp dist/index.html dist/404.html
-          test -s dist/404.html
+          cp docs/privacy-policy.html dist/privacy-policy.html
+          cp docs/account-deletion.html dist/account-deletion.html
+
+          # Reuse the exact app artifact for SPA fallback under the demo path.
+          cp dist/demo/index.html dist/404.html
+
+          # Replace the Pages root with the small public launcher page so the
+          # first URL no longer opens the Web Demo automatically.
+          cat > dist/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta name="theme-color" content="#000">
+            <title>Fifty Fit — Official Links</title>
+            <style>
+              :root{color-scheme:dark}
+              *{box-sizing:border-box}
+              body{margin:0;min-height:100vh;background:#000;color:#fff;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;padding:24px}
+              .wrap{width:min(520px,100%)}
+              .brand{text-align:center;margin-bottom:28px}
+              .logo{width:72px;height:72px;margin:0 auto 16px;border-radius:22px;background:#fff;color:#000;display:grid;place-items:center;font-size:30px;font-weight:1000;letter-spacing:-2px}
+              h1{margin:0;font-size:30px;letter-spacing:-.8px}
+              p{margin:10px 0 0;color:#999;line-height:1.6;font-size:14px}
+              .links{display:grid;gap:12px}
+              a{display:flex;align-items:center;justify-content:space-between;text-decoration:none;color:#fff;background:#111;border:1px solid #272727;border-radius:16px;padding:17px 18px;transition:.16s ease}
+              a:hover{transform:translateY(-1px);background:#151515;border-color:#3a3a3a}
+              .title{font-weight:800;font-size:15px}
+              .desc{margin-top:3px;color:#8f8f8f;font-size:12px}
+              .arrow{font-size:20px;color:#aaa;margin-left:12px}
+              .footer{text-align:center;color:#666;font-size:11px;margin-top:22px}
+            </style>
+          </head>
+          <body>
+            <main class="wrap">
+              <section class="brand">
+                <div class="logo">50</div>
+                <h1>Fifty Fit</h1>
+                <p>Official web links for the Fifty Fit app.</p>
+              </section>
+              <section class="links">
+                <a href="./demo/?demo=1"><span><div class="title">Web Demo</div><div class="desc">Try the real Fifty Fit UI in your browser</div></span><span class="arrow">→</span></a>
+                <a href="./admin/"><span><div class="title">Admin Panel</div><div class="desc">Fifty Fit administration</div></span><span class="arrow">→</span></a>
+                <a href="./privacy-policy.html"><span><div class="title">Privacy Policy</div><div class="desc">How Fifty Fit handles user data</div></span><span class="arrow">→</span></a>
+                <a href="./account-deletion.html"><span><div class="title">Account Deletion</div><div class="desc">Request account and data deletion</div></span><span class="arrow">→</span></a>
+              </section>
+              <div class="footer">Fifty Fit · Official project links</div>
+            </main>
+          </body>
+          </html>
+          HTML
+
+          # Validate all public entry points before deployment.
+          test -s dist/index.html
+          test -s dist/demo/index.html
           test -s dist/admin/index.html
+          test -s dist/privacy-policy.html
+          test -s dist/account-deletion.html
+          grep -q 'Web Demo' dist/index.html
+          grep -q 'Admin Panel' dist/index.html
+          grep -q 'Privacy Policy' dist/index.html
+          grep -q 'Account Deletion' dist/index.html
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

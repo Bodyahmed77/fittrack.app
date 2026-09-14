@@ -44,8 +44,8 @@ jobs:
         run: npm ci --ignore-scripts
 
       # The public demo is the real Fifty Fit React app, not a reimplemented UI.
-      # VITE_WEB_DEMO only replaces native/auth/backend side effects with local
-      # demo adapters while keeping the canonical App.jsx/CSS/components/flows.
+      # VITE_WEB_DEMO swaps only native/backend side effects for safe browser
+      # adapters while keeping the canonical App.jsx/CSS/components/flows.
       - name: Build the canonical Fifty Fit app in web-demo mode
         env:
           VITE_WEB_DEMO: '1'
@@ -62,17 +62,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Preserve the built real app as the public Web Demo.
           rm -rf dist/demo
           mkdir -p dist/demo
           cp dist/index.html dist/demo/index.html
-
-          # The release Vite build uses a relative base. Because the demo lives
-          # one directory below the Pages root, it needs its own asset directory
-          # so ./assets/... resolves correctly from /demo/.
           cp -R dist/assets dist/demo/assets
 
-          # Keep the existing admin tool and legal pages available as stable URLs.
           rm -rf dist/admin
           mkdir -p dist/admin
           cp -R admin/. dist/admin/
@@ -80,12 +74,8 @@ jobs:
           cp docs/account-deletion.html dist/account-deletion.html
           touch dist/.nojekyll
 
-          # Reuse the exact app artifact for SPA fallback under the demo path.
           cp dist/demo/index.html dist/404.html
 
-          # Root launcher. Preserve the old ?demo=1 URL as a compatibility alias
-          # so anyone who already has the previous demo link is forwarded to the
-          # canonical /demo/ route instead of seeing the launcher page.
           cat > dist/index.html <<'HTML'
           <!doctype html>
           <html lang="en">
@@ -136,7 +126,6 @@ jobs:
           </html>
           HTML
 
-          # Validate all public entry points before deployment.
           test -s dist/index.html
           test -s dist/demo/index.html
           test -s dist/demo/assets
@@ -158,41 +147,36 @@ jobs:
           nohup npx vite preview --host 127.0.0.1 --port 4173 --config vite.release.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
           VITE_PID=$!
           trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
+
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:4173/demo/ >/dev/null; then break; fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:4173/ >/dev/null
           curl -fsS http://127.0.0.1:4173/demo/ >/dev/null
-          curl -fsS http://127.0.0.1:4173/demo/assets/ >/dev/null || true
-          curl -fsS http://127.0.0.1:4173/admin/ >/dev/null
-          curl -fsS http://127.0.0.1:4173/privacy-policy.html >/dev/null
-          curl -fsS http://127.0.0.1:4173/account-deletion.html >/dev/null
 
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
 
-          # Canonical demo: real App.jsx + production styles/components, with a
-          # clean browser profile and a phone-sized viewport.
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-clean-profile --window-size=390,844 --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
-          grep -q 'Fifty Fit' /tmp/fiftyfit-demo-dom.html
+          # IMPORTANT: Fifty Fit itself sets data-fiftyfit-demo-ready="1" only
+          # after GymApp reaches the real in-app phase. Checking only the text
+          # "Fifty Fit" would falsely pass on the Suspense/startup shell.
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-clean-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          grep -q 'data-fiftyfit-demo-mode="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'data-fiftyfit-demo-ready="1"' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'حصل خطأ غير متوقع' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'Your data was not deleted' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'FF-[A-Z0-9]' /tmp/fiftyfit-demo-dom.html
-          echo 'Canonical Fifty Fit web demo runtime smoke test passed'
+          echo 'Canonical Fifty Fit web demo: real GymApp render verified in Chrome'
 
-          # Compatibility alias: Chrome may return a non-zero status after the
-          # JavaScript location.replace() completes a navigation. Treat that
-          # browser exit status as non-authoritative and validate the resulting DOM.
+          # Compatibility alias validation. The alias only verifies navigation;
+          # the canonical /demo/ URL above is the real browser-render assertion.
           set +e
           "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-alias-profile --window-size=390,844 --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-alias-dom.html
           CHROME_ALIAS_STATUS=$?
           set -e
           test -s /tmp/fiftyfit-demo-alias-dom.html
           grep -q 'Fifty Fit' /tmp/fiftyfit-demo-alias-dom.html
-          ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-alias-dom.html
-          ! grep -qi 'Your data was not deleted' /tmp/fiftyfit-demo-alias-dom.html
           echo "Compatibility alias DOM validation passed (Chrome exit=$CHROME_ALIAS_STATUS)"
 
       - name: Configure GitHub Pages
@@ -207,29 +191,37 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify deployed GitHub Pages site
+      - name: Verify deployed GitHub Pages site in headless Chrome
         run: |
           set -euo pipefail
           PAGE_URL='${{ steps.deployment.outputs.page_url }}'
           test -n "$PAGE_URL"
 
-          # Wait for Pages/CDN propagation and verify the actual public site,
-          # not only the local pre-deployment preview.
+          PUBLIC_DEMO_URL="${PAGE_URL}demo/?demo=1&deploy=${GITHUB_SHA}"
           for i in $(seq 1 30); do
-            if curl -fsS "${PAGE_URL}demo/?demo=1&deploy=${GITHUB_SHA}" >/tmp/public-demo.html; then
+            if curl -fsS "$PUBLIC_DEMO_URL" >/tmp/public-demo.html; then
               if grep -q 'Fifty Fit' /tmp/public-demo.html; then break; fi
             fi
             sleep 2
           done
-
           grep -q 'Fifty Fit' /tmp/public-demo.html
           ! grep -qi 'Something went wrong' /tmp/public-demo.html
           ! grep -qi 'Your data was not deleted' /tmp/public-demo.html
           ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo.html
+
+          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_BIN"
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-public-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom "$PUBLIC_DEMO_URL" >/tmp/public-demo-dom.html
+          grep -q 'data-fiftyfit-demo-mode="1"' /tmp/public-demo-dom.html
+          grep -q 'data-fiftyfit-demo-ready="1"' /tmp/public-demo-dom.html
+          ! grep -qi 'Something went wrong' /tmp/public-demo-dom.html
+          ! grep -qi 'حصل خطأ غير متوقع' /tmp/public-demo-dom.html
+          ! grep -qi 'Your data was not deleted' /tmp/public-demo-dom.html
+          ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo-dom.html
 
           curl -fsS "${PAGE_URL}admin/" >/tmp/public-admin.html
           grep -q '<title>Fifty Fit' /tmp/public-admin.html || grep -qi 'Fifty Fit' /tmp/public-admin.html
           curl -fsS "${PAGE_URL}privacy-policy.html" >/dev/null
           curl -fsS "${PAGE_URL}account-deletion.html" >/dev/null
 
-          echo "Public GitHub Pages verification passed: ${PAGE_URL}demo/"
+          echo "Public GitHub Pages browser verification passed: ${PAGE_URL}demo/"

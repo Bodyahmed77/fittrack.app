@@ -58,28 +58,6 @@ jobs:
           test "$(find dist/assets -maxdepth 1 -type f | wc -l)" -ge 1
           grep -q 'Fifty Fit' dist/index.html
 
-      - name: Runtime smoke test in headless Chrome
-        run: |
-          set -euo pipefail
-          nohup npx vite preview --host 127.0.0.1 --port 4173 --config vite.release.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
-          VITE_PID=$!
-          trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:4173/ >/dev/null
-          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
-          test -n "$CHROME_BIN"
-
-          # The actual app now lives at /demo/; this avoids replacing the
-          # public Pages root with the app itself.
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=6000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
-          grep -q 'Fifty Fit' /tmp/fiftyfit-demo-dom.html
-          ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-dom.html
-          ! grep -qi 'حصل خطأ غير متوقع' /tmp/fiftyfit-demo-dom.html
-          echo 'Canonical Fifty Fit web demo runtime smoke test passed'
-
       - name: Assemble GitHub Pages site
         run: |
           set -euo pipefail
@@ -154,6 +132,32 @@ jobs:
           grep -q 'Admin Panel' dist/index.html
           grep -q 'Privacy Policy' dist/index.html
           grep -q 'Account Deletion' dist/index.html
+
+      - name: Runtime smoke test in headless Chrome
+        run: |
+          set -euo pipefail
+          nohup npx vite preview --host 127.0.0.1 --port 4173 --config vite.release.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          curl -fsS http://127.0.0.1:4173/demo/ >/dev/null
+          curl -fsS http://127.0.0.1:4173/admin/ >/dev/null
+          curl -fsS http://127.0.0.1:4173/privacy-policy.html >/dev/null
+          curl -fsS http://127.0.0.1:4173/account-deletion.html >/dev/null
+
+          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_BIN"
+
+          # This is the canonical production App.jsx running in web-demo mode.
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=6000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          grep -q 'Fifty Fit' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'حصل خطأ غير متوقع' /tmp/fiftyfit-demo-dom.html
+          echo 'Canonical Fifty Fit web demo runtime smoke test passed'
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

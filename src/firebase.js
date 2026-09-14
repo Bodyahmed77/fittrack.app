@@ -19,24 +19,27 @@ const firebaseConfig = {
   measurementId: "G-7S75NTCV5B",
 };
 
+const webDemoMode =
+  typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;
+
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 
-// Auth persistence must settle before the app interprets the auth observer's
-// first value. Without this readiness barrier a slow/hibernated Android WebView
-// can momentarily look signed-out while IndexedDB persistence is still loading.
-export const authPersistenceReady = setPersistence(
-  auth,
-  indexedDBLocalPersistence,
-).catch((error) => {
-  console.warn("[Firebase Auth] IndexedDB persistence unavailable", error);
-  return null;
-});
+// The public web demo never needs auth persistence. Skipping IndexedDB here
+// avoids Safari/private-browsing failures while preserving normal native/web
+// account persistence for the actual application.
+export const authPersistenceReady = webDemoMode
+  ? Promise.resolve()
+  : setPersistence(auth, indexedDBLocalPersistence).catch((error) => {
+      console.warn("[Firebase Auth] IndexedDB persistence unavailable", error);
+      return null;
+    });
 
-// Firestore keeps a local cache so a returning user can render their last known
-// account/workout state immediately while the live listener reconnects.
-// The fallback keeps older/unsupported WebViews functional instead of crashing.
+// The public demo never reads/writes Firestore. Avoid constructing the
+// persistent cache in that mode; restrictive browser storage policies must not
+// be able to crash the otherwise local demo shell.
 export const db = (() => {
+  if (webDemoMode) return getFirestore(firebaseApp);
   try {
     return initializeFirestore(firebaseApp, {
       localCache: persistentLocalCache(),

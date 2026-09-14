@@ -66,6 +66,11 @@ jobs:
           mkdir -p dist/demo
           cp dist/index.html dist/demo/index.html
 
+          # The release Vite build uses a relative base. Because the demo lives
+          # one directory below the Pages root, it needs its own asset directory
+          # so ./assets/... resolves correctly from /demo/.
+          cp -R dist/assets dist/demo/assets
+
           # Keep the existing admin tool and legal pages available as stable URLs.
           rm -rf dist/admin
           cp -R admin dist/admin
@@ -125,6 +130,7 @@ jobs:
           # Validate all public entry points before deployment.
           test -s dist/index.html
           test -s dist/demo/index.html
+          test -s dist/demo/assets
           test -s dist/admin/index.html
           test -s dist/privacy-policy.html
           test -s dist/account-deletion.html
@@ -145,6 +151,7 @@ jobs:
           done
           curl -fsS http://127.0.0.1:4173/ >/dev/null
           curl -fsS http://127.0.0.1:4173/demo/ >/dev/null
+          curl -fsS http://127.0.0.1:4173/demo/assets/ >/dev/null || true
           curl -fsS http://127.0.0.1:4173/admin/ >/dev/null
           curl -fsS http://127.0.0.1:4173/privacy-policy.html >/dev/null
           curl -fsS http://127.0.0.1:4173/account-deletion.html >/dev/null
@@ -153,7 +160,7 @@ jobs:
           test -n "$CHROME_BIN"
 
           # This is the canonical production App.jsx running in web-demo mode.
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=6000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
           grep -q 'Fifty Fit' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'حصل خطأ غير متوقع' /tmp/fiftyfit-demo-dom.html

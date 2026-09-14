@@ -7,13 +7,12 @@ or production entitlements.
 """
 from pathlib import Path
 import os
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "src" / "App.jsx"
 MAIN = ROOT / "src" / "main.jsx"
 TIKTOK = ROOT / "src" / "tiktokWebView.js"
-MARKER = "FIFTYFIT_WEB_DEMO_V5"
+MARKER = "FIFTYFIT_WEB_DEMO_V6"
 
 
 def enabled():
@@ -25,7 +24,7 @@ def patch_main():
     if MARKER in s:
         return
 
-    demo_block = '''/* FIFTYFIT_WEB_DEMO_V5 */
+    demo_block = '''/* FIFTYFIT_WEB_DEMO_V6 */
 const FIFTYFIT_WEB_DEMO_MODE = typeof window !== "undefined" &&
   (import.meta.env?.VITE_WEB_DEMO === "1" || new URLSearchParams(window.location.search).get("demo") === "1");
 if (FIFTYFIT_WEB_DEMO_MODE) {
@@ -40,7 +39,14 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   })();
-  const key = "fiftyfit:web-demo:v5";
+  // v6 intentionally isolates the public demo from every previous demo-state
+  // schema. A bad/stale browser value must never be able to crash the app on boot.
+  const key = "fiftyfit:web-demo:v6";
+  try {
+    for (const oldKey of ["fiftyfit:web-demo:v3", "fiftyfit:web-demo:v4", "fiftyfit:web-demo:v5"]) {
+      localStorage.removeItem(oldKey);
+    }
+  } catch (_) {}
   const seed = {
     onboarded: true,
     workoutStartDate: todayDate,
@@ -60,7 +66,11 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
   };
   try {
     const raw = localStorage.getItem(key);
-    window.__FIFTYFIT_DEMO_INITIAL__ = raw ? JSON.parse(raw) : seed;
+    const parsed = raw ? JSON.parse(raw) : null;
+    // Only reuse structurally valid demo state. Transient/error-only values are discarded.
+    window.__FIFTYFIT_DEMO_INITIAL__ = parsed && typeof parsed === "object" && parsed.account && parsed.entitlements
+      ? parsed
+      : seed;
   } catch (_) {
     window.__FIFTYFIT_DEMO_INITIAL__ = seed;
   }
@@ -69,7 +79,7 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
 '''
     app_import = 'const App = React.lazy(() => import("./App.jsx"));'
     if app_import not in s:
-        raise SystemExit("web-demo-v5: App import marker not found")
+        raise SystemExit("web-demo-v6: App import marker not found")
     s = s.replace(app_import, demo_block + app_import, 1)
     MAIN.write_text(s, encoding="utf-8")
 
@@ -85,26 +95,25 @@ def patch_app():
     return { uid: "web-demo", email: "demo@fiftyfit.app", isWebDemo: true, providerData: [] };
   }'''
     if auth_marker not in s:
-        raise SystemExit("web-demo-v5: session marker not found")
+        raise SystemExit("web-demo-v6: session marker not found")
     s = s.replace(auth_marker, auth_replacement, 1)
 
-    # Demo still reuses the canonical Firestore hook, but short-circuits before
-    # any listener/network call and persists only to browser localStorage.
     data_ref = 'function useAppData(uid) {'
     if data_ref not in s:
-        raise SystemExit("web-demo-v5: app data marker not found")
+        raise SystemExit("web-demo-v6: app data marker not found")
     start = s.index(data_ref)
     effect = s.find('\n  useEffect(() => {', start)
     if effect < 0:
-        raise SystemExit("web-demo-v5: app data effect not found")
+        raise SystemExit("web-demo-v6: app data effect not found")
     demo_prelude = '''function useAppData(uid) {
   const demoMode = typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;
   const [data, setDataRaw] = useState(() => {
     if (!demoMode) return freshState();
     try {
-      const raw = localStorage.getItem("fiftyfit:web-demo:v5");
+      const raw = localStorage.getItem("fiftyfit:web-demo:v6");
       const seed = raw ? JSON.parse(raw) : (window.__FIFTYFIT_DEMO_INITIAL__ || freshState());
       const base = freshState();
+      if (!seed || typeof seed !== "object") return window.__FIFTYFIT_DEMO_INITIAL__ || base;
       return {
         ...base, ...seed,
         account: { ...base.account, ...(seed.account || {}) },
@@ -137,7 +146,7 @@ def patch_app():
     }
     if (!uid) {'''
     if gate not in s:
-        raise SystemExit("web-demo-v5: app data effect gate not found")
+        raise SystemExit("web-demo-v6: app data effect gate not found")
     s = s.replace(gate, gate2, 1)
     s = s.replace('  }, [uid]);\n\n  const setVerifiedEntitlements', '  }, [uid, demoMode]);\n\n  const setVerifiedEntitlements', 1)
 
@@ -146,13 +155,13 @@ def patch_app():
       if (demoMode) {
         const clean = { ...next, isWebDemoSeed: true, updatedAt: new Date().toISOString() };
         setDataRaw(clean);
-        try { localStorage.setItem("fiftyfit:web-demo:v5", JSON.stringify(clean)); } catch (_) {}
+        try { localStorage.setItem("fiftyfit:web-demo:v6", JSON.stringify(clean)); } catch (_) {}
         return true;
       }
       if (!uid) return true;
       const previous = data;'''
     if setdata not in s:
-        raise SystemExit("web-demo-v5: setData marker not found")
+        raise SystemExit("web-demo-v6: setData marker not found")
     s = s.replace(setdata, setdata2, 1)
     s = s.replace('    [uid, data],\n  );', '    [uid, data, demoMode],\n  );', 1)
 
@@ -216,7 +225,7 @@ def patch_app():
     try {
       const result = await generateCoachReply({'''
     if ai_anchor not in s:
-        raise SystemExit("web-demo-v5: AI anchor not found")
+        raise SystemExit("web-demo-v6: AI anchor not found")
     s = s.replace(ai_anchor, ai_demo, 1)
 
     s = f"/* {MARKER} */\n" + s
@@ -237,7 +246,7 @@ def main():
     patch_main()
     patch_app()
     patch_tiktok()
-    print("web demo v5 applied")
+    print("web demo v6 applied")
 
 if __name__ == "__main__":
     main()

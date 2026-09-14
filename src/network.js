@@ -1,16 +1,20 @@
 // ============================================================
 // Fifty Fit App — Network / Internet Connectivity
 // ============================================================
-// Provides a single, reliable source of truth for "is the device online?"
-// Native Capacitor networking remains the preferred path for the Android/iOS
-// application. The public Web Demo intentionally stays on the browser signal
-// so a browser plugin shim can never break initial rendering.
+// Native Capacitor networking remains the preferred path for the real
+// Android/iOS application. The public Web Demo uses only browser signals.
 // ============================================================
 
+// IMPORTANT: imported modules execute before main.jsx can set a runtime
+// window flag. Demo detection therefore must be available at module-evaluation
+// time via Vite's build constant and the URL query itself.
+const WEB_DEMO_BUILD = import.meta.env?.VITE_WEB_DEMO === "1";
 const isWebDemo = () =>
-  typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;
+  WEB_DEMO_BUILD ||
+  (typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("demo") === "1");
 
-// Lazily resolve the Capacitor Network plugin for the real native app.
+// Lazily resolve the Capacitor Network plugin only for the real native app.
 let networkPluginPromise = null;
 function getNetworkPlugin() {
   if (isWebDemo()) return Promise.resolve(null);
@@ -20,7 +24,7 @@ function getNetworkPlugin() {
         const mod = await import("@capacitor/network");
         const plugin = mod.Network;
         return plugin && typeof plugin.getStatus === "function" ? plugin : null;
-      } catch (e) {
+      } catch (_) {
         return null;
       }
     })();
@@ -40,7 +44,6 @@ async function useCapacitorNetwork() {
 }
 
 export async function isOnline() {
-  // The public demo is self-contained; use the browser signal only.
   if (isWebDemo()) {
     return typeof navigator !== "undefined" ? Boolean(navigator.onLine) : true;
   }
@@ -67,7 +70,6 @@ export function watchNetwork(callback) {
 
   const cleanups = [];
 
-  // Never import/register the native Network plugin in the public demo.
   if (!isWebDemo()) {
     getNetworkPlugin().then((plugin) => {
       if (!plugin) return;

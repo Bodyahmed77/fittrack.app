@@ -19,15 +19,20 @@ const firebaseConfig = {
   measurementId: "G-7S75NTCV5B",
 };
 
+// IMPORTANT: imported modules execute before main.jsx can set a runtime
+// window flag. Therefore demo detection must be available at module-evaluation
+// time via Vite's build constant and the URL query itself.
 const webDemoMode =
-  typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;
+  import.meta.env?.VITE_WEB_DEMO === "1" ||
+  (typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("demo") === "1");
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 
 // The public web demo never needs auth persistence. Skipping IndexedDB here
-// avoids Safari/private-browsing failures while preserving normal native/web
-// account persistence for the actual application.
+// avoids browser/private-mode storage failures while preserving normal native
+// persistence for the actual application.
 export const authPersistenceReady = webDemoMode
   ? Promise.resolve()
   : setPersistence(auth, indexedDBLocalPersistence).catch((error) => {
@@ -36,8 +41,8 @@ export const authPersistenceReady = webDemoMode
     });
 
 // The public demo never reads/writes Firestore. Avoid constructing the
-// persistent cache in that mode; restrictive browser storage policies must not
-// be able to crash the otherwise local demo shell.
+// persistent cache in that mode; browser storage policies must not be able to
+// break the otherwise local demo shell.
 export const db = (() => {
   if (webDemoMode) return getFirestore(firebaseApp);
   try {

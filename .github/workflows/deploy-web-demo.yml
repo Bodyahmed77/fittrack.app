@@ -136,10 +136,6 @@ jobs:
           grep -q 'Account Deletion' dist/index.html
           ! grep -q 'nutrition-builder-ux.js' dist/admin/boot-v2.js
 
-      # Deployment itself is intentionally the first browser-facing test. The
-      # hosted runner repeatedly failed to keep local background HTTP servers
-      # alive (both Vite preview and python http.server). A successful public
-      # headless-Chrome check below is therefore the authoritative runtime gate.
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
@@ -165,6 +161,7 @@ jobs:
             fi
             sleep 2
           done
+          test -s /tmp/public-demo.html
           grep -q 'Fifty Fit' /tmp/public-demo.html
           ! grep -qi 'Something went wrong' /tmp/public-demo.html
           ! grep -qi 'Your data was not deleted' /tmp/public-demo.html
@@ -172,7 +169,17 @@ jobs:
 
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-public-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom "$PUBLIC_DEMO_URL" >/tmp/public-demo-dom.html
+
+          # Chromium may return a non-zero process status on Pages navigation
+          # even when --dump-dom produced the complete hydrated DOM. The DOM
+          # assertions are authoritative; preserve the exit code only as a
+          # diagnostic so it cannot mask a real render failure.
+          set +e
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-extensions --user-data-dir=/tmp/fiftyfit-public-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom "$PUBLIC_DEMO_URL" >/tmp/public-demo-dom.html 2>/tmp/public-demo-chrome.stderr
+          CHROME_STATUS=$?
+          set -e
+
+          test -s /tmp/public-demo-dom.html
           grep -q 'data-fiftyfit-demo-mode="1"' /tmp/public-demo-dom.html
           grep -q 'data-fiftyfit-demo-ready="1"' /tmp/public-demo-dom.html
           ! grep -qi 'Something went wrong' /tmp/public-demo-dom.html
@@ -180,9 +187,9 @@ jobs:
           ! grep -qi 'Your data was not deleted' /tmp/public-demo-dom.html
           ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo-dom.html
 
+          echo "Public GitHub Pages browser verification passed: ${PAGE_URL}demo/ (Chrome exit=${CHROME_STATUS})"
+
           curl -fsS "${PAGE_URL}admin/" >/tmp/public-admin.html
           grep -q '<title>Fifty Fit' /tmp/public-admin.html || grep -qi 'Fifty Fit' /tmp/public-admin.html
           curl -fsS "${PAGE_URL}privacy-policy.html" >/dev/null
           curl -fsS "${PAGE_URL}account-deletion.html" >/dev/null
-
-          echo "Public GitHub Pages browser verification passed: ${PAGE_URL}demo/"

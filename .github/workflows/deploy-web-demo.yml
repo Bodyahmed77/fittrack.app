@@ -63,6 +63,7 @@ jobs:
           set -euo pipefail
 
           # Preserve the built real app as the public Web Demo.
+          rm -rf dist/demo
           mkdir -p dist/demo
           cp dist/index.html dist/demo/index.html
 
@@ -73,9 +74,11 @@ jobs:
 
           # Keep the existing admin tool and legal pages available as stable URLs.
           rm -rf dist/admin
-          cp -R admin dist/admin
+          mkdir -p dist/admin
+          cp -R admin/. dist/admin/
           cp docs/privacy-policy.html dist/privacy-policy.html
           cp docs/account-deletion.html dist/account-deletion.html
+          touch dist/.nojekyll
 
           # Reuse the exact app artifact for SPA fallback under the demo path.
           cp dist/demo/index.html dist/404.html
@@ -143,6 +146,7 @@ jobs:
           test -s dist/admin/nutrition-builder.js
           test -s dist/privacy-policy.html
           test -s dist/account-deletion.html
+          test -f dist/.nojekyll
           grep -q 'Web Demo' dist/index.html
           grep -q 'Admin Panel' dist/index.html
           grep -q 'Account Deletion' dist/index.html

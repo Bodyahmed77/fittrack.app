@@ -80,8 +80,9 @@ jobs:
           # Reuse the exact app artifact for SPA fallback under the demo path.
           cp dist/demo/index.html dist/404.html
 
-          # Replace the Pages root with the small public launcher page so the
-          # first URL no longer opens the Web Demo automatically.
+          # Root launcher. Preserve the old ?demo=1 URL as a compatibility alias
+          # so anyone who already has the previous demo link is forwarded to the
+          # canonical /demo/ route instead of seeing the launcher page.
           cat > dist/index.html <<'HTML'
           <!doctype html>
           <html lang="en">
@@ -123,6 +124,11 @@ jobs:
               </section>
               <div class="footer">Fifty Fit · Official project links</div>
             </main>
+            <script>
+              if (new URLSearchParams(location.search).get('demo') === '1') {
+                location.replace('./demo/?demo=1');
+              }
+            </script>
           </body>
           </html>
           HTML
@@ -132,12 +138,15 @@ jobs:
           test -s dist/demo/index.html
           test -s dist/demo/assets
           test -s dist/admin/index.html
+          test -s dist/admin/app.js
+          test -s dist/admin/boot-v2.js
+          test -s dist/admin/nutrition-builder.js
           test -s dist/privacy-policy.html
           test -s dist/account-deletion.html
           grep -q 'Web Demo' dist/index.html
           grep -q 'Admin Panel' dist/index.html
-          grep -q 'Privacy Policy' dist/index.html
           grep -q 'Account Deletion' dist/index.html
+          ! grep -q 'nutrition-builder-ux.js' dist/admin/boot-v2.js
 
       - name: Runtime smoke test in headless Chrome
         run: |
@@ -159,12 +168,21 @@ jobs:
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
 
-          # This is the canonical production App.jsx running in web-demo mode.
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          # Canonical demo: real App.jsx + production styles/components, with a
+          # clean browser profile and a phone-sized viewport.
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-clean-profile --window-size=390,844 --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
           grep -q 'Fifty Fit' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'حصل خطأ غير متوقع' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'Your data was not deleted' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'FF-[A-Z0-9]' /tmp/fiftyfit-demo-dom.html
           echo 'Canonical Fifty Fit web demo runtime smoke test passed'
+
+          # Compatibility alias: the previously documented ?demo=1 URL must land
+          # on the same canonical demo rather than the launcher page.
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-alias-profile --window-size=390,844 --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-alias-dom.html
+          grep -q 'Fifty Fit' /tmp/fiftyfit-demo-alias-dom.html
+          ! grep -qi 'Something went wrong' /tmp/fiftyfit-demo-alias-dom.html
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

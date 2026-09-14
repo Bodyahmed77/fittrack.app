@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "src" / "App.jsx"
 MAIN = ROOT / "src" / "main.jsx"
 TIKTOK = ROOT / "src" / "tiktokWebView.js"
-MARKER = "FIFTYFIT_WEB_DEMO_V6"
+MARKER = "FIFTYFIT_WEB_DEMO_V7"
 
 
 def enabled():
@@ -24,7 +24,7 @@ def patch_main():
     if MARKER in s:
         return
 
-    demo_block = '''/* FIFTYFIT_WEB_DEMO_V6 */
+    demo_block = '''/* FIFTYFIT_WEB_DEMO_V7 */
 const FIFTYFIT_WEB_DEMO_MODE = typeof window !== "undefined" &&
   (import.meta.env?.VITE_WEB_DEMO === "1" || new URLSearchParams(window.location.search).get("demo") === "1");
 if (FIFTYFIT_WEB_DEMO_MODE) {
@@ -39,11 +39,11 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   })();
-  // v6 intentionally isolates the public demo from every previous demo-state
+  // v7 intentionally isolates the public demo from every previous demo-state
   // schema. A bad/stale browser value must never be able to crash the app on boot.
-  const key = "fiftyfit:web-demo:v6";
+  const key = "fiftyfit:web-demo:v7";
   try {
-    for (const oldKey of ["fiftyfit:web-demo:v3", "fiftyfit:web-demo:v4", "fiftyfit:web-demo:v5"]) {
+    for (const oldKey of ["fiftyfit:web-demo:v3", "fiftyfit:web-demo:v4", "fiftyfit:web-demo:v5", "fiftyfit:web-demo:v6"]) {
       localStorage.removeItem(oldKey);
     }
   } catch (_) {}
@@ -67,7 +67,6 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
   try {
     const raw = localStorage.getItem(key);
     const parsed = raw ? JSON.parse(raw) : null;
-    // Only reuse structurally valid demo state. Transient/error-only values are discarded.
     window.__FIFTYFIT_DEMO_INITIAL__ = parsed && typeof parsed === "object" && parsed.account && parsed.entitlements
       ? parsed
       : seed;
@@ -79,7 +78,7 @@ if (FIFTYFIT_WEB_DEMO_MODE) {
 '''
     app_import = 'const App = React.lazy(() => import("./App.jsx"));'
     if app_import not in s:
-        raise SystemExit("web-demo-v6: App import marker not found")
+        raise SystemExit("web-demo-v7: App import marker not found")
     s = s.replace(app_import, demo_block + app_import, 1)
     MAIN.write_text(s, encoding="utf-8")
 
@@ -92,25 +91,28 @@ def patch_app():
     auth_marker = 'function useFirebaseSession() {'
     auth_replacement = '''function useFirebaseSession() {
   if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {
+    // Keep a synthetic signed-in identity so the real app can render all of
+    // its normal in-app surfaces (including AI Coach), but never expose it to
+    // auth/Firestore/native side effects below.
     return { uid: "web-demo", email: "demo@fiftyfit.app", isWebDemo: true, providerData: [] };
   }'''
     if auth_marker not in s:
-        raise SystemExit("web-demo-v6: session marker not found")
+        raise SystemExit("web-demo-v7: session marker not found")
     s = s.replace(auth_marker, auth_replacement, 1)
 
     data_ref = 'function useAppData(uid) {'
     if data_ref not in s:
-        raise SystemExit("web-demo-v6: app data marker not found")
+        raise SystemExit("web-demo-v7: app data marker not found")
     start = s.index(data_ref)
     effect = s.find('\n  useEffect(() => {', start)
     if effect < 0:
-        raise SystemExit("web-demo-v6: app data effect not found")
+        raise SystemExit("web-demo-v7: app data effect not found")
     demo_prelude = '''function useAppData(uid) {
   const demoMode = typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;
   const [data, setDataRaw] = useState(() => {
     if (!demoMode) return freshState();
     try {
-      const raw = localStorage.getItem("fiftyfit:web-demo:v6");
+      const raw = localStorage.getItem("fiftyfit:web-demo:v7");
       const seed = raw ? JSON.parse(raw) : (window.__FIFTYFIT_DEMO_INITIAL__ || freshState());
       const base = freshState();
       if (!seed || typeof seed !== "object") return window.__FIFTYFIT_DEMO_INITIAL__ || base;
@@ -146,7 +148,7 @@ def patch_app():
     }
     if (!uid) {'''
     if gate not in s:
-        raise SystemExit("web-demo-v6: app data effect gate not found")
+        raise SystemExit("web-demo-v7: app data effect gate not found")
     s = s.replace(gate, gate2, 1)
     s = s.replace('  }, [uid]);\n\n  const setVerifiedEntitlements', '  }, [uid, demoMode]);\n\n  const setVerifiedEntitlements', 1)
 
@@ -155,78 +157,77 @@ def patch_app():
       if (demoMode) {
         const clean = { ...next, isWebDemoSeed: true, updatedAt: new Date().toISOString() };
         setDataRaw(clean);
-        try { localStorage.setItem("fiftyfit:web-demo:v6", JSON.stringify(clean)); } catch (_) {}
+        try { localStorage.setItem("fiftyfit:web-demo:v7", JSON.stringify(clean)); } catch (_) {}
         return true;
       }
       if (!uid) return true;
       const previous = data;'''
     if setdata not in s:
-        raise SystemExit("web-demo-v6: setData marker not found")
+        raise SystemExit("web-demo-v7: setData marker not found")
     s = s.replace(setdata, setdata2, 1)
     s = s.replace('    [uid, data],\n  );', '    [uid, data, demoMode],\n  );', 1)
 
     billing_gate = '    if (!firebaseUser || !loaded) return undefined;\n    let cancelled = false;'
-    billing_gate2 = '    if (!firebaseUser || !loaded || (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__)) return undefined;\n    let cancelled = false;'
+    billing_gate2 = '    if (demoMode || !firebaseUser || !loaded) return undefined;\n    let cancelled = false;'
     if billing_gate in s:
         s = s.replace(billing_gate, billing_gate2, 1)
 
-    purchase_anchor = '''    setBusy(true);\n    try {\n      // 1) Try real Google Play Billing.'''
-    purchase_demo = '''    setBusy(true);
-    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {
-      try {
-        const next = clone(data);
-        next.entitlements = { ...(next.entitlements || {}) };
-        if (planId === "training" || planId === "both") next.entitlements.trainingPro = true;
-        if (planId === "nutrition" || planId === "both") next.entitlements.nutritionPro = true;
-        if (planId === "ai" || planId === "both") next.entitlements.aiCoachPro = true;
-        const expiry = new Date();
-        expiry.setDate(expiry.getDate() + 30);
-        next.entitlements.proExpiresAt = expiry.toISOString();
-        await setData(next);
-        setSuccessModal({ kind: "demo", plan: planId, duration: durationId });
-      } catch (error) {
-        console.error("[Fifty Fit Demo] simulated purchase failed", error);
-        showToast(ar ? "حصل خطأ في تجربة الـDemo" : "Demo action failed");
-      } finally { setBusy(false); }
-      return;
-    }
-    try {
-      // 1) Try real Google Play Billing.'''
-    if purchase_anchor in s:
-        s = s.replace(purchase_anchor, purchase_demo, 1)
+    root_marker = 'export default function GymApp() {\n  const [online, setOnline] = useNetworkStatus();'
+    root_replacement = '''export default function GymApp() {
+  const demoMode = typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__ === true;
+  const [online, setOnline] = useNetworkStatus();'''
+    if root_marker not in s:
+        raise SystemExit("web-demo-v7: root marker not found")
+    s = s.replace(root_marker, root_replacement, 1)
 
-    ai_anchor = '''    setBusy(true);\n    try {\n      const result = await generateCoachReply({'''
-    ai_demo = '''    setBusy(true);
-    if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {
-      try {
-        const currentCount = data?.aiUsage?.date === today ? Number(data?.aiUsage?.count || 0) : 0;
-        const limit = data?.entitlements?.aiCoachPro ? 50 : 3;
-        if (currentCount >= limit) {
-          showToast(ar ? `خلصت ${limit} رسائل الـDemo لليوم` : `Demo limit reached (${limit} messages today)`);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 400));
-        const q = textMsg.toLowerCase();
-        const reply = /(protein|بروتين|muscle|عضل|عضلات)/i.test(q)
-          ? (ar ? "لبناء العضلات، ركّز على بروتين كافٍ وتمرين مقاومة منتظم ونوم جيد. وزّع البروتين على وجباتك وسجّل تقدمك أسبوعيًا." : "For muscle gain, prioritize adequate protein, consistent resistance training, and good sleep. Spread protein across meals and track your weekly progress.")
-          : /(weight|وزن|calorie|سعرات|تنشيف|cut)/i.test(q)
-          ? (ar ? "لخسارة الدهون، استخدم عجز سعرات معتدل وتابع متوسط وزنك أسبوعيًا، مع الحفاظ على تمارين المقاومة والبروتين." : "For fat loss, use a moderate calorie deficit and judge progress from your weekly weight trend while keeping resistance training and adequate protein.")
-          : (ar ? "أنا Demo Coach في Fifty Fit. اسألني عن التمرين، التغذية، البروتين، السعرات، أو زيادة العضلات." : "I’m the Fifty Fit Demo Coach. Ask me about training, nutrition, protein, calories, or muscle gain.");
-        setMessages((m) => [...m, { role: "assistant", content: reply }]);
-        const next = clone(data);
-        next.aiUsage = { date: today, count: currentCount + 1 };
-        await setData(next);
-      } catch (error) {
-        console.error("[Fifty Fit Demo] AI simulation failed", error);
-        showToast(ar ? "تعذر تشغيل Demo Coach" : "Demo Coach failed to respond");
-      } finally { setBusy(false); }
+    admin_gate = '''  useEffect(() => {
+    if (!firebaseUser) {'''
+    admin_gate2 = '''  useEffect(() => {
+    if (demoMode || !firebaseUser) {'''
+    if admin_gate not in s:
+        raise SystemExit("web-demo-v7: admin effect marker not found")
+    s = s.replace(admin_gate, admin_gate2, 1)
+    s = s.replace('  }, [firebaseUser]);\n\n  useEffect(() => {\n    if (demoMode || !firebaseUser || !loaded)', '  }, [firebaseUser, demoMode]);\n\n  useEffect(() => {\n    if (demoMode || !firebaseUser || !loaded)', 1)
+
+    phase_marker = '''  useEffect(() => {
+    if (!localLang && !savedLanguage) {'''
+    phase_replacement = '''  useEffect(() => {
+    if (demoMode) {
+      setPhase("app");
+      return;
+    }
+    if (!localLang && !savedLanguage) {'''
+    if phase_marker not in s:
+        raise SystemExit("web-demo-v7: phase effect marker not found")
+    s = s.replace(phase_marker, phase_replacement, 1)
+    s = s.replace('  }, [firebaseUser, loaded, writePending, saveError, localLang, savedLanguage, data.onboarded]);', '  }, [demoMode, firebaseUser, loaded, writePending, saveError, localLang, savedLanguage, data.onboarded]);', 1)
+
+    back_marker = '''  useEffect(() => {
+    let listenerHandle;
+    CapApp.addListener("backButton", () => {'''
+    back_replacement = '''  useEffect(() => {
+    if (demoMode) return undefined;
+    let listenerHandle;
+    CapApp.addListener("backButton", () => {'''
+    if back_marker not in s:
+        raise SystemExit("web-demo-v7: back-button effect marker not found")
+    s = s.replace(back_marker, back_replacement, 1)
+    s = s.replace('  }, [phase, screen, navHistory, confirmLogoutOpen, aiDrawerOpen]); // eslint-disable-line', '  }, [demoMode, phase, screen, navHistory, confirmLogoutOpen, aiDrawerOpen]); // eslint-disable-line', 1)
+
+    logout_marker = '''  const doLogout = async () => {
+    try {
+      await signOut(auth);'''
+    logout_replacement = '''  const doLogout = async () => {
+    if (demoMode) {
+      setConfirmLogoutOpen(false);
+      setToast("");
+      showToast(lang === "ar" ? "الوضع التجريبي لا يسجل خروجًا" : "Web Demo stays signed in");
       return;
     }
     try {
-      const result = await generateCoachReply({'''
-    if ai_anchor not in s:
-        raise SystemExit("web-demo-v6: AI anchor not found")
-    s = s.replace(ai_anchor, ai_demo, 1)
+      await signOut(auth);'''
+    if logout_marker in s:
+        s = s.replace(logout_marker, logout_replacement, 1)
 
     s = f"/* {MARKER} */\n" + s
     APP.write_text(s, encoding="utf-8")
@@ -246,7 +247,7 @@ def main():
     patch_main()
     patch_app()
     patch_tiktok()
-    print("web demo v6 applied")
+    print("web demo v7 applied")
 
 if __name__ == "__main__":
     main()

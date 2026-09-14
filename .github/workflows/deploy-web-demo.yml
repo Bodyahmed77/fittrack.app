@@ -20,6 +20,9 @@ permissions:
   pages: write
   id-token: write
 
+env:
+  FF_BROWSER_TIMEOUT: '30'
+
 concurrency:
   group: pages-web-demo
   cancel-in-progress: true
@@ -149,12 +152,14 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Verify deployed GitHub Pages site in headless Chrome
+        id: browser_verify
         run: |
           set -euo pipefail
           PAGE_URL='${{ steps.deployment.outputs.page_url }}'
           test -n "$PAGE_URL"
 
           PUBLIC_DEMO_URL="${PAGE_URL}demo/?demo=1&deploy=${GITHUB_SHA}"
+          echo "PUBLIC_DEMO_URL=$PUBLIC_DEMO_URL"
           for i in $(seq 1 30); do
             if curl -fsS "$PUBLIC_DEMO_URL" >/tmp/public-demo.html; then
               if grep -q 'Fifty Fit' /tmp/public-demo.html; then break; fi
@@ -163,29 +168,35 @@ jobs:
           done
           test -s /tmp/public-demo.html
           grep -q 'Fifty Fit' /tmp/public-demo.html
-          ! grep -qi 'Something went wrong' /tmp/public-demo.html
-          ! grep -qi 'Your data was not deleted' /tmp/public-demo.html
-          ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo.html
 
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
 
-          # Chromium may return a non-zero process status on Pages navigation
-          # even when --dump-dom produced the complete hydrated DOM. The DOM
-          # assertions are authoritative; preserve the exit code only as a
-          # diagnostic so it cannot mask a real render failure.
+          rm -f /tmp/public-demo-dom.html /tmp/public-demo-chrome.stderr
           set +e
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-extensions --user-data-dir=/tmp/fiftyfit-public-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom "$PUBLIC_DEMO_URL" >/tmp/public-demo-dom.html 2>/tmp/public-demo-chrome.stderr
+          timeout "${FF_BROWSER_TIMEOUT}s" "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-extensions --disable-background-networking --user-data-dir=/tmp/fiftyfit-public-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom "$PUBLIC_DEMO_URL" >/tmp/public-demo-dom.html 2>/tmp/public-demo-chrome.stderr
           CHROME_STATUS=$?
           set -e
 
-          test -s /tmp/public-demo-dom.html
-          grep -q 'data-fiftyfit-demo-mode="1"' /tmp/public-demo-dom.html
-          grep -q 'data-fiftyfit-demo-ready="1"' /tmp/public-demo-dom.html
-          ! grep -qi 'Something went wrong' /tmp/public-demo-dom.html
-          ! grep -qi 'حصل خطأ غير متوقع' /tmp/public-demo-dom.html
-          ! grep -qi 'Your data was not deleted' /tmp/public-demo-dom.html
-          ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo-dom.html
+          echo "Chrome exit status: $CHROME_STATUS"
+          echo "DOM bytes: $(wc -c </tmp/public-demo-dom.html || true)"
+          echo "DOM demo markers:"
+          grep -o 'data-fiftyfit-demo-[a-z-]*="[^"]*"' /tmp/public-demo-dom.html | sort -u || true
+          echo "DOM title/root excerpt:"
+          grep -o '<title>[^<]*</title>' /tmp/public-demo-dom.html | head -5 || true
+          sed -n '1,80p' /tmp/public-demo-dom.html | head -80 || true
+          echo "DOM error indicators:"
+          grep -oi 'Something went wrong\|حصل خطأ غير متوقع\|Your data was not deleted\|FF-[A-Z0-9]*' /tmp/public-demo-dom.html | head -20 || true
+          echo "Chrome stderr:"
+          cat /tmp/public-demo-chrome.stderr || true
+
+          test -s /tmp/public-demo-dom.html || { echo 'FAIL: Chrome produced no DOM'; exit 1; }
+          grep -q 'data-fiftyfit-demo-mode="1"' /tmp/public-demo-dom.html || { echo 'FAIL: demo mode marker missing'; exit 1; }
+          grep -q 'data-fiftyfit-demo-ready="1"' /tmp/public-demo-dom.html || { echo 'FAIL: demo ready marker missing'; exit 1; }
+          ! grep -qi 'Something went wrong' /tmp/public-demo-dom.html || { echo 'FAIL: English crash screen rendered'; exit 1; }
+          ! grep -qi 'حصل خطأ غير متوقع' /tmp/public-demo-dom.html || { echo 'FAIL: Arabic crash screen rendered'; exit 1; }
+          ! grep -qi 'Your data was not deleted' /tmp/public-demo-dom.html || { echo 'FAIL: destructive-action recovery screen rendered'; exit 1; }
+          ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo-dom.html || { echo 'FAIL: error ID rendered'; exit 1; }
 
           echo "Public GitHub Pages browser verification passed: ${PAGE_URL}demo/ (Chrome exit=${CHROME_STATUS})"
 
@@ -193,3 +204,16 @@ jobs:
           grep -q '<title>Fifty Fit' /tmp/public-admin.html || grep -qi 'Fifty Fit' /tmp/public-admin.html
           curl -fsS "${PAGE_URL}privacy-policy.html" >/dev/null
           curl -fsS "${PAGE_URL}account-deletion.html" >/dev/null
+
+      - name: Upload browser diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-demo-browser-diagnostics-${{ github.sha }}
+          path: |
+            /tmp/public-demo.html
+            /tmp/public-demo-dom.html
+            /tmp/public-demo-chrome.stderr
+            /tmp/public-admin.html
+          if-no-files-found: ignore
+          retention-days: 7

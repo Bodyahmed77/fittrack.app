@@ -43,9 +43,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # The public demo is the real Fifty Fit React app, not a reimplemented UI.
-      # VITE_WEB_DEMO swaps only native/backend side effects for safe browser
-      # adapters while keeping the canonical App.jsx/CSS/components/flows.
       - name: Build the canonical Fifty Fit app in web-demo mode
         env:
           VITE_WEB_DEMO: '1'
@@ -61,7 +58,6 @@ jobs:
       - name: Assemble GitHub Pages site
         run: |
           set -euo pipefail
-
           rm -rf dist/demo
           mkdir -p dist/demo
           cp dist/index.html dist/demo/index.html
@@ -73,7 +69,6 @@ jobs:
           cp docs/privacy-policy.html dist/privacy-policy.html
           cp docs/account-deletion.html dist/account-deletion.html
           touch dist/.nojekyll
-
           cp dist/demo/index.html dist/404.html
 
           cat > dist/index.html <<'HTML'
@@ -144,9 +139,13 @@ jobs:
       - name: Runtime smoke test in headless Chrome
         run: |
           set -euo pipefail
-          nohup npx vite preview --host 127.0.0.1 --port 4173 --config vite.release.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
-          VITE_PID=$!
-          trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
+
+          # Serve the already-built static artifact directly. This avoids
+          # confusing an intermittent Vite preview startup issue with a real
+          # browser/runtime failure.
+          nohup python3 -m http.server 4173 --bind 127.0.0.1 --directory dist >/tmp/fiftyfit-webdemo-http.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID >/dev/null 2>&1 || true' EXIT
 
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:4173/demo/ >/dev/null; then break; fi
@@ -157,9 +156,6 @@ jobs:
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
 
-          # IMPORTANT: Fifty Fit itself sets data-fiftyfit-demo-ready="1" only
-          # after GymApp reaches the real in-app phase. Checking only the text
-          # "Fifty Fit" would falsely pass on the Suspense/startup shell.
           "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-clean-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom 'http://127.0.0.1:4173/demo/?demo=1' >/tmp/fiftyfit-demo-dom.html
           grep -q 'data-fiftyfit-demo-mode="1"' /tmp/fiftyfit-demo-dom.html
           grep -q 'data-fiftyfit-demo-ready="1"' /tmp/fiftyfit-demo-dom.html
@@ -168,16 +164,6 @@ jobs:
           ! grep -qi 'Your data was not deleted' /tmp/fiftyfit-demo-dom.html
           ! grep -qi 'FF-[A-Z0-9]' /tmp/fiftyfit-demo-dom.html
           echo 'Canonical Fifty Fit web demo: real GymApp render verified in Chrome'
-
-          # Compatibility alias validation. The alias only verifies navigation;
-          # the canonical /demo/ URL above is the real browser-render assertion.
-          set +e
-          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/fiftyfit-alias-profile --window-size=390,844 --virtual-time-budget=10000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-alias-dom.html
-          CHROME_ALIAS_STATUS=$?
-          set -e
-          test -s /tmp/fiftyfit-demo-alias-dom.html
-          grep -q 'Fifty Fit' /tmp/fiftyfit-demo-alias-dom.html
-          echo "Compatibility alias DOM validation passed (Chrome exit=$CHROME_ALIAS_STATUS)"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

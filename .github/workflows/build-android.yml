@@ -198,7 +198,7 @@ jobs:
           print('Native Billing + TikTok bridge validation passed')
           PY
 
-      - name: Sign Android release
+      - name: Prepare Android release signing
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -208,6 +208,9 @@ jobs:
           set -euo pipefail
           test -n "${KEYSTORE_B64:-}" || { echo 'ANDROID_KEYSTORE_BASE64 secret is missing'; exit 1; }
           printf '%s' "$KEYSTORE_B64" | base64 -d > android/fiftyfit-release.keystore
+          chmod 600 android/fiftyfit-release.keystore
+          keytool -list -v -keystore android/fiftyfit-release.keystore -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" >/tmp/fiftyfit-keystore.txt
+          grep -q "Alias name: $KEY_ALIAS" /tmp/fiftyfit-keystore.txt
           printf '\nandroid.useAndroidX=true\nandroid.enableJetifier=true\n' >> android/gradle.properties
           python3 - <<'PY'
           from pathlib import Path
@@ -219,6 +222,7 @@ jobs:
               s = s.replace('buildTypes {', '''buildTypes {\n        release {\n            signingConfig signingConfigs.release\n        }\n''', 1)
           p.write_text(s, encoding='utf-8')
           PY
+          echo 'Android release keystore and alias/password preflight passed'
 
       - name: Preflight billing release metadata
         run: |
@@ -236,8 +240,16 @@ jobs:
 
       - name: Build signed Android release
         working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          test -f fiftyfit-release.keystore
+          test -n "${KEYSTORE_PASSWORD:-}"
+          test -n "${KEY_ALIAS:-}"
+          test -n "${KEY_PASSWORD:-}"
           chmod +x ./gradlew
           timeout 20m ./gradlew bundleRelease assembleRelease --no-daemon --stacktrace
 

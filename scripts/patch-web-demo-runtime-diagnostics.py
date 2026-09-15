@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
-"""Demo-only runtime diagnostics.
+"""Demo-only runtime crash diagnostics.
 
-This does not change the native Android build. In web-demo builds it exposes the
-raw React error + component stack on <html> so CI can identify the real runtime
-crash instead of only seeing the hashed FF-* error id.
+Runs only for VITE_WEB_DEMO=1. It instruments the real app entry/ErrorBoundary
+so the deployed demo exposes the raw React exception, stack, and component
+stack in data-* attributes for CI diagnostics. Native Android source behavior
+is unchanged.
 """
 from pathlib import Path
 import os
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src" / "main.jsx"
-APP = ROOT / "src" / "App.jsx"
-MARKER = "FIFTYFIT_WEB_DEMO_RUNTIME_DIAGNOSTICS_V1"
+MARKER = "FIFTYFIT_WEB_DEMO_RUNTIME_DIAGNOSTICS_V3"
 
 if os.environ.get("VITE_WEB_DEMO") != "1":
     raise SystemExit(0)
-
-
-def esc_js(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("\"", "\\\"")
 
 
 def patch_main():
@@ -26,58 +22,57 @@ def patch_main():
     if MARKER in s:
         return
 
+    # The actual ErrorBoundary lives in main.jsx. Keep the diagnostic guard
+    # based on the build constant/query instead of a late runtime flag.
     anchor = 'async function applySystemBarColors(dark = true) {'
     if anchor not in s:
         raise SystemExit("runtime diagnostics: main anchor not found")
 
-    block = '''/* FIFTYFIT_WEB_DEMO_RUNTIME_DIAGNOSTICS_V1 */
-if (typeof window !== "undefined" && window.__FIFTYFIT_DEMO_MODE__) {
-  window.__FIFTYFIT_DEMO_RUNTIME_ERRORS__ = [];
-  const recordDemoRuntimeError = (type, error, stack = "") => {
-    try {
+    block = f'''/* {MARKER} */
+if (typeof window !== "undefined" && (import.meta.env?.VITE_WEB_DEMO === "1" || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1"))) {{
+  window.__FIFTYFIT_DEMO_RUNTIME_ERRORS__ = window.__FIFTYFIT_DEMO_RUNTIME_ERRORS__ || [];
+  const __ffDemoRecordRuntimeError = (type, error, stack = "") => {{
+    try {{
       const message = String(error?.message || error || "Unknown runtime error");
       const normalizedStack = String(stack || error?.stack || "");
-      const payload = { type, message, stack: normalizedStack.slice(0, 12000) };
+      const payload = {{ type, message, stack: normalizedStack.slice(0, 12000) }};
       window.__FIFTYFIT_DEMO_RUNTIME_ERRORS__.push(payload);
       const html = document.documentElement;
       html.dataset.fiftyfitDemoRuntimeError = message.slice(0, 1500);
       html.dataset.fiftyfitDemoRuntimeStack = normalizedStack.slice(0, 5000);
-    } catch (_) {}
-  };
-  window.addEventListener("error", (event) => recordDemoRuntimeError("window.error", event?.error || event?.message, event?.error?.stack));
-  window.addEventListener("unhandledrejection", (event) => recordDemoRuntimeError("unhandledrejection", event?.reason, event?.reason?.stack));
-}
+    }} catch (_) {{}}
+  }};
+  window.addEventListener("error", (event) => __ffDemoRecordRuntimeError("window.error", event?.error || event?.message, event?.error?.stack));
+  window.addEventListener("unhandledrejection", (event) => __ffDemoRecordRuntimeError("unhandledrejection", event?.reason, event?.reason?.stack));
+}}
 
 '''
     s = s.replace(anchor, block + anchor, 1)
-    MAIN.write_text(s, encoding="utf-8")
 
-
-def patch_app():
-    s = APP.read_text(encoding="utf-8")
-    if MARKER in s:
-        return
-
-    anchor = '  static getDerivedStateFromError(error) {\n    return { error };\n  }'
-    replacement = '''  static getDerivedStateFromError(error) {
-    try {
-      if (typeof document !== "undefined" && window?.__FIFTYFIT_DEMO_MODE__) {
+    get_derived = '''  static getDerivedStateFromError(error) {
+    return { error };
+  }'''
+    get_derived_repl = f'''  static getDerivedStateFromError(error) {{
+    try {{
+      if (typeof document !== "undefined" && (import.meta.env?.VITE_WEB_DEMO === "1" || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1"))) {{
         const html = document.documentElement;
         html.dataset.fiftyfitDemoRuntimeError = String(error?.message || error || "Unknown runtime error").slice(0, 1500);
         html.dataset.fiftyfitDemoRuntimeStack = String(error?.stack || "").slice(0, 5000);
-      }
-    } catch (_) {}
-    return { error };
-  }'''
-    if anchor not in s:
-        raise SystemExit("runtime diagnostics: ErrorBoundary anchor not found")
-    s = s.replace(anchor, replacement, 1)
+      }}
+    }} catch (_) {{}}
+    return {{ error }};
+  }}'''
+    if get_derived not in s:
+        raise SystemExit("runtime diagnostics: ErrorBoundary getDerivedStateFromError anchor not found")
+    s = s.replace(get_derived, get_derived_repl, 1)
 
-    anchor2 = '  componentDidCatch(error, info) {\n    console.error("App crashed:", error, info);\n  }'
-    replacement2 = '''  componentDidCatch(error, info) {
+    did_catch = '''  componentDidCatch(error, info) {
+    console.error("App crashed:", error, info);
+  }'''
+    did_catch_repl = '''  componentDidCatch(error, info) {
     console.error("App crashed:", error, info);
     try {
-      if (typeof document !== "undefined" && window?.__FIFTYFIT_DEMO_MODE__) {
+      if (typeof document !== "undefined" && (import.meta.env?.VITE_WEB_DEMO === "1" || (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1"))) {
         const html = document.documentElement;
         html.dataset.fiftyfitDemoRuntimeError = String(error?.message || error || "Unknown runtime error").slice(0, 1500);
         html.dataset.fiftyfitDemoRuntimeStack = String(error?.stack || "").slice(0, 5000);
@@ -85,12 +80,12 @@ def patch_app():
       }
     } catch (_) {}
   }'''
-    if anchor2 not in s:
-        raise SystemExit("runtime diagnostics: componentDidCatch anchor not found")
-    s = s.replace(anchor2, replacement2, 1)
-    APP.write_text(s, encoding="utf-8")
+    if did_catch not in s:
+        raise SystemExit("runtime diagnostics: ErrorBoundary componentDidCatch anchor not found")
+    s = s.replace(did_catch, did_catch_repl, 1)
+
+    MAIN.write_text(s, encoding="utf-8")
 
 
 patch_main()
-patch_app()
-print("web-demo runtime diagnostics applied")
+print("web-demo runtime diagnostics v3 applied")

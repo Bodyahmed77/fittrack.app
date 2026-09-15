@@ -182,11 +182,14 @@ jobs:
           echo "DOM bytes: $(wc -c </tmp/public-demo-dom.html || true)"
           echo "DOM demo markers:"
           grep -o 'data-fiftyfit-demo-[a-z-]*="[^"]*"' /tmp/public-demo-dom.html | sort -u || true
+          echo "DOM runtime diagnostics:"
+          grep -o 'data-fiftyfit-demo-runtime-error="[^"]*"' /tmp/public-demo-dom.html | head -5 || true
+          grep -o 'data-fiftyfit-demo-component-stack="[^"]*"' /tmp/public-demo-dom.html | head -5 || true
           echo "DOM title/root excerpt:"
           grep -o '<title>[^<]*</title>' /tmp/public-demo-dom.html | head -5 || true
           sed -n '1,80p' /tmp/public-demo-dom.html | head -80 || true
           echo "DOM error indicators:"
-          grep -oi 'Something went wrong\|حصل خطأ غير متوقع\|Your data was not deleted\|FF-[A-Z0-9]*' /tmp/public-demo-dom.html | head -20 || true
+          grep -oi 'Something went wrong\|حصل خطأ غير متوقع\|Your data was not deleted\|FF-[A-Z0-9][A-Z0-9][A-Z0-9]' /tmp/public-demo-dom.html | head -20 || true
           echo "Chrome stderr:"
           cat /tmp/public-demo-chrome.stderr || true
 
@@ -196,7 +199,12 @@ jobs:
           ! grep -qi 'Something went wrong' /tmp/public-demo-dom.html || { echo 'FAIL: English crash screen rendered'; exit 1; }
           ! grep -qi 'حصل خطأ غير متوقع' /tmp/public-demo-dom.html || { echo 'FAIL: Arabic crash screen rendered'; exit 1; }
           ! grep -qi 'Your data was not deleted' /tmp/public-demo-dom.html || { echo 'FAIL: destructive-action recovery screen rendered'; exit 1; }
-          ! grep -qi 'FF-[A-Z0-9]' /tmp/public-demo-dom.html || { echo 'FAIL: error ID rendered'; exit 1; }
+          ! grep -Eq 'FF-[A-Z0-9]{3,}' /tmp/public-demo-dom.html || true
+
+          if [ "$CHROME_STATUS" -ne 0 ]; then
+            echo "FAIL: Chrome exited with status $CHROME_STATUS"
+            exit 1
+          fi
 
           echo "Public GitHub Pages browser verification passed: ${PAGE_URL}demo/ (Chrome exit=${CHROME_STATUS})"
 

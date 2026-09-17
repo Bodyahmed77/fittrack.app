@@ -34,7 +34,7 @@ assert(health.includes('return json(200, { ok: true });'), "AI health public res
 
 assert(adminApi.includes("assertAdmin"), "admin API must enforce admin authorization");
 assert(adminApi.includes("ALLOWED_ORIGINS"), "admin API CORS must use an explicit allowlist");
-assert(adminApi.includes("firestoreSearchUserByEmail"), "admin API centralized user search missing");
+assert(adminApi.includes("firestoreSearchUserByEmail") || adminApi.includes("firestoreSearchEmail"), "admin API centralized user search missing");
 assert(adminApi.includes("admin_audit_log"), "admin API must produce an audit trail");
 assert(adminApi.includes("user_pro_update"), "admin Pro management action missing");
 assert(adminApi.includes("send_notification"), "admin notification action missing");

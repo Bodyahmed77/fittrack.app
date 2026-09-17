@@ -27,15 +27,13 @@ function importBlob(source, label) {
 }
 
 async function boot() {
-  // The current main branch contains the supported Nutrition Builder inside
-  // nutrition-builder.js. Do not request the old PR-only nutrition-builder-ux.js
-  // asset here; it is not part of the deployed admin bundle and caused a 404 boot failure.
-  const [styles, appSource, cardioSource, nutritionSource, publishSource] = await Promise.all([
+  const [styles, appSource, cardioSource, nutritionSource, publishSource, commandCenterSource] = await Promise.all([
     fetchText("styles.css"),
     fetchText("app.js"),
     fetchText("cardio.js"),
     fetchText("nutrition-builder.js"),
     fetchText("publish-any-plan.js"),
+    fetchText("command-center-v2.js"),
   ]);
 
   const style = document.createElement("style");
@@ -65,6 +63,7 @@ async function boot() {
   await importBlob(cardioSource, "admin/cardio.js");
   await importBlob(normalizedNutrition, "admin/nutrition-builder.js");
   await importBlob(publishSource, "admin/publish-any-plan.js");
+  await importBlob(commandCenterSource, "admin/command-center-v2.js");
 }
 
 boot().catch(showBootError);

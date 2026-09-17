@@ -55,6 +55,8 @@ assert(app.includes("FIFTYFIT_ADMIN_DASHBOARD_V1"), "lazy admin dashboard integr
 assert(app.includes("FIFTYFIT_ACCOUNT_RECOVERY_V1"), "account recovery hardening is missing from transformed App source");
 assert(app.includes("FIFTYFIT_PRODUCTION_FINAL_V1"), "production final hardening is missing from transformed App source");
 assert(main.includes("function StartupGate"), "startup gate is missing");
+assert(!main.includes('"@capacitor/keyboard"'), "Capacitor Keyboard must not be statically imported at app startup");
+assert(main.includes('import("@capacitor/keyboard")'), "Capacitor Keyboard native import must remain lazy");
 assert(!main.includes('"Your data was not deleted."'), "ErrorBoundary still contains an unverifiable data-deletion claim");
 assert(!main.includes('"Your data was not deleted. Restart the app and try again."'), "ErrorBoundary still contains the old data-deletion claim");
 

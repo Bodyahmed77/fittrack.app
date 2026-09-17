@@ -1,0 +1,247 @@
+name: Build Fifty Fit Android Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
+
+      - name: Install Android SDK API 36 / build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Install dependencies reproducibly
+        run: npm ci --ignore-scripts
+
+      - name: Restore sharp native runtime
+        run: |
+          set -euo pipefail
+          npm rebuild sharp --foreground-scripts
+          node -e "require('sharp'); console.log('sharp native runtime OK')"
+
+      - name: Apply required native diagnostics
+        run: python3 scripts/apply-google-native-diagnostics.py
+
+      - name: Build production web bundle
+        run: npm run build
+
+      - name: Validate source contracts
+        run: |
+          set -euo pipefail
+          node --check src/googleAuth.js
+          node --check src/billing.js
+          node --check src/fiftyFitBilling.js
+          node --check src/adminApi.js
+          grep -q 'from "./fiftyFitBilling"' src/billing.js
+          grep -q 'FIFTYFIT_NATIVE_BILLING_V7' src/fiftyFitBilling.js
+          grep -q 'PURCHASE_FLOW_TIMEOUT' src/billing.js
+          grep -q 'NATIVE_BILLING_CONNECTION_TIMEOUT' src/fiftyFitBilling.js
+          grep -q 'NATIVE_PRODUCT_QUERY_TIMEOUT' src/fiftyFitBilling.js
+          grep -q 'NATIVE_PURCHASE_QUERY_TIMEOUT' src/fiftyFitBilling.js
+          grep -q 'NATIVE_PURCHASE_FLOW_TIMEOUT' src/fiftyFitBilling.js
+
+      - name: Ensure Android platform exists
+        run: |
+          set -euo pipefail
+          if [ ! -d android ]; then npx cap add android; fi
+          test -d android/app
+
+      - name: Inject and validate Firebase Android config
+        env:
+          GS_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "${GS_B64:-}" || { echo 'GOOGLE_SERVICES_JSON_BASE64 secret is missing'; exit 1; }
+          mkdir -p android/app
+          printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('android/app/google-services.json').read_text(encoding='utf-8'))
+          assert data.get('project_info', {}).get('project_id') == 'fittrack-698fa'
+          assert any(((c.get('client_info') or {}).get('android_client_info') or {}).get('package_name') == 'com.bodyahmed77.fiftyfit' for c in data.get('client', []))
+          print('Firebase Android config validated')
+          PY
+
+      - name: Configure Android build identity and dependencies
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          root = Path('android')
+          top = root / 'build.gradle'
+          app = root / 'app' / 'build.gradle'
+          vars_file = root / 'variables.gradle'
+          top_text = top.read_text(encoding='utf-8')
+          if 'com.google.gms:google-services' not in top_text:
+              top_text = top_text.replace('dependencies {', "dependencies {\n    classpath 'com.google.gms:google-services:4.4.0'", 1)
+          top.write_text(top_text, encoding='utf-8')
+          app_text = app.read_text(encoding='utf-8')
+          if 'play-services-auth' not in app_text:
+              app_text = app_text.replace('dependencies {', "dependencies {\n    implementation 'com.google.android.gms:play-services-auth:21.0.0'", 1)
+          if 'com.android.billingclient:billing:9.1.0' not in app_text:
+              app_text = app_text.replace('dependencies {', "dependencies {\n    implementation 'com.android.billingclient:billing:9.1.0'", 1)
+          if 'com.google.gms.google-services' not in app_text:
+              app_text += "\napply plugin: 'com.google.gms.google-services'\n"
+          app.write_text(app_text, encoding='utf-8')
+          vars_text = vars_file.read_text(encoding='utf-8')
+          vars_text = re.sub(r'targetSdkVersion\s*=\s*\d+', 'targetSdkVersion = 36', vars_text)
+          vars_text = re.sub(r'compileSdkVersion\s*=\s*\d+', 'compileSdkVersion = 36', vars_text)
+          vars_file.write_text(vars_text, encoding='utf-8')
+          n = int(os.environ.get('GITHUB_RUN_NUMBER', '1'))
+          text = app.read_text(encoding='utf-8')
+          text = re.sub(r'\n\s*versionCode\s+\d+', '', text)
+          text = re.sub(r'\n\s*versionName\s+"[^"]*"', '', text)
+          text = text.replace('defaultConfig {', f'defaultConfig {{\n        versionCode {2000+n}\n        versionName "1.0.{n}"', 1)
+          app.write_text(text, encoding='utf-8')
+          print(f'versionCode={2000+n}, versionName=1.0.{n}')
+          PY
+
+      - name: Sync Capacitor and normalize bundled Billing dependency
+        run: |
+          set -euo pipefail
+          npx capacitor-assets generate --android
+          npx cap sync android
+          python3 scripts/patch-capacitor-billing-pbl.py
+          test -d node_modules/capacitor-billing
+          grep -q 'com.android.billingclient:billing:9.1.0' node_modules/capacitor-billing/android/build.gradle
+
+      - name: Inject first-party Fifty Fit Billing bridge
+        run: |
+          set -euo pipefail
+          python3 scripts/inject-fiftyfit-billing-v2.py
+          python3 scripts/apply-billing-main-thread.py
+          python3 scripts/harden-tiktok-player-webview.py
+          python3 scripts/inject-android-system-ui.py
+
+      - name: Verify native bridges and billing graph
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          plugin = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java')
+          main_files = list(Path('android/app/src/main/java').rglob('MainActivity.java'))
+          tiktok = Path('android/app/src/main/java/com/bodyahmed77/fiftyfit/TikTokWebViewActivity.java')
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          assert plugin.is_file()
+          assert main_files
+          assert tiktok.is_file()
+          assert manifest.is_file()
+          billing = plugin.read_text(encoding='utf-8')
+          main = main_files[0].read_text(encoding='utf-8')
+          assert 'FIFTYFIT_NATIVE_BILLING_V7' in billing
+          assert 'FIFTYFIT_BILLING_MAIN_THREAD_V1' in billing
+          assert 'runOnUiThread' in billing
+          assert 'registerPlugin(FiftyFitBillingPlugin.class)' in main
+          assert 'registerPlugin(TikTokWebViewPlugin.class)' in main
+          assert 'com.android.billingclient:billing:9.1.0' in Path('android/app/build.gradle').read_text(encoding='utf-8')
+          assert 'FIFTYFIT_TIKTOK_IFRAME_V1' in tiktok.read_text(encoding='utf-8')
+          assert 'android:screenOrientation="portrait"' not in manifest.read_text(encoding='utf-8')
+          print('Native bridge contracts validated')
+          PY
+          cd android
+          ./gradlew :app:dependencies --configuration debugCompileClasspath | tee /tmp/fiftyfit-billing-graph.txt
+          grep -q 'com.android.billingclient:billing:9.1.0' /tmp/fiftyfit-billing-graph.txt
+
+      - name: Prepare Android release signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "${KEYSTORE_B64:-}" || { echo 'ANDROID_KEYSTORE_BASE64 secret is missing'; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/fiftyfit-release.keystore
+          chmod 600 android/fiftyfit-release.keystore
+          keytool -list -v -keystore android/fiftyfit-release.keystore -alias "$KEY_ALIAS" -storepass "$KEYSTORE_PASSWORD" >/tmp/fiftyfit-keystore.txt
+          grep -q "Alias name: $KEY_ALIAS" /tmp/fiftyfit-keystore.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/build.gradle')
+          s = p.read_text(encoding='utf-8')
+          if 'signingConfigs {' not in s:
+              s = s.replace('android {', '''android {\n    signingConfigs {\n        release {\n            storeFile file('../fiftyfit-release.keystore')\n            storePassword System.getenv('KEYSTORE_PASSWORD')\n            keyAlias System.getenv('KEY_ALIAS')\n            keyPassword System.getenv('KEY_PASSWORD')\n        }\n    }''', 1)
+          if 'signingConfig signingConfigs.release' not in s:
+              s = s.replace('buildTypes {', '''buildTypes {\n        release {\n            signingConfig signingConfigs.release\n        }\n''', 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Preflight Play metadata and production package identity
+        run: |
+          set -euo pipefail
+          grep -q 'training_pro_monthly' src/config.js
+          grep -q 'nutrition_pro_monthly' src/config.js
+          grep -q 'both_pro_monthly' src/config.js
+          grep -q 'ai_coach_pro_monthly' src/config.js
+          ! grep -q 'com.fittrack.app' src/App.jsx
+          grep -q 'com.bodyahmed77.fiftyfit' src/App.jsx
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build signed Android AAB and APK
+        working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -f fiftyfit-release.keystore
+          chmod +x ./gradlew
+          timeout 20m ./gradlew bundleRelease assembleRelease --no-daemon --stacktrace
+
+      - name: Collect, fingerprint, and validate release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          cp android/app/build/outputs/bundle/release/app-release.aab release-artifacts/fifty-fit-release.aab
+          cp android/app/build/outputs/apk/release/app-release.apk release-artifacts/fifty-fit-release.apk
+          test -s release-artifacts/fifty-fit-release.aab
+          test -s release-artifacts/fifty-fit-release.apk
+          sha256sum release-artifacts/* | tee release-artifacts/SHA256SUMS.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          for name in ['release-artifacts/fifty-fit-release.aab','release-artifacts/fifty-fit-release.apk']:
+              with zipfile.ZipFile(name) as z:
+                  bad = z.testzip()
+                  assert bad is None, f'Corrupt ZIP entry: {name}: {bad}'
+          print('Release artifact integrity passed')
+          PY
+
+      - name: Upload verified release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifty-fit-verified-release-${{ github.run_number }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 14

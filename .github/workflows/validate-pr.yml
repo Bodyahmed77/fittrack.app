@@ -88,6 +88,53 @@ jobs:
           grep -q 'command-center-v3.js' docs/admin/boot.js
           echo 'Public Pages source routes verified'
 
+      - name: Validate standalone web demo source
+        run: |
+          set -euo pipefail
+          test -s web-demo/index.html
+          test -s web-demo/main.js
+          test -s web-demo/styles.css
+          test -s vite.webdemo.config.js
+          node --check web-demo/main.js
+          grep -q 'Day 1' web-demo/main.js
+          grep -q 'data-fiftyfit-demo-ready' web-demo/main.js
+          echo 'Standalone web demo source verified'
+
+      - name: Build standalone web demo
+        run: npx vite build --config vite.webdemo.config.js
+
+      - name: Validate standalone demo artifact
+        run: |
+          set -euo pipefail
+          test -s dist-web-demo/index.html
+          test -d dist-web-demo/assets
+          test "$(find dist-web-demo/assets -maxdepth 1 -name '*.js' | wc -l)" -ge 1
+          grep -q 'Fifty Fit' dist-web-demo/index.html
+          ! grep -R -E 'firebase|firestore|@capacitor|capacitor-billing|googleapis|supabase\.co' dist-web-demo/assets --include='*.js' >/dev/null
+          echo 'Standalone web demo artifact isolation verified'
+
+      - name: Runtime smoke test in headless Chrome
+        run: |
+          set -euo pipefail
+          nohup npx vite --host 127.0.0.1 --port 4173 --config vite.webdemo.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS 'http://127.0.0.1:4173/?demo=1' >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS 'http://127.0.0.1:4173/?demo=1' >/dev/null
+          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_BIN"
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=4000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          grep -q 'data-mounted="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'data-fiftyfit-demo-mode="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'data-fiftyfit-demo-ready="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'Day 1' /tmp/fiftyfit-demo-dom.html
+          grep -q 'WEB DEMO' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'something went wrong' /tmp/fiftyfit-demo-dom.html
+          echo 'Standalone web demo headless runtime smoke test passed'
+
       - name: Validate dependency manifest consistency
         run: |
           python3 - <<'PY'

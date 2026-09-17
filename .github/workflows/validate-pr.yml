@@ -34,7 +34,7 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           cmdline-tools-version: 14742923
-          packages: tools platform-tools
+          packages: platform-tools
           accept-android-sdk-licenses: true
 
       - name: Install Android API 36 / build tools
@@ -52,6 +52,9 @@ jobs:
       - name: Validate production invariants
         run: python3 scripts/validate-production-invariants.py
 
+      - name: Validate update safety
+        run: python3 scripts/validate-update-safety.py
+
       - name: Validate Python scripts
         run: python3 -m py_compile scripts/*.py
 
@@ -63,6 +66,14 @@ jobs:
           node --check src/googleAuth.js
           node --check src/billing.js
           node --check src/registerPurchase.js
+          node --check src/adminApi.js
+          node --check admin/app.js
+          node --check admin/boot.js
+          node --check admin/cardio.js
+          node --check admin/nutrition-builder.js
+          node --check admin/publish-any-plan.js
+          node --check admin/command-center-v3.js
+          node --check docs/admin/boot.js
 
       - name: Validate dependency manifest consistency
         run: |

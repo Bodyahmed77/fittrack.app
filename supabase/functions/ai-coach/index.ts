@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
     const localDate = dateInTimeZone(typeof body.timeZone === "string" ? body.timeZone : null);
     const hasPro = await lookupEntitlement(sb, uid, firebaseToken);
     const limit = hasPro ? PRO_LIMIT : FREE_LIMIT;
-    const { data: usageData, error: usageError } = await rpc(sb).rpc("reserve_ai_usage", { p_uid: uid, p_date: localDate, p_limit: limit });
+    const { data: usageData, error: usageError } = await rpc(sb).rpc("reserve_ai_usage", { p_uid: uid, p_usage_date: localDate, p_limit: limit });
     if (usageError) {
       log("usage_reservation_failed", { code: usageError.code, message: String(usageError.message || "").slice(0, 160) });
       return json(503, { error: "usage_unavailable", message: "AI usage is temporarily unavailable" });
@@ -194,12 +194,12 @@ Deno.serve(async (req) => {
     const prompt = buildCoachPrompt(lang, hasPro, context, historyText, String(userMessage).slice(0, 4000));
     const apiKey = Deno.env.get("GEMINI_API_KEY") || "";
     if (!apiKey) {
-      await rpc(sb).rpc("refund_ai_usage", { p_uid: uid, p_date: localDate });
+      await rpc(sb).rpc("refund_ai_usage", { p_uid: uid, p_usage_date: localDate });
       return json(500, { error: "backend_error", message: "AI provider key is not configured" });
     }
     const result = await generateWithFallback(apiKey, prompt, hasPro);
     if (!result.ok) {
-      await rpc(sb).rpc("refund_ai_usage", { p_uid: uid, p_date: localDate });
+      await rpc(sb).rpc("refund_ai_usage", { p_uid: uid, p_usage_date: localDate });
       const status = result.status >= 500 ? 503 : result.status === 429 ? 503 : 500;
       return json(status, { error: result.code, message: result.providerMessage || "AI provider failed" });
     }

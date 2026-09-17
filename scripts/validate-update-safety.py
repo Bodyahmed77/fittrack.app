@@ -17,6 +17,9 @@ capacitor = read("capacitor.config.json")
 app = read("src/App.jsx")
 firestore_rules = read("firestore.rules")
 release_workflow = read(".github/workflows/build-android.yml")
+pages_workflow = read(".github/workflows/deploy-web-demo.yml")
+admin_index = read("admin/index.html")
+admin_boot = read("admin/boot.js")
 
 # The build is intentionally mutation-heavy for legacy compatibility. Validate
 # the complete source material instead of binding each invariant to one exact
@@ -64,7 +67,17 @@ require("request.resource.data.get(\"entitlements\", {}) ==" in firestore_rules,
 delete_account = read("supabase/functions/delete-account/index.ts")
 require("delete_user_data" in delete_account and "p_uid" in delete_account, "delete-account RPC contract drift detected")
 
-# Release workflow must build both the uploadable AAB and the regression APK,
+# Public Pages must publish the actual policy/deletion pages and the canonical
+# admin entrypoint. Do not merely test that source files exist in docs/.
+require("cp docs/privacy-policy.html dist/privacy-policy.html" in pages_workflow, "privacy policy is not copied into Pages artifact")
+require("cp docs/account-deletion.html dist/account-deletion.html" in pages_workflow, "account deletion page is not copied into Pages artifact")
+require('"./boot.js?v=20260917-3"' in admin_index, "published admin index is not using canonical boot.js")
+require("command-center-v3.js" in admin_boot, "canonical admin boot does not load command center v3")
+require('"${PAGE_URL}privacy-policy.html"' in pages_workflow, "Pages workflow is missing deployed privacy-page verification")
+require('"${PAGE_URL}account-deletion.html"' in pages_workflow, "Pages workflow is missing deployed deletion-page verification")
+require('"${PAGE_URL}admin/boot.js"' in pages_workflow, "Pages workflow is missing deployed admin-boot verification")
+
+# Release workflow must build both the uploadable AAB and regression APK,
 # and fingerprint the final outputs for traceability.
 require("bundleRelease" in release_workflow and "assembleRelease" in release_workflow, "signed AAB/APK release build gate missing")
 require("sha256sum release-artifacts/*" in release_workflow, "release fingerprinting missing")

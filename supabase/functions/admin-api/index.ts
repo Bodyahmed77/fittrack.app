@@ -196,22 +196,37 @@ async function firestoreCreateNotification(idToken: string, targetUid: string, t
 function firestoreAdminEntitlements(doc: any) {
   const fields = doc?.fields?.adminEntitlements?.mapValue?.fields || {};
   const enabled = (key: string) => fields?.[key]?.booleanValue === true;
-  const expiry = fields?.proExpiresAt?.stringValue ? String(fields.proExpiresAt.stringValue) : null;
-  const expiryMs = expiry ? Date.parse(`${expiry}T23:59:59.999Z`) : NaN;
-  const active = !expiry || !Number.isFinite(expiryMs) || expiryMs > Date.now();
-  return active
-    ? {
-        trainingPro: enabled("trainingPro"),
-        nutritionPro: enabled("nutritionPro"),
-        aiCoachPro: enabled("aiCoachPro"),
-        proExpiresAt: expiry,
-      }
-    : {
-        trainingPro: false,
-        nutritionPro: false,
-        aiCoachPro: false,
-        proExpiresAt: null,
-      };
+  const expiry = fields?.proExpiresAt?.stringValue ? String(fields.proExpiresAt.stringValue).trim() : null;
+  if (!expiry) {
+    return enabled("trainingPro") || enabled("nutritionPro") || enabled("aiCoachPro")
+      ? {
+          trainingPro: enabled("trainingPro"),
+          nutritionPro: enabled("nutritionPro"),
+          aiCoachPro: enabled("aiCoachPro"),
+          proExpiresAt: null,
+        }
+      : {
+          trainingPro: false,
+          nutritionPro: false,
+          aiCoachPro: false,
+          proExpiresAt: null,
+        };
+  }
+  const expiryMs = Date.parse(`${expiry}T23:59:59.999Z`);
+  if (!Number.isFinite(expiryMs) || expiryMs <= Date.now()) {
+    return {
+      trainingPro: false,
+      nutritionPro: false,
+      aiCoachPro: false,
+      proExpiresAt: null,
+    };
+  }
+  return {
+    trainingPro: enabled("trainingPro"),
+    nutritionPro: enabled("nutritionPro"),
+    aiCoachPro: enabled("aiCoachPro"),
+    proExpiresAt: expiry,
+  };
 }
 
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -383,13 +398,15 @@ async function updateUserAdminEntitlements(
   if (anyEnabled) {
     const requested = typeof changes.proExpiresAt === "string" ? changes.proExpiresAt.trim() : "";
     const requestedMs = requested ? Date.parse(`${requested}T23:59:59.999Z`) : NaN;
-    const currentMs = next.proExpiresAt ? Date.parse(`${next.proExpiresAt}T23:59:59.999Z`) : NaN;
-    next.proExpiresAt =
-      Number.isFinite(requestedMs) && requestedMs > Date.now()
-        ? requested
-        : Number.isFinite(currentMs) && currentMs > Date.now()
-          ? next.proExpiresAt
-          : new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    if (requested && Number.isFinite(requestedMs) && requestedMs > Date.now()) {
+      next.proExpiresAt = requested;
+    } else if (changes.proExpiresAt === null) {
+      throw new Error("admin_expiry_required");
+    } else {
+      const currentMs = next.proExpiresAt ? Date.parse(`${next.proExpiresAt}T23:59:59.999Z`) : NaN;
+      if (!Number.isFinite(currentMs) || currentMs <= Date.now()) throw new Error("admin_expiry_required");
+      next.proExpiresAt = next.proExpiresAt;
+    }
   } else {
     next.proExpiresAt = null;
   }
@@ -435,7 +452,7 @@ async function sendNotification(
   return { ok: true };
 }
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: headersFor(req) });
   if (req.method !== "POST") return json(req, 405, { error: "method_not_allowed" });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return json(req, 500, { error: "backend_error" });

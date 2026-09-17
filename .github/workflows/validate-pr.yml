@@ -75,6 +75,19 @@ jobs:
           node --check admin/command-center-v3.js
           node --check docs/admin/boot.js
 
+      - name: Validate public Pages source routes
+        run: |
+          set -euo pipefail
+          for file in docs/privacy-policy.html docs/account-deletion.html docs/admin/index.html admin/index.html admin/boot.js; do
+            test -s "$file"
+          done
+          grep -qi 'Privacy Policy' docs/privacy-policy.html
+          grep -qi 'Account Deletion' docs/account-deletion.html
+          grep -qi 'Fifty Fit Admin' docs/admin/index.html
+          grep -q 'command-center-v3.js' admin/boot.js
+          grep -q 'command-center-v3.js' docs/admin/boot.js
+          echo 'Public Pages source routes verified'
+
       - name: Validate dependency manifest consistency
         run: |
           python3 - <<'PY'

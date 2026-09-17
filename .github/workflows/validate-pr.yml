@@ -97,7 +97,7 @@ jobs:
           test -s vite.webdemo.config.js
           node --check web-demo/main.js
           grep -q 'Day 1' web-demo/main.js
-          grep -q 'data-fiftyfit-demo-ready' web-demo/main.js
+          grep -q 'fiftyfitDemoReady' web-demo/main.js
           echo 'Standalone web demo source verified'
 
       - name: Build standalone web demo

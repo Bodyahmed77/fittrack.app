@@ -96,10 +96,9 @@ jobs:
           p = json.loads(Path('package.json').read_text())
           l = json.loads(Path('package-lock.json').read_text())
           root = l['packages']['']
-          assert root['devDependencies']['@vitejs/plugin-react'] == p['devDependencies']['@vitejs/plugin-react']
-          assert root['devDependencies']['vite'] == p['devDependencies']['vite']
-          assert root['dependencies']['@capacitor/network'] == p['dependencies']['@capacitor/network']
-          assert root['dependencies']['@capacitor/status-bar'] == p['dependencies']['@capacitor/status-bar']
+          for group in ('dependencies', 'devDependencies'):
+              for name, value in p.get(group, {}).items():
+                  assert root[group][name] == value, f'{group}:{name} differs between package.json and lockfile'
           print('package.json/package-lock.json consistency passed')
           PY
 
@@ -131,12 +130,13 @@ jobs:
         run: |
           set -euo pipefail
           npx cap sync android
-          rm -rf node_modules/capacitor-billing
+          python3 scripts/patch-capacitor-billing-pbl.py
           python3 scripts/inject-fiftyfit-billing-v2.py
           python3 scripts/apply-billing-main-thread.py
           python3 scripts/inject-android-system-ui.py
           python3 scripts/harden-tiktok-player-webview.py
           test -f android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          test -d node_modules/capacitor-billing
 
       - name: Validate first-party Play Billing bridge
         run: |
@@ -146,8 +146,9 @@ jobs:
           grep -q 'runOnUiThread' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
           grep -q 'registerPlugin(FiftyFitBillingPlugin.class)' android/app/src/main/java/com/bodyahmed77/fiftyfit/MainActivity.java
           grep -q 'com.android.billingclient:billing:9.1.0' android/app/build.gradle
-          test ! -d node_modules/capacitor-billing
-          echo 'First-party Billing bridge validation passed'
+          grep -q 'com.android.billingclient:billing:9.1.0' node_modules/capacitor-billing/android/build.gradle
+          if grep -q 'com.android.billingclient:billing:7.1.0' node_modules/capacitor-billing/android/build.gradle; then echo 'PBL7 dependency remains in capacitor-billing'; exit 1; fi
+          echo 'First-party Billing bridge + compatibility module validation passed'
 
       - name: Compile Android debug artifact (production Billing compatibility gate)
         working-directory: android

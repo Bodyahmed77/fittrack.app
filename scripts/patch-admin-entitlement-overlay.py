@@ -20,13 +20,21 @@ function normalizeAdminEntitlementOverlay(raw) {
   const trainingPro = overlay.trainingPro === true;
   const nutritionPro = overlay.nutritionPro === true;
   const aiCoachPro = overlay.aiCoachPro === true;
+  const hasExpiryField = Object.prototype.hasOwnProperty.call(overlay, "proExpiresAt");
   const proExpiresAt = overlay.proExpiresAt ? String(overlay.proExpiresAt).trim() : null;
   if (!trainingPro && !nutritionPro && !aiCoachPro) {
     return { trainingPro: false, nutritionPro: false, aiCoachPro: false, proExpiresAt: null };
   }
   if (!proExpiresAt) return { trainingPro, nutritionPro, aiCoachPro, proExpiresAt: null };
   const expiryMs = Date.parse(`${proExpiresAt}T23:59:59.999Z`);
-  if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
+  if (!Number.isFinite(expiryMs)) {
+    // Malformed explicit expiry must fail closed. A genuinely perpetual grant
+    // is represented by an omitted/absent expiry field, not an invalid value.
+    return hasExpiryField
+      ? { trainingPro: false, nutritionPro: false, aiCoachPro: false, proExpiresAt: null }
+      : { trainingPro, nutritionPro, aiCoachPro, proExpiresAt: null };
+  }
+  if (expiryMs <= Date.now()) {
     return { trainingPro: false, nutritionPro: false, aiCoachPro: false, proExpiresAt: null };
   }
   return { trainingPro, nutritionPro, aiCoachPro, proExpiresAt };

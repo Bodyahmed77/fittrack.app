@@ -77,4 +77,7 @@ for (const file of ["src/firebase.js", "src/aiCoach.js", "src/aiReport.js", "cap
   assert(!read(file).includes("com.fittrack.app"), `${file} contains the retired Android package id`);
 }
 
+// Keep this marker in the validator so PR merge refs can be unambiguously tied
+// to the current preflight contract instead of a stale cached merge result.
+console.log("[studio-preflight] PR80_MERGE_REF_REFRESH_V2");
 console.log("[studio-preflight] PASS");

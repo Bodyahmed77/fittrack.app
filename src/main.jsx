@@ -158,7 +158,7 @@ class ErrorBoundary extends React.Component {
             <img src={logoSrc} alt="Fifty Fit" width={64} height={64} style={{ objectFit: "contain", marginBottom: 16 }} />
             <div style={{ fontWeight: 900, fontSize: 20 }}>{lang === "ar" ? "حصل خطأ غير متوقع" : "Something went wrong"}</div>
             <div style={{ color: "#9a9a9a", fontSize: 13, lineHeight: 1.6, marginTop: 9 }}>
-              {lang === "ar" ? "بياناتك لم يتم حذفها. أعد فتح التطبيق وحاول مرة أخرى." : "Your data was not deleted. Restart the app and try again."}
+              {lang === "ar" ? "لم يتم تغيير أو حذف بيانات حسابك من هذه الشاشة. أعد فتح التطبيق وحاول مرة أخرى." : "This screen does not change or delete your account data. Restart the app and try again."}
             </div>
             <button onClick={this.handleRetry} style={{ marginTop: 20, width: "100%", border: "none", borderRadius: 13, padding: "13px 16px", background: "#fff", color: "#000", fontWeight: 900, fontSize: 14 }}>
               {lang === "ar" ? "إعادة المحاولة" : "Try again"}

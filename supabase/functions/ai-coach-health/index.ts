@@ -53,7 +53,16 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "GET") return json(405, { ok: false, error: "method_not_allowed" });
 
-  const base = {
+  // Public callers receive only a liveness response. Configuration details
+  // and provider probing are operator-only to avoid leaking infrastructure
+  // details or creating a public Gemini quota probe.
+  const probeSecret = Deno.env.get("FIFTYFIT_HEALTH_PROBE_SECRET") || "";
+  const suppliedSecret = req.headers.get("X-FiftyFit-Health-Secret") || "";
+  if (!probeSecret || suppliedSecret !== probeSecret) return json(200, { ok: true });
+
+  const primary = await probeGemini(PRIMARY_MODEL);
+  const fallback = primary.ok ? null : await probeGemini(FALLBACK_MODEL);
+  return json(200, {
     ok: true,
     projectIdConfigured: !!PROJECT_ID,
     supabaseUrlConfigured: !!SUPABASE_URL,
@@ -61,17 +70,7 @@ Deno.serve(async (req) => {
     geminiKeyConfigured: !!Deno.env.get("GEMINI_API_KEY"),
     primaryModel: PRIMARY_MODEL,
     fallbackModel: FALLBACK_MODEL,
-  };
-
-  // This endpoint never spends Gemini quota for an unauthenticated caller.
-  // Supplying the operator-only secret is required to run an external provider probe.
-  const probeSecret = Deno.env.get("FIFTYFIT_HEALTH_PROBE_SECRET") || "";
-  const suppliedSecret = req.headers.get("X-FiftyFit-Health-Secret") || "";
-  if (probeSecret && suppliedSecret === probeSecret) {
-    const primary = await probeGemini(PRIMARY_MODEL);
-    const fallback = primary.ok ? null : await probeGemini(FALLBACK_MODEL);
-    return json(200, { ...base, primary, fallback });
-  }
-
-  return json(200, base);
+    primary,
+    fallback,
+  });
 });

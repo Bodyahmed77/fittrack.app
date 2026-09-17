@@ -79,6 +79,7 @@ for script_name in [
     "patch-production-final-2.py",
     "patch-load-error-return.py",
     "patch-load-fallback.py",
+    "patch-missing-profile-phase-prep.py",
     "patch-admin-entitlement-overlay.py",
     "patch-session-resilience.py",
     "patch-purchase-ack.py",

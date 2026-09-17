@@ -34,7 +34,7 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           cmdline-tools-version: 14742923
-          packages: tools platform-tools
+          packages: platform-tools
           accept-android-sdk-licenses: true
 
       - name: Install Android API 36 / build tools

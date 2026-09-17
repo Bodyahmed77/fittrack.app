@@ -6,9 +6,9 @@ function showBootError(error) {
 }
 
 Promise.resolve()
-  .then(() => import("./app.js?v=20260917-2"))
-  .then(() => import("./cardio.js?v=20260917-2"))
-  .then(() => import("./nutrition-builder.js?v=20260917-2"))
-  .then(() => import("./publish-any-plan.js?v=20260917-2"))
-  .then(() => import("./command-center-v2.js?v=20260917-1"))
+  .then(() => import("./app.js?v=20260917-3"))
+  .then(() => import("./cardio.js?v=20260917-3"))
+  .then(() => import("./nutrition-builder.js?v=20260917-3"))
+  .then(() => import("./publish-any-plan.js?v=20260917-3"))
+  .then(() => import("./command-center-v3.js?v=20260917-1"))
   .catch(showBootError);

@@ -27,7 +27,9 @@ firestore_rules = read("firestore.rules")
 release_workflow = read(".github/workflows/build-android.yml")
 delete_account = read("supabase/functions/delete-account/index.ts")
 
-release_scripts = sorted(set(re.findall(r"scripts/([A-Za-z0-9._-]+\\.py)", package)))
+# Extract the actual Python patch files referenced by the release build.
+# Keep the dot escaped once so normal filenames like patch-foo.py are matched.
+release_scripts = sorted(set(re.findall(r"scripts/([A-Za-z0-9._-]+\.py)", package)))
 release_script_sources = []
 for script_name in release_scripts:
     script_path = ROOT / "scripts" / script_name

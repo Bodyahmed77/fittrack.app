@@ -34,7 +34,7 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           cmdline-tools-version: 14742923
-          packages: tools platform-tools
+          packages: platform-tools
           accept-android-sdk-licenses: true
 
       - name: Install Android API 36 / build tools
@@ -52,6 +52,9 @@ jobs:
       - name: Validate production invariants
         run: python3 scripts/validate-production-invariants.py
 
+      - name: Validate update safety
+        run: python3 scripts/validate-update-safety.py
+
       - name: Validate Python scripts
         run: python3 -m py_compile scripts/*.py
 
@@ -63,6 +66,74 @@ jobs:
           node --check src/googleAuth.js
           node --check src/billing.js
           node --check src/registerPurchase.js
+          node --check src/adminApi.js
+          node --check admin/app.js
+          node --check admin/boot.js
+          node --check admin/cardio.js
+          node --check admin/nutrition-builder.js
+          node --check admin/publish-any-plan.js
+          node --check admin/command-center-v3.js
+          node --check docs/admin/boot.js
+
+      - name: Validate public Pages source routes
+        run: |
+          set -euo pipefail
+          for file in docs/privacy-policy.html docs/account-deletion.html docs/admin/index.html admin/index.html admin/boot.js; do
+            test -s "$file"
+          done
+          grep -qi 'Privacy Policy' docs/privacy-policy.html
+          grep -qi 'Account Deletion' docs/account-deletion.html
+          grep -qi 'Fifty Fit Admin' docs/admin/index.html
+          grep -q 'command-center-v3.js' admin/boot.js
+          grep -q 'command-center-v3.js' docs/admin/boot.js
+          echo 'Public Pages source routes verified'
+
+      - name: Validate standalone web demo source
+        run: |
+          set -euo pipefail
+          test -s web-demo/index.html
+          test -s web-demo/main.js
+          test -s web-demo/styles.css
+          test -s vite.webdemo.config.js
+          node --check web-demo/main.js
+          grep -q 'Day 1' web-demo/main.js
+          grep -q 'fiftyfitDemoReady' web-demo/main.js
+          echo 'Standalone web demo source verified'
+
+      - name: Build standalone web demo
+        run: npx vite build --config vite.webdemo.config.js
+
+      - name: Validate standalone demo artifact
+        run: |
+          set -euo pipefail
+          test -s dist-web-demo/index.html
+          test -d dist-web-demo/assets
+          test "$(find dist-web-demo/assets -maxdepth 1 -name '*.js' | wc -l)" -ge 1
+          grep -q 'Fifty Fit' dist-web-demo/index.html
+          ! grep -R -E 'firebase|firestore|@capacitor|capacitor-billing|googleapis|supabase\.co' dist-web-demo/assets --include='*.js' >/dev/null
+          echo 'Standalone web demo artifact isolation verified'
+
+      - name: Runtime smoke test in headless Chrome
+        run: |
+          set -euo pipefail
+          nohup npx vite --host 127.0.0.1 --port 4173 --config vite.webdemo.config.js >/tmp/fiftyfit-webdemo.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill $VITE_PID >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS 'http://127.0.0.1:4173/?demo=1' >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS 'http://127.0.0.1:4173/?demo=1' >/dev/null
+          CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$CHROME_BIN"
+          "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --virtual-time-budget=4000 --dump-dom 'http://127.0.0.1:4173/?demo=1' >/tmp/fiftyfit-demo-dom.html
+          grep -q 'data-mounted="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'data-fiftyfit-demo-mode="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'data-fiftyfit-demo-ready="1"' /tmp/fiftyfit-demo-dom.html
+          grep -q 'Day 1' /tmp/fiftyfit-demo-dom.html
+          grep -q 'WEB DEMO' /tmp/fiftyfit-demo-dom.html
+          ! grep -qi 'something went wrong' /tmp/fiftyfit-demo-dom.html
+          echo 'Standalone web demo headless runtime smoke test passed'
 
       - name: Validate dependency manifest consistency
         run: |
@@ -72,18 +143,25 @@ jobs:
           p = json.loads(Path('package.json').read_text())
           l = json.loads(Path('package-lock.json').read_text())
           root = l['packages']['']
-          assert root['devDependencies']['@vitejs/plugin-react'] == p['devDependencies']['@vitejs/plugin-react']
-          assert root['devDependencies']['vite'] == p['devDependencies']['vite']
-          assert root['dependencies']['@capacitor/network'] == p['dependencies']['@capacitor/network']
-          assert root['dependencies']['@capacitor/status-bar'] == p['dependencies']['@capacitor/status-bar']
+          for group in ('dependencies', 'devDependencies'):
+              for name, value in p.get(group, {}).items():
+                  assert root[group][name] == value, f'{group}:{name} differs between package.json and lockfile'
           print('package.json/package-lock.json consistency passed')
           PY
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Build web application
         run: npm run build
 
       - name: Add Android platform
-        run: npx cap add android || true
+        run: |
+          set -euo pipefail
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          test -d android/app
 
       - name: Inject google-services.json for Android compile validation
         env:
@@ -95,33 +173,33 @@ jobs:
           printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
           test -s android/app/google-services.json
 
-      - name: Apply generated Android runtime patches
+      - name: Prepare production Android native bridges
         run: |
           set -euo pipefail
           npx cap sync android
+          python3 scripts/patch-capacitor-billing-pbl.py
+          python3 scripts/inject-fiftyfit-billing-v2.py
+          python3 scripts/apply-billing-main-thread.py
           python3 scripts/inject-android-system-ui.py
-          if [ -f scripts/inject-tiktok-webview.py ]; then python3 scripts/inject-tiktok-webview.py; else echo 'No legacy TikTok injector present; native bridge is supplied by the release workflow.'; fi
+          python3 scripts/harden-tiktok-player-webview.py
+          test -f android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          test -d node_modules/capacitor-billing
 
-      - name: Validate Play Billing app dependency pin
+      - name: Validate first-party Play Billing bridge
         run: |
           set -euo pipefail
-          APP_GRADLE='android/app/build.gradle'
-          test -f "$APP_GRADLE"
-          grep -q 'com.android.billingclient:billing:9.1.0' "$APP_GRADLE"
-          if grep -q 'com.android.billingclient:billing:7.1.0' "$APP_GRADLE"; then echo 'PBL7 billing dependency remains in app module'; exit 1; fi
-          echo 'Play Billing 9.1.0 app dependency pin verified.'
+          grep -q 'FIFTYFIT_NATIVE_BILLING_V7' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          grep -q 'FIFTYFIT_BILLING_MAIN_THREAD_V1' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          grep -q 'runOnUiThread' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          grep -q 'registerPlugin(FiftyFitBillingPlugin.class)' android/app/src/main/java/com/bodyahmed77/fiftyfit/MainActivity.java
+          grep -q 'com.android.billingclient:billing:9.1.0' android/app/build.gradle
+          grep -q 'com.android.billingclient:billing:9.1.0' node_modules/capacitor-billing/android/build.gradle
+          if grep -q 'com.android.billingclient:billing:7.1.0' node_modules/capacitor-billing/android/build.gradle; then echo 'PBL7 dependency remains in capacitor-billing'; exit 1; fi
+          echo 'First-party Billing bridge + compatibility module validation passed'
 
-      - name: Inspect resolved Play Billing version for capacitor-billing
+      - name: Compile Android debug artifact (production Billing compatibility gate)
         working-directory: android
-        run: |
-          set -euo pipefail
-          ./gradlew :capacitor-billing:dependencyInsight --dependency com.android.billingclient:billing --configuration debugCompileClasspath | tee /tmp/fiftyfit-pbl.txt
-          grep -Eq 'com\.android\.billingclient:billing:9\.1\.0' /tmp/fiftyfit-pbl.txt
-          echo 'Resolved Play Billing 9.1.0 verified.'
-
-      - name: Compile Android debug artifact (Billing/PBL compatibility gate)
-        working-directory: android
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Verify release-time Billing normalization transform
         run: |
@@ -140,6 +218,7 @@ jobs:
           from pathlib import Path
           text = Path('.github/workflows/build-android.yml').read_text(encoding='utf-8')
           assert 'gradlew' in text
-          assert 'assembleRelease' in text or 'bundleRelease' in text
+          assert 'assembleRelease' in text and 'bundleRelease' in text
+          assert 'FiftyFitBillingPlugin.java' in text
           print('Android release workflow sanity passed')
           PY

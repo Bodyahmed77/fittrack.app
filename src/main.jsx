@@ -1,7 +1,6 @@
 import React, { Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import logoSrc from "./assets/logo.png";
-import { Keyboard } from "@capacitor/keyboard";
 
 async function applySystemBarColors(dark = true) {
   try {
@@ -90,33 +89,37 @@ async function setupKeyboardInsets() {
       window.visualViewport?.addEventListener("scroll", syncKeyboardFromViewport);
       return;
     }
+
+    const { Keyboard } = await import("@capacitor/keyboard");
+    let keyboardShowHandle;
+    let keyboardHideHandle;
+    try {
+      keyboardShowHandle = Keyboard.addListener("keyboardDidShow", (info) => {
+        setKeyboardHeight(info?.keyboardHeight || 0);
+      });
+      keyboardHideHandle = Keyboard.addListener("keyboardDidHide", () => {
+        setKeyboardHeight(0);
+      });
+    } catch (e) {
+      console.warn("[Keyboard] listeners failed", e);
+    }
+
+    syncKeyboardFromViewport();
+    window.visualViewport?.addEventListener("resize", syncKeyboardFromViewport);
+    window.visualViewport?.addEventListener("scroll", syncKeyboardFromViewport);
+
+    return () => {
+      keyboardShowHandle?.remove?.();
+      keyboardHideHandle?.remove?.();
+      window.visualViewport?.removeEventListener("resize", syncKeyboardFromViewport);
+      window.visualViewport?.removeEventListener("scroll", syncKeyboardFromViewport);
+    };
   } catch {
-    /* web fallback below */
+    // Web fallback or environments where the native keyboard plugin is unavailable.
+    syncKeyboardFromViewport();
+    window.visualViewport?.addEventListener("resize", syncKeyboardFromViewport);
+    window.visualViewport?.addEventListener("scroll", syncKeyboardFromViewport);
   }
-
-  let keyboardShowHandle;
-  let keyboardHideHandle;
-  try {
-    keyboardShowHandle = Keyboard.addListener("keyboardDidShow", (info) => {
-      setKeyboardHeight(info?.keyboardHeight || 0);
-    });
-    keyboardHideHandle = Keyboard.addListener("keyboardDidHide", () => {
-      setKeyboardHeight(0);
-    });
-  } catch (e) {
-    console.warn("[Keyboard] listeners failed", e);
-  }
-
-  syncKeyboardFromViewport();
-  window.visualViewport?.addEventListener("resize", syncKeyboardFromViewport);
-  window.visualViewport?.addEventListener("scroll", syncKeyboardFromViewport);
-
-  return () => {
-    keyboardShowHandle?.remove?.();
-    keyboardHideHandle?.remove?.();
-    window.visualViewport?.removeEventListener("resize", syncKeyboardFromViewport);
-    window.visualViewport?.removeEventListener("scroll", syncKeyboardFromViewport);
-  };
 }
 
 setupKeyboardInsets();
@@ -158,7 +161,7 @@ class ErrorBoundary extends React.Component {
             <img src={logoSrc} alt="Fifty Fit" width={64} height={64} style={{ objectFit: "contain", marginBottom: 16 }} />
             <div style={{ fontWeight: 900, fontSize: 20 }}>{lang === "ar" ? "حصل خطأ غير متوقع" : "Something went wrong"}</div>
             <div style={{ color: "#9a9a9a", fontSize: 13, lineHeight: 1.6, marginTop: 9 }}>
-              {lang === "ar" ? "بياناتك لم يتم حذفها. أعد فتح التطبيق وحاول مرة أخرى." : "Your data was not deleted. Restart the app and try again."}
+              {lang === "ar" ? "لم يتم تغيير أو حذف بيانات حسابك من هذه الشاشة. أعد فتح التطبيق وحاول مرة أخرى." : "This screen does not change or delete your account data. Restart the app and try again."}
             </div>
             <button onClick={this.handleRetry} style={{ marginTop: 20, width: "100%", border: "none", borderRadius: 13, padding: "13px 16px", background: "#fff", color: "#000", fontWeight: 900, fontSize: 14 }}>
               {lang === "ar" ? "إعادة المحاولة" : "Try again"}
@@ -176,25 +179,9 @@ function StartupShell() {
   return (
     <div style={{ minHeight: "100vh", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ textAlign: "center", padding: 24 }}>
-        <img
-          src={logoSrc}
-          alt="Fifty Fit"
-          width={92}
-          height={92}
-          style={{
-            display: "block",
-            objectFit: "contain",
-            margin: "0 auto 18px",
-            animation: "fiftyLogoIn 1.15s cubic-bezier(.22,.8,.3,1) both",
-            filter: "drop-shadow(0 0 18px rgba(255,255,255,.18))",
-          }}
-        />
-        <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: 1.2, animation: "fiftyTextIn .85s ease-out .18s both" }}>
-          Fifty Fit
-        </div>
-        <div style={{ marginTop: 7, fontSize: 11, color: "#8e8e8e", letterSpacing: 0.6, animation: "fiftyTextIn .75s ease-out .32s both" }}>
-          TRAIN • EAT • PROGRESS
-        </div>
+        <img src={logoSrc} alt="Fifty Fit" width={92} height={92} style={{ display: "block", objectFit: "contain", margin: "0 auto 18px", animation: "fiftyLogoIn 1.15s cubic-bezier(.22,.8,.3,1) both", filter: "drop-shadow(0 0 18px rgba(255,255,255,.18))" }} />
+        <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: 1.2, animation: "fiftyTextIn .85s ease-out .18s both" }}>Fifty Fit</div>
+        <div style={{ marginTop: 7, fontSize: 11, color: "#8e8e8e", letterSpacing: 0.6, animation: "fiftyTextIn .75s ease-out .32s both" }}>TRAIN • EAT • PROGRESS</div>
       </div>
       <style>{`@keyframes fiftyLogoIn{0%{opacity:0;transform:scale(.72) rotate(-7deg)}45%{opacity:1;transform:scale(1.08) rotate(2deg)}72%{transform:scale(.98) rotate(0deg)}100%{opacity:1;transform:scale(1) rotate(0deg)}}@keyframes fiftyTextIn{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:translateY(0)}}`}</style>
     </div>

@@ -9,6 +9,8 @@
 import { VERIFY_PURCHASE_ENDPOINT } from "./config";
 import { auth } from "./firebase";
 
+const DELETE_ACCOUNT_TIMEOUT_MS = 15000;
+
 function deleteAccountEndpoint() {
   return (VERIFY_PURCHASE_ENDPOINT || "").replace(
     "/functions/v1/verify-purchase",
@@ -24,21 +26,36 @@ export async function deleteAccountServerData() {
   if (!user) throw new Error("sign-in required");
 
   const idToken = await user.getIdToken(true);
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    },
-    body: "{}",
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DELETE_ACCOUNT_TIMEOUT_MS);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: "{}",
+      signal: controller.signal,
+    });
 
-  const data = await res.json().catch(() => null);
-  if (!res.ok || data?.ok !== true) {
-    const err = new Error(data?.message || data?.error || `HTTP ${res.status}`);
-    err.code = data?.error || "delete_account_failed";
-    throw err;
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.ok !== true) {
+      const err = new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      err.code = data?.error || "delete_account_failed";
+      err.status = res.status;
+      throw err;
+    }
+
+    return data;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error("delete_account_timeout");
+      timeoutError.code = "delete_account_timeout";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-
-  return data;
 }

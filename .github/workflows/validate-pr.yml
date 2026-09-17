@@ -103,11 +103,19 @@ jobs:
           print('package.json/package-lock.json consistency passed')
           PY
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Build web application
         run: npm run build
 
       - name: Add Android platform
-        run: npx cap add android || true
+        run: |
+          set -euo pipefail
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          test -d android/app
 
       - name: Inject google-services.json for Android compile validation
         env:
@@ -119,33 +127,31 @@ jobs:
           printf '%s' "$GS_B64" | base64 -d > android/app/google-services.json
           test -s android/app/google-services.json
 
-      - name: Apply generated Android runtime patches
+      - name: Prepare production Android native bridges
         run: |
           set -euo pipefail
           npx cap sync android
+          rm -rf node_modules/capacitor-billing
+          python3 scripts/inject-fiftyfit-billing-v2.py
+          python3 scripts/apply-billing-main-thread.py
           python3 scripts/inject-android-system-ui.py
-          if [ -f scripts/inject-tiktok-webview.py ]; then python3 scripts/inject-tiktok-webview.py; else echo 'No legacy TikTok injector present; native bridge is supplied by the release workflow.'; fi
+          python3 scripts/harden-tiktok-player-webview.py
+          test -f android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
 
-      - name: Validate Play Billing app dependency pin
+      - name: Validate first-party Play Billing bridge
         run: |
           set -euo pipefail
-          APP_GRADLE='android/app/build.gradle'
-          test -f "$APP_GRADLE"
-          grep -q 'com.android.billingclient:billing:9.1.0' "$APP_GRADLE"
-          if grep -q 'com.android.billingclient:billing:7.1.0' "$APP_GRADLE"; then echo 'PBL7 billing dependency remains in app module'; exit 1; fi
-          echo 'Play Billing 9.1.0 app dependency pin verified.'
+          grep -q 'FIFTYFIT_NATIVE_BILLING_V7' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          grep -q 'FIFTYFIT_BILLING_MAIN_THREAD_V1' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          grep -q 'runOnUiThread' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
+          grep -q 'registerPlugin(FiftyFitBillingPlugin.class)' android/app/src/main/java/com/bodyahmed77/fiftyfit/MainActivity.java
+          grep -q 'com.android.billingclient:billing:9.1.0' android/app/build.gradle
+          test ! -d node_modules/capacitor-billing
+          echo 'First-party Billing bridge validation passed'
 
-      - name: Inspect resolved Play Billing version for capacitor-billing
+      - name: Compile Android debug artifact (production Billing compatibility gate)
         working-directory: android
-        run: |
-          set -euo pipefail
-          ./gradlew :capacitor-billing:dependencyInsight --dependency com.android.billingclient:billing --configuration debugCompileClasspath | tee /tmp/fiftyfit-pbl.txt
-          grep -Eq 'com\.android\.billingclient:billing:9\.1\.0' /tmp/fiftyfit-pbl.txt
-          echo 'Resolved Play Billing 9.1.0 verified.'
-
-      - name: Compile Android debug artifact (Billing/PBL compatibility gate)
-        working-directory: android
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Verify release-time Billing normalization transform
         run: |
@@ -164,6 +170,7 @@ jobs:
           from pathlib import Path
           text = Path('.github/workflows/build-android.yml').read_text(encoding='utf-8')
           assert 'gradlew' in text
-          assert 'assembleRelease' in text or 'bundleRelease' in text
+          assert 'assembleRelease' in text and 'bundleRelease' in text
+          assert 'FiftyFitBillingPlugin.java' in text
           print('Android release workflow sanity passed')
           PY

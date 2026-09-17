@@ -4,25 +4,34 @@ import re
 p = Path("src/App.jsx")
 s = p.read_text(encoding="utf-8")
 
+
+def replace_once(text, old, new, label):
+    if new in text:
+        return text
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"production-final-2: {label}: expected 1 match, found {count}")
+    return text.replace(old, new, 1)
+
 # Paywall component needs the verified-state setter so a successful server
-# verification updates the runtime entitlement immediately, before Firestore
-# snapshot reconciliation.
-s = s.replace(
+# verification updates the runtime entitlement immediately.
+s = replace_once(
+    s,
     'function PaywallScreen({ data, setData, back, showToast, params = {} }) {',
     'function PaywallScreen({ data, setData, setVerifiedEntitlements, back, showToast, params = {} }) {',
-    1,
+    "paywall component signature",
 )
 
-# The root router has several screen components; only modify the Paywall block.
 pattern = re.compile(r'content\s*=\s*\(\s*<PaywallScreen\n([\s\S]*?\n\s*back=\{back\})', re.M)
 m = pattern.search(s)
-if m:
-    block = m.group(0)
-    if 'setVerifiedEntitlements={setVerifiedEntitlements}' not in block:
-        block = block.replace('\n        back={back}', '\n        setVerifiedEntitlements={setVerifiedEntitlements}\n        back={back}', 1)
-        s = s[:m.start()] + block + s[m.end():]
+if m and 'setVerifiedEntitlements={setVerifiedEntitlements}' not in m.group(0):
+    block = m.group(0).replace(
+        '\n        back={back}',
+        '\n        setVerifiedEntitlements={setVerifiedEntitlements}\n        back={back}',
+        1,
+    )
+    s = s[:m.start()] + block + s[m.end():]
 
-# Successful purchase/restore expiry must be normalized without double suffixes.
 s = s.replace(
     '      next.entitlements.proExpiresAt = null;\n      // A newly activated Training Pro subscription',
     '      next.entitlements.proExpiresAt = serverVerification?.expiresAt || null;\n      // A newly activated Training Pro subscription',
@@ -31,68 +40,36 @@ s = s.replace(
 
 # ---------------------------------------------------------------------------
 # Missing-profile recovery.
-# A Firestore snapshot that does not exist is NOT permission/network failure,
-# but it also must not silently become a fresh account and send a returning
-# user through onboarding. Preserve any local cached state, surface an explicit
-# recovery screen, and make starting from scratch an explicit user action.
 # ---------------------------------------------------------------------------
-state_anchor = '  const [saveError, setSaveError] = useState(null);\n'
-state_patch = '  const [saveError, setSaveError] = useState(null);\n  const [profileMissing, setProfileMissing] = useState(false);\n'
-if state_patch not in s:
-    if state_anchor not in s:
-        raise SystemExit("missing-profile: state anchor not found")
-    s = s.replace(state_anchor, state_patch, 1)
+if 'const [profileMissing, setProfileMissing] = useState(false);' not in s:
+    s = replace_once(
+        s,
+        '  const [saveError, setSaveError] = useState(null);\n',
+        '  const [saveError, setSaveError] = useState(null);\n  const [profileMissing, setProfileMissing] = useState(false);\n',
+        "missing-profile state",
+    )
 
-# The preceding production-final pass may already have added firestoreEntitlementsRef
-# and loadError to this exact reset block. Patch either shape idempotently.
-reset_patch = '''      setSaveError(null);
-      setProfileMissing(false);
-      return;'''
-if reset_patch not in s:
-    reset_candidates = [
-        '''      setNotifications([]);
-      verifiedEntitlementsRef.current = null;
-      firestoreEntitlementsRef.current = null;
+# Clear recovery state when auth identity changes. Support all hardening generations.
+if 'setProfileMissing(false);' not in s:
+    candidates = [
+        '''      firestoreEntitlementsRef.current = null;
       setLoadError(null);
       return;''',
-        '''      setNotifications([]);
-      verifiedEntitlementsRef.current = null;
+        '''      verifiedEntitlementsRef.current = null;
+      setLoadError(null);
+      return;''',
+        '''      verifiedEntitlementsRef.current = null;
       return;''',
     ]
-    matched = False
-    for candidate in reset_candidates:
+    for candidate in candidates:
         if candidate in s:
             replacement = candidate.replace(
-                '      setNotifications([]);\n',
-                '      setNotifications([]);\n',
-                1,
-            ).replace(
-                '      setLoadError(null);\n      return;',
-                '      setLoadError(null);\n      setSaveError(null);\n      setProfileMissing(false);\n      return;',
-                1,
-            )
-            replacement = replacement.replace(
-                '      verifiedEntitlementsRef.current = null;\n      return;',
-                '      verifiedEntitlementsRef.current = null;\n      setSaveError(null);\n      setProfileMissing(false);\n      return;',
+                '      return;',
+                '      setSaveError(null);\n      setProfileMissing(false);\n      return;',
                 1,
             )
             s = s.replace(candidate, replacement, 1)
-            matched = True
             break
-    if not matched and reset_patch not in s:
-        # As a final structural fallback, anchor on the start of the uid-less branch.
-        branch_anchor = '''    if (!uid) {
-      setLoaded(false);
-      setNotifications([]);'''
-        branch_match = s.count(branch_anchor)
-        if branch_match != 1:
-            raise SystemExit(f"missing-profile: uid reset anchor not found (candidates tried: {branch_match})")
-        old = branch_anchor + '''
-'''
-        new = branch_anchor + '''
-      setSaveError(null);
-      setProfileMissing(false);'''
-        s = s.replace(old, new, 1)
 
 snapshot_anchor = '''      (snap) => {
         const fresh = freshState();
@@ -102,8 +79,8 @@ snapshot_patch = '''      (snap) => {
         if (!snap.exists()) {
           setProfileMissing(true);
           setLoaded(true);
-          // Preserve an already hydrated local account cache. Do not replace
-          // it with freshState() merely because the server document is absent.
+          // Preserve already-hydrated local state. A missing remote document
+          // must never silently masquerade as a brand-new account.
           return;
         }
         setProfileMissing(false);
@@ -113,26 +90,36 @@ if snapshot_patch not in s:
         raise SystemExit("missing-profile: snapshot anchor not found")
     s = s.replace(snapshot_anchor, snapshot_patch, 1)
 
-return_anchor = '      saveError,\n      loadError,\n    );'
-return_patch = '      saveError,\n      loadError,\n      profileMissing,\n      clearProfileMissing: () => setProfileMissing(false),\n    );'
-if return_patch not in s:
-    if return_anchor in s:
-        s = s.replace(return_anchor, return_patch, 1)
-    else:
-        alt = '      loadError,\n    };'
-        if alt not in s:
-            raise SystemExit("missing-profile: useAppData return anchor not found")
-        s = s.replace(alt, '      loadError,\n      profileMissing,\n      clearProfileMissing: () => setProfileMissing(false),\n    };', 1)
+# Extend useAppData's return contract without depending on exact formatting or
+# whether a previous patch already introduced loadError.
+if 'clearProfileMissing: () => setProfileMissing(false)' not in s:
+    return_pattern = re.compile(
+        r'(return\s*\{\s*data,\s*setData,\s*setVerifiedEntitlements,\s*loaded,\s*notifications,\s*writePending,\s*saveError)'
+        r'(,\s*loadError)?(\s*\};)',
+        re.S,
+    )
+    rm = return_pattern.search(s)
+    if not rm:
+        raise SystemExit("missing-profile: useAppData return anchor not found")
+    suffix = rm.group(2) or ''
+    replacement = rm.group(1) + suffix + ', profileMissing, clearProfileMissing: () => setProfileMissing(false)' + rm.group(3)
+    s = s[:rm.start()] + replacement + s[rm.end():]
 
-# Root router receives the explicit missing-profile state.
-destructure_anchor = '''const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError, loadError } = useAppData(
-'''
-destructure_patch = '''const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError, loadError, profileMissing, clearProfileMissing } = useAppData(
-'''
-if destructure_patch not in s:
-    if destructure_anchor not in s:
+# Root router receives the explicit missing-profile state, regardless of line wrapping.
+if 'profileMissing, clearProfileMissing' not in s:
+    root_pattern = re.compile(
+        r'const\s*\{\s*data,\s*setData,\s*setVerifiedEntitlements,\s*loaded,\s*writePending,\s*saveError,\s*loadError\s*\}\s*=\s*useAppData\s*\(',
+        re.S,
+    )
+    mm = root_pattern.search(s)
+    if not mm:
         raise SystemExit("missing-profile: root destructuring anchor not found")
-    s = s.replace(destructure_anchor, destructure_patch, 1)
+    replacement = mm.group(0).replace(
+        'saveError, loadError',
+        'saveError, loadError, profileMissing, clearProfileMissing',
+        1,
+    )
+    s = s[:mm.start()] + replacement + s[mm.end():]
 
 phase_anchor = '''    if (firebaseUser === null) {
       setPhase("welcome");
@@ -205,8 +192,10 @@ if 'Account recovery needed' not in s:
         raise SystemExit("missing-profile: recovery screen marker not found")
     s = s.replace(marker, recovery_screen + marker, 1)
 
+# Content fix found during exercise audit.
 s = s.replace('nameAr: "سمانه",', 'nameAr: "رفع الرجل",', 1)
 
+# Robust expiry countdown for date-only and timestamp values.
 old_days = '''function daysUntil(iso) {
   if (!iso) return 0;
   const ms = new Date(iso + "T00:00:00") - new Date(dateKey(0) + "T00:00:00");
@@ -230,4 +219,4 @@ if 'FIFTYFIT_ACCOUNT_RECOVERY_V1' not in s:
     s = '/* FIFTYFIT_ACCOUNT_RECOVERY_V1 */\n' + s
 
 p.write_text(s, encoding="utf-8")
-print('paywall + missing-profile recovery + exercise-content hardening applied')
+print("paywall + missing-profile recovery + exercise-content hardening applied")

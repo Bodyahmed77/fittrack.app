@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies without source-mutating postinstall
         run: npm ci --ignore-scripts
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Apply required native diagnostics only
         run: |
           set -euo pipefail

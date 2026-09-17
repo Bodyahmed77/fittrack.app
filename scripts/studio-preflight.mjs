@@ -27,14 +27,22 @@ assert(aiReport.includes("MAX_REPORTS_PER_HOUR = 10"), "AI report rate limit mis
 assert(aiReport.includes('status: "open"'), "AI report review status missing");
 assert(health.includes("FIFTYFIT_HEALTH_PROBE_SECRET"), "AI health probe is not operator-gated");
 assert(health.includes('return json(200, { ok: true });'), "AI health public response must stay minimal");
+
 assert(adminApi.includes("assertAdmin"), "admin API must enforce admin authorization");
+assert(adminApi.includes("ALLOWED_ORIGINS"), "admin API CORS must use an explicit allowlist");
+assert(adminApi.includes("firestoreSearchUserByEmail"), "admin API centralized user search missing");
 assert(adminApi.includes("admin_audit_log"), "admin API must produce an audit trail");
 assert(adminApi.includes("user_pro_update"), "admin Pro management action missing");
 assert(adminApi.includes("send_notification"), "admin notification action missing");
+
+assert(adminDashboard.includes("Admin support entitlements"), "admin support entitlement view missing");
+assert(adminDashboard.includes("Google Play entitlements"), "paid entitlement separation view missing");
 assert(adminDashboard.includes("AI Reports"), "admin dashboard reports view missing");
 assert(adminDashboard.includes("Billing"), "admin dashboard billing view missing");
 assert(adminDashboard.includes("Audit"), "admin dashboard audit view missing");
 assert(adminClient.includes("/functions/v1/admin-api"), "admin API client endpoint missing");
+assert(adminClient.includes("searchUsers"), "admin API client user-search method missing");
+
 assert(app.includes("FIFTYFIT_ADMIN_DASHBOARD_V1"), "lazy admin dashboard integration missing");
 assert(app.includes("FIFTYFIT_ACCOUNT_RECOVERY_V1"), "account recovery hardening is missing from transformed App source");
 assert(app.includes("FIFTYFIT_PRODUCTION_FINAL_V1"), "production final hardening is missing from transformed App source");

@@ -2,7 +2,12 @@
 // Public Firebase client configuration. Security is enforced by Auth + Firestore
 // Rules and server-side verification; no service-account credentials belong here.
 import { initializeApp } from "firebase/app";
-import { getAuth, setPersistence, indexedDBLocalPersistence } from "firebase/auth";
+import {
+  getAuth,
+  setPersistence,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+} from "firebase/auth";
 import {
   getFirestore,
   initializeFirestore,
@@ -30,14 +35,17 @@ const webDemoMode =
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
 
-// The public web demo never needs auth persistence. Skipping IndexedDB here
-// avoids browser/private-mode storage failures while preserving normal native
-// persistence for the actual application.
+// The public web demo never needs auth persistence. Skipping persistent auth
+// storage there avoids browser/private-mode storage failures while preserving
+// durable local persistence for the real application.
 export const authPersistenceReady = webDemoMode
   ? Promise.resolve()
   : setPersistence(auth, indexedDBLocalPersistence).catch((error) => {
-      console.warn("[Firebase Auth] IndexedDB persistence unavailable", error);
-      return null;
+      console.warn("[Firebase Auth] IndexedDB persistence unavailable; using localStorage", error);
+      return setPersistence(auth, browserLocalPersistence).catch((fallbackError) => {
+        console.error("[Firebase Auth] Local persistence unavailable", fallbackError);
+        return null;
+      });
     });
 
 // The public demo never reads/writes Firestore. Avoid constructing the

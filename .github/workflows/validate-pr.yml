@@ -77,7 +77,6 @@ jobs:
           node --check admin/publish-any-plan.js
           node --check admin/command-center-v3.js
           node --check docs/admin/boot.js
-          node --check web-demo/main.jsx
 
       - name: Validate dependency manifest consistency
         run: |

@@ -43,12 +43,56 @@ if state_patch not in s:
         raise SystemExit("missing-profile: state anchor not found")
     s = s.replace(state_anchor, state_patch, 1)
 
-reset_anchor = '      setSaveError(null);\n      return;'
-reset_patch = '      setSaveError(null);\n      setProfileMissing(false);\n      return;'
+# The preceding production-final pass may already have added firestoreEntitlementsRef
+# and loadError to this exact reset block. Patch either shape idempotently.
+reset_patch = '''      setSaveError(null);
+      setProfileMissing(false);
+      return;'''
 if reset_patch not in s:
-    if reset_anchor not in s:
-        raise SystemExit("missing-profile: uid reset anchor not found")
-    s = s.replace(reset_anchor, reset_patch, 1)
+    reset_candidates = [
+        '''      setNotifications([]);
+      verifiedEntitlementsRef.current = null;
+      firestoreEntitlementsRef.current = null;
+      setLoadError(null);
+      return;''',
+        '''      setNotifications([]);
+      verifiedEntitlementsRef.current = null;
+      return;''',
+    ]
+    matched = False
+    for candidate in reset_candidates:
+        if candidate in s:
+            replacement = candidate.replace(
+                '      setNotifications([]);\n',
+                '      setNotifications([]);\n',
+                1,
+            ).replace(
+                '      setLoadError(null);\n      return;',
+                '      setLoadError(null);\n      setSaveError(null);\n      setProfileMissing(false);\n      return;',
+                1,
+            )
+            replacement = replacement.replace(
+                '      verifiedEntitlementsRef.current = null;\n      return;',
+                '      verifiedEntitlementsRef.current = null;\n      setSaveError(null);\n      setProfileMissing(false);\n      return;',
+                1,
+            )
+            s = s.replace(candidate, replacement, 1)
+            matched = True
+            break
+    if not matched and reset_patch not in s:
+        # As a final structural fallback, anchor on the start of the uid-less branch.
+        branch_anchor = '''    if (!uid) {
+      setLoaded(false);
+      setNotifications([]);'''
+        branch_match = s.count(branch_anchor)
+        if branch_match != 1:
+            raise SystemExit(f"missing-profile: uid reset anchor not found (candidates tried: {branch_match})")
+        old = branch_anchor + '''
+'''
+        new = branch_anchor + '''
+      setSaveError(null);
+      setProfileMissing(false);'''
+        s = s.replace(old, new, 1)
 
 snapshot_anchor = '''      (snap) => {
         const fresh = freshState();
@@ -75,19 +119,16 @@ if return_patch not in s:
     if return_anchor in s:
         s = s.replace(return_anchor, return_patch, 1)
     else:
-        # Fallback: patch the hook return object near the end of useAppData.
         alt = '      loadError,\n    };'
         if alt not in s:
             raise SystemExit("missing-profile: useAppData return anchor not found")
-        s = s.replace(alt, return_patch.replace('    );', '    };'), 1)
+        s = s.replace(alt, '      loadError,\n      profileMissing,\n      clearProfileMissing: () => setProfileMissing(false),\n    };', 1)
 
 # Root router receives the explicit missing-profile state.
 destructure_anchor = '''const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError, loadError } = useAppData(
 '''
 destructure_patch = '''const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError, loadError, profileMissing, clearProfileMissing } = useAppData(
 '''
-if structure_patch := (destructure_anchor != destructure_patch):
-    pass
 if destructure_patch not in s:
     if destructure_anchor not in s:
         raise SystemExit("missing-profile: root destructuring anchor not found")
@@ -112,9 +153,6 @@ if phase_patch not in s:
         raise SystemExit("missing-profile: phase gate anchor not found")
     s = s.replace(phase_anchor, phase_patch, 1)
 
-# Recovery screen inserted before the generic auth screen. No destructive
-# action is taken; "Start fresh" only clears this local guard and continues to
-# the existing onboarding flow.
 marker = '  let authScreen = null;\n'
 recovery_screen = '''  if (phase === "accountRecovery") {
     return (
@@ -167,10 +205,8 @@ if 'Account recovery needed' not in s:
         raise SystemExit("missing-profile: recovery screen marker not found")
     s = s.replace(marker, recovery_screen + marker, 1)
 
-# Content fix found during exercise-content audit.
 s = s.replace('nameAr: "سمانه",', 'nameAr: "رفع الرجل",', 1)
 
-# Robust canonical expiry helper; release hardening remains defensive too.
 old_days = '''function daysUntil(iso) {
   if (!iso) return 0;
   const ms = new Date(iso + "T00:00:00") - new Date(dateKey(0) + "T00:00:00");

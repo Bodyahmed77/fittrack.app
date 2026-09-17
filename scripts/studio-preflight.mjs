@@ -19,6 +19,7 @@ const main = read("src/main.jsx");
 const adminBoot = read("admin/boot.js");
 const adminCommandCenter = read("admin/command-center-v3.js");
 const docsAdminBoot = read("docs/admin/boot.js");
+const adminExpiryPatch = read("scripts/patch-admin-entitlement-expiry.py");
 
 assert(packageJson.type === "module", "package must use ESM");
 assert(capacitor.appId === "com.bodyahmed77.fiftyfit", "Android applicationId drift detected");
@@ -37,12 +38,16 @@ assert(adminApi.includes("firestoreSearchUserByEmail"), "admin API centralized u
 assert(adminApi.includes("admin_audit_log"), "admin API must produce an audit trail");
 assert(adminApi.includes("user_pro_update"), "admin Pro management action missing");
 assert(adminApi.includes("send_notification"), "admin notification action missing");
+assert(adminApi.includes("function parseExpiry"), "admin expiry parser missing");
+assert(adminApi.includes("return parsed.valid && parsed.ms > Date.now();"), "admin expiry must fail closed");
 
 assert(adminDashboard.includes("Admin support entitlements"), "admin support entitlement view missing");
 assert(adminDashboard.includes("Google Play entitlements"), "paid entitlement separation view missing");
 assert(adminDashboard.includes("AI Reports"), "admin dashboard reports view missing");
 assert(adminDashboard.includes("Billing"), "admin dashboard billing view missing");
 assert(adminDashboard.includes("Audit"), "admin dashboard audit view missing");
+assert(adminDashboard.includes("purchaseActive"), "admin purchase status must account for expiry");
+assert(adminExpiryPatch.includes("const active = !!expiry && Number.isFinite(expiryMs) && expiryMs > Date.now();"), "admin support expiry patch is not fail-closed");
 assert(adminClient.includes("/functions/v1/admin-api"), "admin API client endpoint missing");
 assert(adminClient.includes("searchUsers"), "admin API client user-search method missing");
 

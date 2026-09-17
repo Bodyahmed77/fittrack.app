@@ -52,6 +52,9 @@ jobs:
       - name: Validate production invariants
         run: python3 scripts/validate-production-invariants.py
 
+      - name: Validate update safety
+        run: python3 scripts/validate-update-safety.py
+
       - name: Validate Python scripts
         run: python3 -m py_compile scripts/*.py
 

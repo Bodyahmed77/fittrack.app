@@ -129,6 +129,8 @@ jobs:
           test -s dist/demo/assets
           test -s dist/admin/index.html
           test -s dist/admin/app.js
+          test -s dist/admin/boot.js
+          grep -q 'command-center-v3.js' dist/admin/boot.js
           test -s dist/admin/boot-v2.js
           test -s dist/admin/nutrition-builder.js
           test -s dist/privacy-policy.html
@@ -210,6 +212,8 @@ jobs:
 
           curl -fsS "${PAGE_URL}admin/" >/tmp/public-admin.html
           grep -q '<title>Fifty Fit' /tmp/public-admin.html || grep -qi 'Fifty Fit' /tmp/public-admin.html
+          curl -fsS "${PAGE_URL}admin/boot.js" >/tmp/public-admin-boot.js
+          grep -q 'command-center-v3.js' /tmp/public-admin-boot.js
           curl -fsS "${PAGE_URL}privacy-policy.html" >/dev/null
           curl -fsS "${PAGE_URL}account-deletion.html" >/dev/null
 
@@ -223,5 +227,6 @@ jobs:
             /tmp/public-demo-dom.html
             /tmp/public-demo-chrome.stderr
             /tmp/public-admin.html
+            /tmp/public-admin-boot.js
           if-no-files-found: ignore
           retention-days: 7

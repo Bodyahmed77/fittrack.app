@@ -33,7 +33,7 @@ async function boot() {
     fetchText("cardio.js"),
     fetchText("nutrition-builder.js"),
     fetchText("publish-any-plan.js"),
-    fetchText("command-center-v2.js"),
+    fetchText("command-center-v3.js"),
   ]);
 
   const style = document.createElement("style");
@@ -63,7 +63,7 @@ async function boot() {
   await importBlob(cardioSource, "admin/cardio.js");
   await importBlob(normalizedNutrition, "admin/nutrition-builder.js");
   await importBlob(publishSource, "admin/publish-any-plan.js");
-  await importBlob(commandCenterSource, "admin/command-center-v2.js");
+  await importBlob(commandCenterSource, "admin/command-center-v3.js");
 }
 
 boot().catch(showBootError);

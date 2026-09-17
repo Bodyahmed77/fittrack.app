@@ -38,7 +38,19 @@ export const adminApi = {
   audit: (limit = 50) => request("audit_recent", { limit }),
   updateReport: (reportId, status) => request("report_update", { reportId, status }),
   updateUserAccount: (targetUid, name, phone) => request("user_account_update", { targetUid, name, phone }),
-  updateUserPro: (targetUid, enabled) => request("user_pro_update", { targetUid, enabled }),
+  updateUserPro: (targetUid, enabled) => request("user_pro_update", {
+    targetUid,
+    trainingPro: !!enabled,
+    nutritionPro: !!enabled,
+    aiCoachPro: !!enabled,
+  }),
+  updateUserEntitlements: (targetUid, changes = {}) => request("user_pro_update", {
+    targetUid,
+    trainingPro: changes.trainingPro,
+    nutritionPro: changes.nutritionPro,
+    aiCoachPro: changes.aiCoachPro,
+    proExpiresAt: changes.proExpiresAt,
+  }),
   sendNotification: (targetUid, title, message) => request("send_notification", { targetUid, title, message }),
 };
 

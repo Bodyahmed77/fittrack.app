@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -35,7 +36,7 @@ script_text = "\n".join(
 require('"com.bodyahmed77.fiftyfit"' in capacitor, "canonical Android applicationId missing")
 require("fittrack-698fa" in app or "fittrack-698fa" in read("src/firebase.js"), "Firebase project identity missing")
 require("versionCode {2000+n}" in release_workflow, "release versionCode is not generated monotonically from workflow runs")
-require("versionName \\\"1.0.{n}\\\"" in release_workflow, "release versionName generation missing")
+require(re.search(r'versionName\s+"1\.0\.\{n\}"', release_workflow) is not None, "release versionName generation missing")
 
 # Stable user-facing document keys and cache keys must remain represented in
 # canonical source or in a committed transformation that produces that source.

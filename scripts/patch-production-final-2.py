@@ -23,15 +23,175 @@ if m:
         s = s[:m.start()] + block + s[m.end():]
 
 # Successful purchase/restore expiry must be normalized without double suffixes.
-# We intentionally fix the known purchase path only.
 s = s.replace(
     '      next.entitlements.proExpiresAt = null;\n      // A newly activated Training Pro subscription',
     '      next.entitlements.proExpiresAt = serverVerification?.expiresAt || null;\n      // A newly activated Training Pro subscription',
     1,
 )
 
+# ---------------------------------------------------------------------------
+# Missing-profile recovery.
+# A Firestore snapshot that does not exist is NOT permission/network failure,
+# but it also must not silently become a fresh account and send a returning
+# user through onboarding. Preserve any local cached state, surface an explicit
+# recovery screen, and make starting from scratch an explicit user action.
+# ---------------------------------------------------------------------------
+state_anchor = '  const [saveError, setSaveError] = useState(null);\n'
+state_patch = '  const [saveError, setSaveError] = useState(null);\n  const [profileMissing, setProfileMissing] = useState(false);\n'
+if state_patch not in s:
+    if state_anchor not in s:
+        raise SystemExit("missing-profile: state anchor not found")
+    s = s.replace(state_anchor, state_patch, 1)
+
+reset_anchor = '      setSaveError(null);\n      return;'
+reset_patch = '      setSaveError(null);\n      setProfileMissing(false);\n      return;'
+if reset_patch not in s:
+    if reset_anchor not in s:
+        raise SystemExit("missing-profile: uid reset anchor not found")
+    s = s.replace(reset_anchor, reset_patch, 1)
+
+snapshot_anchor = '''      (snap) => {
+        const fresh = freshState();
+        const parsed = snap.exists() ? snap.data() : {};'''
+snapshot_patch = '''      (snap) => {
+        const fresh = freshState();
+        if (!snap.exists()) {
+          setProfileMissing(true);
+          setLoaded(true);
+          // Preserve an already hydrated local account cache. Do not replace
+          // it with freshState() merely because the server document is absent.
+          return;
+        }
+        setProfileMissing(false);
+        const parsed = snap.data();'''
+if snapshot_patch not in s:
+    if snapshot_anchor not in s:
+        raise SystemExit("missing-profile: snapshot anchor not found")
+    s = s.replace(snapshot_anchor, snapshot_patch, 1)
+
+return_anchor = '      saveError,\n      loadError,\n    );'
+return_patch = '      saveError,\n      loadError,\n      profileMissing,\n      clearProfileMissing: () => setProfileMissing(false),\n    );'
+if return_patch not in s:
+    if return_anchor in s:
+        s = s.replace(return_anchor, return_patch, 1)
+    else:
+        # Fallback: patch the hook return object near the end of useAppData.
+        alt = '      loadError,\n    };'
+        if alt not in s:
+            raise SystemExit("missing-profile: useAppData return anchor not found")
+        s = s.replace(alt, return_patch.replace('    );', '    };'), 1)
+
+# Root router receives the explicit missing-profile state.
+destructure_anchor = '''const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError, loadError } = useAppData(
+'''
+destructure_patch = '''const { data, setData, setVerifiedEntitlements, loaded, writePending, saveError, loadError, profileMissing, clearProfileMissing } = useAppData(
+'''
+if structure_patch := (destructure_anchor != destructure_patch):
+    pass
+if destructure_patch not in s:
+    if destructure_anchor not in s:
+        raise SystemExit("missing-profile: root destructuring anchor not found")
+    s = s.replace(destructure_anchor, destructure_patch, 1)
+
+phase_anchor = '''    if (firebaseUser === null) {
+      setPhase("welcome");
+      return;
+    }
+    if (loadError && !loaded && !data?.account?.email) {'''
+phase_patch = '''    if (firebaseUser === null) {
+      setPhase("welcome");
+      return;
+    }
+    if (profileMissing) {
+      setPhase("accountRecovery");
+      return;
+    }
+    if (loadError && !loaded && !data?.account?.email) {'''
+if phase_patch not in s:
+    if phase_anchor not in s:
+        raise SystemExit("missing-profile: phase gate anchor not found")
+    s = s.replace(phase_anchor, phase_patch, 1)
+
+# Recovery screen inserted before the generic auth screen. No destructive
+# action is taken; "Start fresh" only clears this local guard and continues to
+# the existing onboarding flow.
+marker = '  let authScreen = null;\n'
+recovery_screen = '''  if (phase === "accountRecovery") {
+    return (
+      <UIContext.Provider value={{ C, lang }}>
+        <div
+          dir={lang === "ar" ? "rtl" : "ltr"}
+          style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}
+        >
+          <div style={{ width: "100%", maxWidth: 380 }}>
+            <div style={{ fontSize: 38, marginBottom: 14 }}>↩️</div>
+            <div style={{ fontWeight: 900, fontSize: 20 }}>
+              {lang === "ar" ? "حسابك محتاج استرجاع" : "Account recovery needed"}
+            </div>
+            <div style={{ color: C.sub, fontSize: 13.5, lineHeight: 1.65, marginTop: 10 }}>
+              {lang === "ar"
+                ? "لم نجد ملف التقدم المرتبط بالحساب المسجل حاليًا. بياناتك القديمة لم يتم حذفها. سجّل بالحساب الذي استخدمته سابقًا، أو ابدأ حسابًا جديدًا بشكل صريح."
+                : "We could not find the progress profile for the account currently signed in. Your old data was not deleted. Sign in with your previous account, or explicitly start a new profile."}
+            </div>
+            {firebaseUser?.email ? (
+              <div style={{ marginTop: 12, color: C.text, fontSize: 12, fontWeight: 700, wordBreak: "break-word" }}>
+                {firebaseUser.email}
+              </div>
+            ) : null}
+            <div style={{ display: "grid", gap: 10, marginTop: 22 }}>
+              <GreenButton
+                onClick={() => {
+                  clearProfileMissing?.();
+                  setPhase("onboarding");
+                }}
+              >
+                {lang === "ar" ? "ابدأ كحساب جديد" : "Start as a new account"}
+              </GreenButton>
+              <button
+                type="button"
+                onClick={() => signOut(auth)}
+                style={{ width: "100%", padding: "12px 14px", borderRadius: 13, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontWeight: 800, fontSize: 13, cursor: "pointer" }}
+              >
+                {lang === "ar" ? "تسجيل الخروج واستخدام حساب آخر" : "Sign out and use another account"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </UIContext.Provider>
+    );
+  }
+
+'''
+if 'Account recovery needed' not in s:
+    if marker not in s:
+        raise SystemExit("missing-profile: recovery screen marker not found")
+    s = s.replace(marker, recovery_screen + marker, 1)
+
+# Content fix found during exercise-content audit.
+s = s.replace('nameAr: "سمانه",', 'nameAr: "رفع الرجل",', 1)
+
+# Robust canonical expiry helper; release hardening remains defensive too.
+old_days = '''function daysUntil(iso) {
+  if (!iso) return 0;
+  const ms = new Date(iso + "T00:00:00") - new Date(dateKey(0) + "T00:00:00");
+  return Math.max(0, Math.round(ms / 86400000));
+}'''
+new_days = '''function daysUntil(iso) {
+  if (!iso) return 0;
+  const raw = String(iso).trim();
+  const ms = /^\\d{4}-\\d{2}-\\d{2}$/.test(raw)
+    ? Date.parse(`${raw}T23:59:59.999`)
+    : Date.parse(raw);
+  if (!Number.isFinite(ms)) return 0;
+  return Math.max(0, Math.ceil((ms - Date.now()) / 86400000));
+}'''
+if new_days not in s and old_days in s:
+    s = s.replace(old_days, new_days, 1)
+
 if 'FIFTYFIT_PAYWALL_WIRING_V1' not in s:
     s = '/* FIFTYFIT_PAYWALL_WIRING_V1 */\n' + s
+if 'FIFTYFIT_ACCOUNT_RECOVERY_V1' not in s:
+    s = '/* FIFTYFIT_ACCOUNT_RECOVERY_V1 */\n' + s
 
-p.write_text(s, encoding='utf-8')
-print('paywall verified-state wiring applied')
+p.write_text(s, encoding="utf-8")
+print('paywall + missing-profile recovery + exercise-content hardening applied')

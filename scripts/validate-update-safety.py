@@ -18,6 +18,7 @@ capacitor = read("capacitor.config.json")
 app = read("src/App.jsx")
 load_fallback = read("scripts/patch-load-fallback.py")
 production_final = read("scripts/patch-production-final-2.py")
+hydration_gate = read("scripts/patch-load-error-hydration-gate.py") if (ROOT / "scripts/patch-load-error-hydration-gate.py").exists() else ""
 recovery_prep = read("scripts/patch-missing-profile-phase-prep.py") if (ROOT / "scripts/patch-missing-profile-phase-prep.py").exists() else ""
 admin_overlay = read("scripts/patch-admin-entitlement-overlay.py")
 admin_dashboard = read("src/AdminDashboard.jsx")
@@ -59,9 +60,13 @@ require("setLoaded(hasCachedAccount || !!data?.account?.email);" in load_fallbac
 require("setProfileMissing(true);" in production_final, "missing remote profile must enter explicit recovery state")
 require('setPhase("accountRecovery")' in production_final or 'setPhase("accountRecovery")' in recovery_prep, "missing profile must enter explicit recovery phase")
 require("clearProfileMissing?.();" in production_final, "explicit new-account flow must clear recovery state")
-require("setProfileMissing(false);" in production_final, "valid profile snapshot must clear stale recovery state")
+require("setProfileMissing(false);" in production_final, "valid profile snapshot must clear recovery state")
 require('if (!snap.exists())' in production_final, "missing-profile branch must distinguish absent server profile")
-require('if (loadError && !loaded && !data?.account?.email)' in production_final, "load-error gate must not override hydrated account state")
+require(
+    'if (loadError && !loaded && !data?.account?.email)' in hydration_gate
+    or 'if (loadError && !loaded && !data?.account?.email)' in production_final,
+    "load-error gate must not override hydrated account state",
+)
 
 require("mergeEntitlementSources" in admin_overlay, "entitlement merge guard missing")
 require("adminEntitlementsRef" in admin_overlay, "admin support entitlement state is not isolated")

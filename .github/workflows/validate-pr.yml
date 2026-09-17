@@ -94,7 +94,12 @@ jobs:
         run: npm run build
 
       - name: Add Android platform
-        run: npx cap add android || true
+        run: |
+          set -euo pipefail
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          test -d android/app
 
       - name: Inject google-services.json for Android compile validation
         env:

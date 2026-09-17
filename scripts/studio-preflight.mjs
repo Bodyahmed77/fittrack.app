@@ -39,7 +39,11 @@ assert(adminApi.includes("admin_audit_log"), "admin API must produce an audit tr
 assert(adminApi.includes("user_pro_update"), "admin Pro management action missing");
 assert(adminApi.includes("send_notification"), "admin notification action missing");
 assert(adminApi.includes("function parseExpiry"), "admin expiry parser missing");
-assert(adminApi.includes("return parsed.valid && parsed.ms > Date.now();"), "admin expiry must fail closed");
+assert(
+  adminApi.includes("return parsed.valid && parsed.ms > Date.now();") ||
+  (adminApi.includes("function activeExpiry") && adminApi.includes("p.valid && p.ms > Date.now();")),
+  "admin expiry must fail closed",
+);
 
 assert(adminDashboard.includes("Admin support entitlements"), "admin support entitlement view missing");
 assert(adminDashboard.includes("Google Play entitlements"), "paid entitlement separation view missing");

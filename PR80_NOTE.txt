@@ -1,0 +1,1 @@
+PR #80 is the synchronized studio-hardening candidate. It includes the latest main recovery prep, fixes the update-safety false failure, and hardens admin entitlement expiry handling.

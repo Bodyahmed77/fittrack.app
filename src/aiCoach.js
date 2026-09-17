@@ -3,7 +3,6 @@
 // ============================================================
 import { AI_COACH_ENDPOINT, FREE_AI_MESSAGES_PER_DAY, PRO_AI_MESSAGES_PER_DAY, SUPABASE_ANON_KEY } from "./config";
 import { auth } from "./firebase";
-import { queryProducts as billingQueryProducts } from "./billing";
 
 let __keyboardPatchPromise = null;
 async function ensureNativeKeyboardResize() {
@@ -35,15 +34,6 @@ async function ensureNativeKeyboardResize() {
   })();
   return __keyboardPatchPromise;
 }
-ensureNativeKeyboardResize();
-
-let __playCatalogPromise = null;
-export function ensurePlayCatalogLoaded() {
-  if (__playCatalogPromise) return __playCatalogPromise;
-  __playCatalogPromise = Promise.resolve().then(() => billingQueryProducts()).catch(() => null);
-  return __playCatalogPromise;
-}
-ensurePlayCatalogLoaded();
 
 export function aiDailyLimit(hasAiPro) {
   return hasAiPro ? PRO_AI_MESSAGES_PER_DAY : FREE_AI_MESSAGES_PER_DAY;
@@ -151,6 +141,7 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
   __aiCoachInFlight = true;
   writeAiDiagnostics({ stage: "request_start" });
   try {
+    // Keyboard preparation is intentionally deferred until the AI feature is actually used.
     await ensureNativeKeyboardResize();
     const endpoint = resolveEndpoint();
     if (!endpoint) { const e = new Error("AI endpoint is not configured"); e.code = "no_endpoint"; writeAiDiagnostics({ stage: "client_config", code: e.code }); throw e; }
@@ -178,7 +169,7 @@ export async function generateCoachReply({ messages, lang, userContext, localDat
           continue;
         }
         if (response.status !== 503 || attempt >= 2) break;
-        writeAiDiagnostics({ stage: "backend_retry", attempt: attempt + 1, status: response.status });
+        writeAiDiagnostics({ stage: "backend_retry", attempt: attempt + 1, status: 503 });
         await new Promise((resolve) => setTimeout(resolve, 900));
       }
     } catch (e) {

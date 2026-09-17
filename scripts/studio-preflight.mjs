@@ -16,6 +16,9 @@ const adminDashboard = read("src/AdminDashboard.jsx");
 const adminClient = read("src/adminApi.js");
 const app = read("src/App.jsx");
 const main = read("src/main.jsx");
+const adminBoot = read("admin/boot.js");
+const adminCommandCenter = read("admin/command-center-v3.js");
+const docsAdminBoot = read("docs/admin/boot.js");
 
 assert(packageJson.type === "module", "package must use ESM");
 assert(capacitor.appId === "com.bodyahmed77.fiftyfit", "Android applicationId drift detected");
@@ -49,6 +52,14 @@ assert(app.includes("FIFTYFIT_PRODUCTION_FINAL_V1"), "production final hardening
 assert(main.includes("function StartupGate"), "startup gate is missing");
 assert(!main.includes('"Your data was not deleted."'), "ErrorBoundary still contains an unverifiable data-deletion claim");
 assert(!main.includes('"Your data was not deleted. Restart the app and try again."'), "ErrorBoundary still contains the old data-deletion claim");
+
+assert(adminCommandCenter.includes("FIFTYFIT_ADMIN_COMMAND_CENTER_V3"), "large admin command center v3 is missing");
+assert(adminCommandCenter.includes("Plan Requests"), "large admin plan request workspace is missing");
+assert(adminCommandCenter.includes("System Health"), "large admin system health workspace is missing");
+assert(adminCommandCenter.includes("Export CSV"), "large admin export action is missing");
+assert(adminCommandCenter.includes("getCountFromServer"), "large admin exact customer count is missing");
+assert(adminBoot.includes("command-center-v3.js"), "canonical admin boot is not loading command center v3");
+assert(docsAdminBoot.includes("command-center-v3.js"), "GitHub Pages admin boot is not loading command center v3");
 
 for (const file of ["src/firebase.js", "src/aiCoach.js", "src/aiReport.js", "capacitor.config.json"]) {
   assert(!read(file).includes("com.fittrack.app"), `${file} contains the retired Android package id`);

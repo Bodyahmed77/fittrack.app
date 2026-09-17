@@ -1,18 +1,19 @@
 from pathlib import Path
-import re
 
 APP = Path("src/App.jsx")
 MARKER = "FIFTYFIT_ADMIN_DASHBOARD_V1"
+LAZY_IMPORT = 'const AdminDashboardLazy = React.lazy(() => import("./AdminDashboard"));\n'
 
 s = APP.read_text(encoding="utf-8")
 
 if MARKER not in s:
-    lazy_anchor = 'import React, {'
-    if 'const AdminDashboardLazy = React.lazy(() => import("./AdminDashboard"));' not in s:
-        m = re.search(r'^import React, \{[^\n]+\};\n', s, re.M)
-        if not m:
-            raise SystemExit("admin dashboard: React import anchor not found")
-        s = s[:m.end()] + 'const AdminDashboardLazy = React.lazy(() => import("./AdminDashboard"));\n' + s[m.end():]
+    if LAZY_IMPORT not in s:
+        # App.jsx uses a multiline React import. Insert the lazy module immediately
+        # before the stable lucide import rather than depending on import formatting.
+        anchor = 'import {\n  Home as HomeIcon,'
+        if anchor not in s:
+            raise SystemExit("admin dashboard: lucide import anchor not found")
+        s = s.replace(anchor, LAZY_IMPORT + anchor, 1)
 
     start = s.find('function AdminScreen({ back, showToast }) {')
     end = s.find('/* ============================== APP ROOT ============================== */')

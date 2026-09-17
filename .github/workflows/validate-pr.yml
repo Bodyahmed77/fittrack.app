@@ -77,6 +77,7 @@ jobs:
           node --check admin/publish-any-plan.js
           node --check admin/command-center-v3.js
           node --check docs/admin/boot.js
+          node --check web-demo/main.jsx
 
       - name: Validate dependency manifest consistency
         run: |
@@ -95,6 +96,17 @@ jobs:
 
       - name: Build web application
         run: npm run build
+
+      - name: Build isolated web demo
+        run: |
+          set -euo pipefail
+          npx vite build --config vite.webdemo.config.js
+          test -s dist-web-demo/index.html
+          grep -q 'Fifty Fit' dist-web-demo/index.html
+          if grep -Eiq 'firebase|firestore|capacitor|billing|google-play|google\.com' dist-web-demo/assets/* 2>/dev/null; then
+            echo 'FAIL: production integration leaked into isolated web-demo artifact'
+            exit 1
+          fi
 
       - name: Add Android platform
         run: |

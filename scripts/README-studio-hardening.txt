@@ -1,1 +1,0 @@
-Final studio hardening changes are documented in STUDIO_HARDENING_FINAL.md.

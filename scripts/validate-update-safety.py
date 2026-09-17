@@ -16,11 +16,21 @@ def require(condition: bool, message: str) -> None:
 package = read("package.json")
 capacitor = read("capacitor.config.json")
 app = read("src/App.jsx")
-production = read("scripts/patch-production-final.py")
 load_fallback = read("scripts/patch-load-fallback.py")
 admin_overlay = read("scripts/patch-admin-entitlement-overlay.py")
 firestore_rules = read("firestore.rules")
 release_workflow = read(".github/workflows/build-android.yml")
+delete_account = read("supabase/functions/delete-account/index.ts")
+
+# Read exactly the Python patchers that are wired into the production build
+# rather than assuming a single historical patch owns a stable field.
+release_scripts = sorted(set(re.findall(r"scripts/([A-Za-z0-9._-]+\\.py)", package)))
+release_script_sources = []
+for script_name in release_scripts:
+    script_path = ROOT / "scripts" / script_name
+    if script_path.is_file():
+        release_script_sources.append(read(f"scripts/{script_name}"))
+release_patches = "\n".join(release_script_sources)
 
 # Identity must never drift between releases. A package-id change would make
 # Google Play treat the build as a different application.
@@ -40,7 +50,10 @@ for key in [
     "adminEntitlements",
     "workoutStartDate",
 ]:
-    require(key in app or key in production, f"stable data key '{key}' is missing")
+    require(
+        key in app or key in release_patches,
+        f"stable data key '{key}' is missing from App.jsx and the production patch chain",
+    )
 
 require("fiftyfit:account-cache:${uid}" in load_fallback, "account cache namespace drift detected")
 require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback, "returning-user fallback is missing")
@@ -54,7 +67,6 @@ require("request.resource.data.get(\"entitlements\", {}) ==" in firestore_rules,
 
 # The delete-account backend contract must remain stable for the external
 # deletion flow. Changes here require an explicit migration/review.
-delete_account = read("supabase/functions/delete-account/index.ts")
 require("delete_user_data" in delete_account and "p_uid" in delete_account, "delete-account RPC contract drift detected")
 
 # Production build must keep the defensive transforms in the chain. Removing

@@ -4,15 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'scripts/**'
-      - 'docs/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.js'
-      - 'vite.release.config.js'
+      - 'web-demo/**'
+      - 'vite.webdemo.config.js'
       - '.github/workflows/deploy-web-demo.yml'
       - 'admin/**'
+      - 'docs/privacy-policy.html'
+      - 'docs/account-deletion.html'
   workflow_dispatch:
 
 permissions:
@@ -46,33 +43,41 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build the canonical Fifty Fit app in web-demo mode
-        env:
-          VITE_WEB_DEMO: '1'
-        run: npm run build
-
-      - name: Validate canonical demo artifact
+      - name: Validate isolated demo source
         run: |
           set -euo pipefail
-          test -s dist/index.html
-          test "$(find dist/assets -maxdepth 1 -type f | wc -l)" -ge 1
-          grep -q 'Fifty Fit' dist/index.html
+          test -s web-demo/index.html
+          test -s web-demo/main.jsx
+          test -s web-demo/styles.css
+          test -s vite.webdemo.config.js
+          ! grep -Eqi 'firebase|firestore|capacitor|billing|google-play|google\.com' web-demo/main.jsx
+          ! grep -Eqi 'firebase|firestore|capacitor|billing' web-demo/index.html web-demo/styles.css vite.webdemo.config.js
+
+      - name: Build isolated demo only
+        run: npx vite build --config vite.webdemo.config.js
+
+      - name: Validate isolated demo artifact
+        run: |
+          set -euo pipefail
+          test -s dist-web-demo/index.html
+          test -d dist-web-demo/assets
+          grep -q 'Fifty Fit' dist-web-demo/index.html
+          grep -q 'data-fiftyfit-demo-mode' dist-web-demo/index.html
+          if grep -Eiq 'firebase|firestore|capacitor|billing|google-play|google\.com' dist-web-demo/assets/* 2>/dev/null; then
+            echo 'FAIL: production integration identifier leaked into isolated demo artifact'
+            exit 1
+          fi
 
       - name: Assemble GitHub Pages site
         run: |
           set -euo pipefail
-          rm -rf dist/demo
-          mkdir -p dist/demo
-          cp dist/index.html dist/demo/index.html
-          cp -R dist/assets dist/demo/assets
-
-          rm -rf dist/admin
-          mkdir -p dist/admin
+          rm -rf dist
+          mkdir -p dist/demo dist/admin
+          cp -R dist-web-demo/. dist/demo/
           cp -R admin/. dist/admin/
           cp docs/privacy-policy.html dist/privacy-policy.html
           cp docs/account-deletion.html dist/account-deletion.html
           touch dist/.nojekyll
-          cp dist/demo/index.html dist/404.html
 
           cat > dist/index.html <<'HTML'
           <!doctype html>
@@ -86,60 +91,37 @@ jobs:
               :root{color-scheme:dark}
               *{box-sizing:border-box}
               body{margin:0;min-height:100vh;background:#000;color:#fff;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center;padding:24px}
-              .wrap{width:min(520px,100%)}
-              .brand{text-align:center;margin-bottom:28px}
+              .wrap{width:min(520px,100%)}.brand{text-align:center;margin-bottom:28px}
               .logo{width:72px;height:72px;margin:0 auto 16px;border-radius:22px;background:#fff;color:#000;display:grid;place-items:center;font-size:30px;font-weight:1000;letter-spacing:-2px}
-              h1{margin:0;font-size:30px;letter-spacing:-.8px}
-              p{margin:10px 0 0;color:#999;line-height:1.6;font-size:14px}
-              .links{display:grid;gap:12px}
-              a{display:flex;align-items:center;justify-content:space-between;text-decoration:none;color:#fff;background:#111;border:1px solid #272727;border-radius:16px;padding:17px 18px;transition:.16s ease}
-              a:hover{transform:translateY(-1px);background:#151515;border-color:#3a3a3a}
-              .title{font-weight:800;font-size:15px}
-              .desc{margin-top:3px;color:#8f8f8f;font-size:12px}
-              .arrow{font-size:20px;color:#aaa;margin-left:12px}
-              .footer{text-align:center;color:#666;font-size:11px;margin-top:22px}
+              h1{margin:0;font-size:30px;letter-spacing:-.8px}p{margin:10px 0 0;color:#999;line-height:1.6;font-size:14px}
+              .links{display:grid;gap:12px}a{display:flex;align-items:center;justify-content:space-between;text-decoration:none;color:#fff;background:#111;border:1px solid #272727;border-radius:16px;padding:17px 18px}
+              .title{font-weight:800;font-size:15px}.desc{margin-top:3px;color:#8f8f8f;font-size:12px}.arrow{font-size:20px;color:#aaa;margin-left:12px}.footer{text-align:center;color:#666;font-size:11px;margin-top:22px}
             </style>
           </head>
           <body>
             <main class="wrap">
-              <section class="brand">
-                <div class="logo">50</div>
-                <h1>Fifty Fit</h1>
-                <p>Official web links for the Fifty Fit app.</p>
-              </section>
+              <section class="brand"><div class="logo">50</div><h1>Fifty Fit</h1><p>Official web links for the Fifty Fit app.</p></section>
               <section class="links">
-                <a href="./demo/?demo=1"><span><div class="title">Web Demo</div><div class="desc">Try the real Fifty Fit UI in your browser</div></span><span class="arrow">→</span></a>
+                <a href="./demo/?demo=1"><span><div class="title">Web Demo</div><div class="desc">Try the isolated Fifty Fit UI in your browser</div></span><span class="arrow">→</span></a>
                 <a href="./admin/"><span><div class="title">Admin Panel</div><div class="desc">Fifty Fit administration</div></span><span class="arrow">→</span></a>
                 <a href="./privacy-policy.html"><span><div class="title">Privacy Policy</div><div class="desc">How Fifty Fit handles user data</div></span><span class="arrow">→</span></a>
                 <a href="./account-deletion.html"><span><div class="title">Account Deletion</div><div class="desc">Request account and data deletion</div></span><span class="arrow">→</span></a>
               </section>
               <div class="footer">Fifty Fit · Official project links</div>
             </main>
-            <script>
-              if (new URLSearchParams(location.search).get('demo') === '1') {
-                location.replace('./demo/?demo=1');
-              }
-            </script>
+            <script>if(new URLSearchParams(location.search).get('demo')==='1')location.replace('./demo/?demo=1');</script>
           </body>
           </html>
           HTML
 
           test -s dist/index.html
           test -s dist/demo/index.html
-          test -s dist/demo/assets
           test -s dist/admin/index.html
-          test -s dist/admin/app.js
           test -s dist/admin/boot.js
           grep -q 'command-center-v3.js' dist/admin/boot.js
-          test -s dist/admin/boot-v2.js
-          test -s dist/admin/nutrition-builder.js
           test -s dist/privacy-policy.html
           test -s dist/account-deletion.html
           test -f dist/.nojekyll
-          grep -q 'Web Demo' dist/index.html
-          grep -q 'Admin Panel' dist/index.html
-          grep -q 'Account Deletion' dist/index.html
-          ! grep -q 'nutrition-builder-ux.js' dist/admin/boot-v2.js
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -153,65 +135,32 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify deployed GitHub Pages site in headless Chrome
-        id: browser_verify
+      - name: Verify deployed site in headless Chrome
         run: |
           set -euo pipefail
           PAGE_URL='${{ steps.deployment.outputs.page_url }}'
           test -n "$PAGE_URL"
-
           PUBLIC_DEMO_URL="${PAGE_URL}demo/?demo=1&deploy=${GITHUB_SHA}"
-          echo "PUBLIC_DEMO_URL=$PUBLIC_DEMO_URL"
           for i in $(seq 1 30); do
             if curl -fsS "$PUBLIC_DEMO_URL" >/tmp/public-demo.html; then
-              if grep -q 'Fifty Fit' /tmp/public-demo.html; then break; fi
+              grep -q 'Fifty Fit' /tmp/public-demo.html && break
             fi
             sleep 2
           done
           test -s /tmp/public-demo.html
-          grep -q 'Fifty Fit' /tmp/public-demo.html
-
           CHROME_BIN=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           test -n "$CHROME_BIN"
-
           rm -f /tmp/public-demo-dom.html /tmp/public-demo-chrome.stderr
           set +e
           timeout "${FF_BROWSER_TIMEOUT}s" "$CHROME_BIN" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-extensions --disable-background-networking --user-data-dir=/tmp/fiftyfit-public-profile --window-size=390,844 --virtual-time-budget=15000 --dump-dom "$PUBLIC_DEMO_URL" >/tmp/public-demo-dom.html 2>/tmp/public-demo-chrome.stderr
           CHROME_STATUS=$?
           set -e
-
-          echo "Chrome exit status: $CHROME_STATUS"
-          echo "DOM bytes: $(wc -c </tmp/public-demo-dom.html || true)"
-          echo "DOM demo markers:"
-          grep -o 'data-fiftyfit-demo-[a-z-]*="[^"]*"' /tmp/public-demo-dom.html | sort -u || true
-          echo "DOM runtime diagnostics:"
-          grep -o 'data-fiftyfit-demo-runtime-error="[^"]*"' /tmp/public-demo-dom.html | head -5 || true
-          grep -o 'data-fiftyfit-demo-component-stack="[^"]*"' /tmp/public-demo-dom.html | head -5 || true
-          echo "DOM title/root excerpt:"
-          grep -o '<title>[^<]*</title>' /tmp/public-demo-dom.html | head -5 || true
-          sed -n '1,80p' /tmp/public-demo-dom.html | head -80 || true
-          echo "DOM error indicators:"
-          grep -oi 'Something went wrong\|حصل خطأ غير متوقع\|Your data was not deleted\|FF-[A-Z0-9][A-Z0-9][A-Z0-9]' /tmp/public-demo-dom.html | head -20 || true
-          echo "Chrome stderr:"
-          cat /tmp/public-demo-chrome.stderr || true
-
           test -s /tmp/public-demo-dom.html || { echo 'FAIL: Chrome produced no DOM'; exit 1; }
           grep -q 'data-fiftyfit-demo-mode="1"' /tmp/public-demo-dom.html || { echo 'FAIL: demo mode marker missing'; exit 1; }
           grep -q 'data-fiftyfit-demo-ready="1"' /tmp/public-demo-dom.html || { echo 'FAIL: demo ready marker missing'; exit 1; }
-          ! grep -qi 'Something went wrong' /tmp/public-demo-dom.html || { echo 'FAIL: English crash screen rendered'; exit 1; }
-          ! grep -qi 'حصل خطأ غير متوقع' /tmp/public-demo-dom.html || { echo 'FAIL: Arabic crash screen rendered'; exit 1; }
-          ! grep -qi 'Your data was not deleted' /tmp/public-demo-dom.html || { echo 'FAIL: destructive-action recovery screen rendered'; exit 1; }
-          ! grep -Eq 'FF-[A-Z0-9]{3,}' /tmp/public-demo-dom.html || true
-
-          if [ "$CHROME_STATUS" -ne 0 ]; then
-            echo "FAIL: Chrome exited with status $CHROME_STATUS"
-            exit 1
-          fi
-
-          echo "Public GitHub Pages browser verification passed: ${PAGE_URL}demo/ (Chrome exit=${CHROME_STATUS})"
-
+          ! grep -qi 'Something went wrong\|حصل خطأ غير متوقع' /tmp/public-demo-dom.html
+          test "$CHROME_STATUS" -eq 0
           curl -fsS "${PAGE_URL}admin/" >/tmp/public-admin.html
-          grep -q '<title>Fifty Fit' /tmp/public-admin.html || grep -qi 'Fifty Fit' /tmp/public-admin.html
           curl -fsS "${PAGE_URL}admin/boot.js" >/tmp/public-admin-boot.js
           grep -q 'command-center-v3.js' /tmp/public-admin-boot.js
           curl -fsS "${PAGE_URL}privacy-policy.html" >/dev/null

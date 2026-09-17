@@ -58,6 +58,16 @@ function firestoreString(v: unknown) {
   if ("timestampValue" in (v as Record<string, unknown>)) return String((v as Record<string, unknown>).timestampValue || "");
   return "";
 }
+function parseExpiry(rawValue: unknown) {
+  const raw = rawValue == null ? "" : String(rawValue).trim();
+  if (!raw) return { raw: null as string | null, ms: NaN, valid: false };
+  const ms = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? Date.parse(`${raw}T23:59:59.999Z`) : Date.parse(raw);
+  return { raw, ms, valid: Number.isFinite(ms) };
+}
+function isActiveExpiry(rawValue: unknown) {
+  const parsed = parseExpiry(rawValue);
+  return parsed.valid && parsed.ms > Date.now();
+}
 async function lookupAdminAiPro(uid: string, firebaseToken: string) {
   const cached = ADMIN_CACHE.get(uid);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -71,12 +81,9 @@ async function lookupAdminAiPro(uid: string, firebaseToken: string) {
     const admin = fields?.adminEntitlements?.mapValue?.fields || {};
     const ai = firestoreBool(admin?.aiCoachPro);
     const expiresAt = firestoreString(admin?.proExpiresAt);
-    if (expiresAt) {
-      const expiryMs = /^\d{4}-\d{2}-\d{2}$/.test(expiresAt) ? Date.parse(`${expiresAt}T23:59:59.999Z`) : Date.parse(expiresAt);
-      if (Number.isFinite(expiryMs) && Date.now() >= expiryMs) {
-        ADMIN_CACHE.set(uid, { value: false, expiresAt: Date.now() + 30000 });
-        return false;
-      }
+    if (!isActiveExpiry(expiresAt)) {
+      ADMIN_CACHE.set(uid, { value: false, expiresAt: Date.now() + 30000 });
+      return false;
     }
     const value = ai;
     ADMIN_CACHE.set(uid, { value, expiresAt: Date.now() + 30000 });

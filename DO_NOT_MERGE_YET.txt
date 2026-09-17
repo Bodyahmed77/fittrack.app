@@ -1,0 +1,1 @@
+This branch must not be merged until the full validation workflow is green.

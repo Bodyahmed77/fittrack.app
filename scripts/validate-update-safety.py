@@ -21,10 +21,14 @@ release_workflow = read(".github/workflows/build-android.yml")
 pages_workflow = read(".github/workflows/deploy-web-demo.yml")
 admin_index = read("admin/index.html")
 admin_boot = read("admin/boot.js")
+web_demo_index = read("web-demo/index.html")
+web_demo_main = read("web-demo/main.jsx")
+web_demo_styles = read("web-demo/styles.css")
+web_demo_vite = read("vite.webdemo.config.js")
 
-# The build is intentionally mutation-heavy for legacy compatibility. Validate
+# The production build is still mutation-heavy for legacy compatibility. Validate
 # the complete source material instead of binding each invariant to one exact
-# historical patch file; otherwise a harmless patch reordering creates false
+# historical patch file; otherwise harmless patch reordering creates false
 # negatives while still allowing real drift to escape.
 script_text = "\n".join(
     p.read_text(encoding="utf-8")
@@ -38,8 +42,6 @@ require("fittrack-698fa" in app or "fittrack-698fa" in read("src/firebase.js"), 
 require("versionCode {2000+n}" in release_workflow, "release versionCode is not generated monotonically from workflow runs")
 require(re.search(r'versionName\s+"1\.0\.\{n\}"', release_workflow) is not None, "release versionName generation missing")
 
-# Stable user-facing document keys and cache keys must remain represented in
-# canonical source or in a committed transformation that produces that source.
 for key in [
     "customTrainingPlan",
     "customNutritionPlan",
@@ -55,21 +57,16 @@ load_fallback = read("scripts/patch-load-fallback.py")
 admin_overlay = read("scripts/patch-admin-entitlement-overlay.py")
 require("fiftyfit:account-cache:${uid}" in load_fallback, "account cache namespace drift detected")
 require("setLoaded(hasCachedAccount || !!data?.account?.email)" in load_fallback, "returning-user fallback is missing")
-
-# Entitlement sources must remain separated. This protects paid Play access
-# from profile edits and support tooling during future releases.
 require("mergeEntitlementSources" in admin_overlay, "entitlement merge guard missing")
 require("adminEntitlementsRef" in admin_overlay, "admin support entitlement state is not isolated")
 require("request.resource.data.get(\"adminEntitlements\", {}) ==" in firestore_rules, "Firestore rule no longer protects admin support entitlement writes")
 require("request.resource.data.get(\"entitlements\", {}) ==" in firestore_rules, "Firestore rule no longer protects paid entitlement writes")
 
-# The delete-account backend contract must remain stable for the external
-# deletion flow. Changes here require an explicit migration/review.
+# Delete-account backend contract must stay intact.
 delete_account = read("supabase/functions/delete-account/index.ts")
 require("delete_user_data" in delete_account and "p_uid" in delete_account, "delete-account RPC contract drift detected")
 
-# Public Pages must publish the actual policy/deletion pages and the canonical
-# admin entrypoint. Do not merely test that source files exist in docs/.
+# Public Pages must publish the actual policy/deletion pages and canonical admin.
 require("cp docs/privacy-policy.html dist/privacy-policy.html" in pages_workflow, "privacy policy is not copied into Pages artifact")
 require("cp docs/account-deletion.html dist/account-deletion.html" in pages_workflow, "account deletion page is not copied into Pages artifact")
 require('"./boot.js?v=20260917-3"' in admin_index, "published admin index is not using canonical boot.js")
@@ -78,16 +75,33 @@ require('"${PAGE_URL}privacy-policy.html"' in pages_workflow, "Pages workflow is
 require('"${PAGE_URL}account-deletion.html"' in pages_workflow, "Pages workflow is missing deployed deletion-page verification")
 require('"${PAGE_URL}admin/boot.js"' in pages_workflow, "Pages workflow is missing deployed admin-boot verification")
 
-# Release workflow must build both the uploadable AAB and regression APK,
-# and fingerprint the final outputs for traceability.
+# The browser demo must be a genuinely isolated app. It must never fall back to
+# the production App.jsx demo flag because that architecture previously caused
+# Firebase/Capacitor runtime fragility.
+for path_name in [
+    "web-demo/index.html",
+    "web-demo/main.jsx",
+    "web-demo/styles.css",
+    "vite.webdemo.config.js",
+]:
+    require((ROOT / path_name).is_file(), f"isolated web-demo file missing: {path_name}")
+require('root:' in web_demo_vite and '"web-demo"' in web_demo_vite, "web-demo Vite root must target web-demo/")
+require("npx vite build --config vite.webdemo.config.js" in pages_workflow, "Pages workflow must build isolated web-demo directly")
+require("VITE_WEB_DEMO" not in pages_workflow and "npm run build" not in pages_workflow, "Pages workflow must not build production App.jsx in demo mode")
+require("data-fiftyfit-demo-mode" in web_demo_index and "data-fiftyfit-demo-mode" in web_demo_main, "demo runtime marker missing")
+require("data-fiftyfit-demo-ready" in web_demo_main, "demo ready marker missing")
+require("localStorage" in web_demo_main and "fiftyfit:web-demo" in web_demo_main, "local demo persistence missing")
+require("Day 1" in web_demo_main, "demo Day 1 product invariant missing")
+for source in [web_demo_main, web_demo_index, web_demo_styles, web_demo_vite]:
+    require(not re.search(r"firebase|firestore|capacitor|billing|google-play|google\.com", source, re.I), "production integration leaked into isolated web-demo source")
+
+# Release workflow must build both the uploadable AAB and regression APK, and
+# fingerprint the final outputs for traceability.
 require("bundleRelease" in release_workflow and "assembleRelease" in release_workflow, "signed AAB/APK release build gate missing")
 require("sha256sum release-artifacts/*" in release_workflow, "release fingerprinting missing")
 require("test -s release-artifacts/fifty-fit-release.aab" in release_workflow, "AAB artifact verification missing")
 require("test -s release-artifacts/fifty-fit-release.apk" in release_workflow, "APK artifact verification missing")
 
-# The current production build still depends on these compatibility stages. The
-# gate checks their presence in the build command rather than their exact order
-# so the validator remains resilient to harmless ordering changes.
 for script_name in [
     "patch-production-final.py",
     "patch-production-final-2.py",
@@ -101,8 +115,6 @@ for script_name in [
 ]:
     require(f"scripts/{script_name}" in package, f"{script_name} is no longer part of the release build")
 
-# No suspicious retired package id may remain in normal source files; package
-# replacement is intentionally build-scoped for compatibility with legacy data.
 for file_name in ["src/firebase.js", "src/aiCoach.js", "src/aiReport.js", "capacitor.config.json"]:
     require("com.fittrack.app" not in read(file_name), f"retired package id remains in {file_name}")
 

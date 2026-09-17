@@ -68,7 +68,8 @@ assert(adminCommandCenter.includes("FIFTYFIT_ADMIN_COMMAND_CENTER_V3"), "large a
 assert(adminCommandCenter.includes("Plan Requests"), "large admin plan request workspace is missing");
 assert(adminCommandCenter.includes("System Health"), "large admin system health workspace is missing");
 assert(adminCommandCenter.includes("Export CSV"), "large admin export action is missing");
-assert(adminCommandCenter.includes("getCountFromServer"), "large admin exact customer count is missing");
+assert(adminCommandCenter.includes("fetchTotalUsers"), "large admin exact customer count action is missing");
+assert(adminCommandCenter.includes('api("users_count")'), "large admin must use centralized users_count API");
 assert(adminBoot.includes("command-center-v3.js"), "canonical admin boot is not loading command center v3");
 assert(docsAdminBoot.includes("command-center-v3.js"), "GitHub Pages admin boot is not loading command center v3");
 

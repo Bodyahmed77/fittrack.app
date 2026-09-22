@@ -201,6 +201,15 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
+      - name: Compile Android release variant (pre-merge release gate)
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew :app:bundleRelease :app:assembleRelease --no-daemon --stacktrace
+          test -s app/build/outputs/bundle/release/app-release.aab
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk -o -s app/build/outputs/apk/release/app-release.apk
+          echo 'Android release variant compilation and artifact gate passed'
+
       - name: Verify release-time Billing normalization transform
         run: |
           python3 - <<'PY'

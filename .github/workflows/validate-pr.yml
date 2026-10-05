@@ -185,6 +185,45 @@ jobs:
           test -f android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
           test -d node_modules/capacitor-billing
 
+      - name: Audit generated Android compatibility contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          vars_file = Path('android/variables.gradle')
+          app_gradle = Path('android/app/build.gradle')
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          assert vars_file.is_file() and app_gradle.is_file() and manifest.is_file()
+          v = vars_file.read_text(encoding='utf-8')
+          a = app_gradle.read_text(encoding='utf-8')
+          m = manifest.read_text(encoding='utf-8')
+          print('--- variables.gradle ---')
+          print(v)
+          print('--- app/build.gradle sdk/abi/packaging ---')
+          for line in a.splitlines():
+              if any(k in line for k in ('minSdk','targetSdk','compileSdk','abiFilters','splits','useLegacyPackaging','ndk {','versionCode','versionName')):
+                  print(line)
+          print('--- AndroidManifest uses-feature/uses-sdk/screen ---')
+          for line in m.splitlines():
+              if any(k in line for k in ('uses-feature','uses-sdk','supports-screens','compatible-screens','screenOrientation','required=')):
+                  print(line)
+          min_match = re.search(r'minSdkVersion\\s*=\\s*(\\d+)', v)
+          target_match = re.search(r'targetSdkVersion\\s*=\\s*(\\d+)', v)
+          assert min_match and target_match
+          assert int(min_match.group(1)) <= 24, f'Unexpected minSdkVersion={min_match.group(1)}'
+          assert int(target_match.group(1)) >= 35, f'Unexpected targetSdkVersion={target_match.group(1)}'
+          print(f'Compatibility SDK contract: min={min_match.group(1)} target={target_match.group(1)}')
+          PY
+          cd android
+          ./gradlew :app:processReleaseManifest --no-daemon --stacktrace
+          MANIFEST=$(find app/build/intermediates -path '*release*' -name 'AndroidManifest.xml' | grep -E 'packaged_manifests|merged_manifests' | head -n 1 || true)
+          test -n "$MANIFEST"
+          echo "--- MERGED RELEASE MANIFEST: $MANIFEST ---"
+          grep -E 'uses-feature|uses-sdk|supports-screens|compatible-screens|screenOrientation|required=' "$MANIFEST" || true
+          echo '--- MERGED MANIFEST COMPLETE ---'
+          cat "$MANIFEST"
+
       - name: Validate first-party Play Billing bridge
         run: |
           set -euo pipefail

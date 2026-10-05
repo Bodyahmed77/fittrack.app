@@ -208,8 +208,8 @@ jobs:
           for line in m.splitlines():
               if any(k in line for k in ('uses-feature','uses-sdk','supports-screens','compatible-screens','screenOrientation','required=')):
                   print(line)
-          min_match = re.search(r'minSdkVersion\\s*=\\s*(\\d+)', v)
-          target_match = re.search(r'targetSdkVersion\\s*=\\s*(\\d+)', v)
+          min_match = re.search(r'minSdkVersion\s*=\s*(\d+)', v)
+          target_match = re.search(r'targetSdkVersion\s*=\s*(\d+)', v)
           assert min_match and target_match
           assert int(min_match.group(1)) <= 24, f'Unexpected minSdkVersion={min_match.group(1)}'
           assert int(target_match.group(1)) >= 35, f'Unexpected targetSdkVersion={target_match.group(1)}'

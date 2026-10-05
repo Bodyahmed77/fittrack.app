@@ -129,6 +129,7 @@ jobs:
           set -euo pipefail
           npx capacitor-assets generate --android
           npx cap sync android
+          python3 scripts/patch-android-device-compatibility.py
           python3 scripts/patch-capacitor-billing-pbl.py
           test -d node_modules/capacitor-billing
           grep -q 'com.android.billingclient:billing:9.1.0' node_modules/capacitor-billing/android/build.gradle

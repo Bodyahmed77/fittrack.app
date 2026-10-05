@@ -177,6 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           npx cap sync android
+          python3 scripts/patch-android-device-compatibility.py
           python3 scripts/patch-capacitor-billing-pbl.py
           python3 scripts/inject-fiftyfit-billing-v2.py
           python3 scripts/apply-billing-main-thread.py
@@ -227,6 +228,9 @@ jobs:
       - name: Validate first-party Play Billing bridge
         run: |
           set -euo pipefail
+          grep -q 'FIFTYFIT_DEVICE_COMPATIBILITY_V1' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.hardware.touchscreen' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.hardware.faketouch' android/app/src/main/AndroidManifest.xml
           grep -q 'FIFTYFIT_NATIVE_BILLING_V7' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
           grep -q 'FIFTYFIT_BILLING_MAIN_THREAD_V1' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java
           grep -q 'runOnUiThread' android/app/src/main/java/com/bodyahmed77/fiftyfit/billing/FiftyFitBillingPlugin.java

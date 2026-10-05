@@ -249,6 +249,26 @@ jobs:
           test -s app/build/outputs/apk/release/app-release-unsigned.apk -o -s app/build/outputs/apk/release/app-release.apk
           echo 'Android release variant compilation and artifact gate passed'
 
+      - name: Inspect Android release artifact compatibility metadata
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          test -s "$APK" && test -s "$AAB"
+          echo '--- APK badging ---'
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$APK" | grep -E 'package:|sdkVersion:|targetSdkVersion:|uses-feature:|supports-screens:|compatible-screens:' || true
+          echo '--- APK native ABIs ---'
+          unzip -Z1 "$APK" | grep '^lib/' | sort -u || true
+          echo '--- AAB native ABIs ---'
+          unzip -Z1 "$AAB" | grep '^base/lib/' | sort -u || true
+          echo '--- AAB bundle config ---'
+          curl -fsSL -o /tmp/bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          java -jar /tmp/bundletool.jar dump config --bundle="$AAB" | grep -E 'min_sdk|abi|alignment|PAGE_ALIGNMENT|compression' || true
+          echo '--- AAB module manifest ---'
+          unzip -p "$AAB" base/manifest/AndroidManifest.xml >/tmp/fiftyfit-base-manifest.pb
+          java -jar /tmp/bundletool.jar dump manifest --bundle="$AAB" --module=base | head -n 220
+          echo '--- Artifact compatibility audit complete ---'
+
       - name: Verify release-time Billing normalization transform
         run: |
           python3 - <<'PY'
